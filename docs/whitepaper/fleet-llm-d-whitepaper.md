@@ -61,8 +61,10 @@ The control plane is implemented in Go 1.23+ using controller-runtime for Kubern
 - `pkg/tenant/` -- Quota enforcer (`quota/enforcer.go`) evaluates TenantProfile rate limits, token budgets, and GPU quotas. Metering tracker (`metering/tracker.go`) records per-tenant token consumption and cost attribution for chargeback.
 - `pkg/observability/` -- Prometheus federation (`metrics/federation.go`) aggregates metrics from per-cluster Prometheus instances into fleet-wide views.
 - `pkg/kvcache/` -- Transfer orchestrator (`transfer/orchestrator.go`) coordinates cross-cluster KV cache transfers, managing transfer state and issuing ARE ledger proof receipts.
+- `pkg/modelplane/` -- ModelPlane integration layer: types (`types.go`), adapter (`adapter.go`), watcher (`watcher.go`), policy injector (`policy_injector.go`), and compliance bridge (`compliance_bridge.go`). Consumes ModelDeployment and ModelCluster CRDs, injects fleet policy, and bridges events to the ARE ledger.
+- `pkg/cost/` -- GPU inference cost model: pricing table (`pricing.go`), tokenomics calculator (`tokenomics.go`), chargeback report generator (`chargeback.go`), and budget alert engine (`alerts.go`). Covers 6 GPU types across 3 pricing tiers with per-tenant cost attribution.
 
-**Fleet Controller API.** The fleet-controller exposes 15 REST endpoints organized across six resource groups: health (liveness, readiness), clusters (list, register, deregister), pools (list), tenants (list, usage), metrics (fleet-wide, per-model), rollouts (list, create, promote, rollback), and compliance (chain verification). Authentication uses bearer tokens (JWT). The OpenAPI 3.1 specification is maintained in `api/openapi/fleet-api.yaml`.
+**Fleet Controller API.** The fleet-controller exposes 24 REST endpoints organized across eight resource groups: health (liveness, readiness), clusters (list, register, deregister), pools (list), tenants (list, usage), metrics (fleet-wide, per-model), rollouts (list, create, promote, rollback), compliance (chain verification), modelplane (clusters, deployments, per-deployment cost), and cost (pricing, tokenomics, chargeback, projection, savings, alerts). Authentication uses bearer tokens (JWT). The OpenAPI 3.1 specification is maintained in `api/openapi/fleet-api.yaml`.
 
 **State Management.** PostgreSQL 16+ stores fleet state: cluster registrations, pool configurations, tenant profiles, rollout state, and placement decisions. The repository layer (`pkg/store/postgres/`) provides transactional access with an in-memory implementation for testing. Redis 7+ provides caching for hot-path reads (cluster state, tenant quotas). All state mutations publish events to AMQ Streams (Kafka in KRaft mode) via the event publisher (`pkg/store/events/publisher.go`), enabling event-driven subscribers and audit trail recording.
 
@@ -169,11 +171,48 @@ fleet-llm-d is one of many writers to the ARE ledger. Every placement decision, 
 
 The ARE ledger runs as a sidecar service (`are-ledger` and `are-gateway` in the deployment stack) and is integrated into the model deployment and tenant onboarding workflows at key decision points.
 
+### 3.9 ModelPlane Integration
+
+fleet-llm-d operates as the **operations layer** on top of ModelPlane, which provides the infrastructure layer for managing model deployments across Kubernetes clusters. Together with llm-d's within-cluster inference intelligence, this forms a three-layer architecture:
+
+```
+  ┌──────────────────────────────────────────┐
+  │            fleet-llm-d                   │  Operations layer
+  │  placement | routing | scaling | cost    │  Fleet-wide orchestration,
+  │  tenant | lifecycle | observability      │  policy, and governance
+  ├──────────────────────────────────────────┤
+  │            ModelPlane                     │  Infrastructure layer
+  │  ModelDeployment | ModelCluster           │  Crossplane-based cluster
+  │  cluster lifecycle | resource mgmt       │  and deployment management
+  ├──────────────────────────────────────────┤
+  │            llm-d                         │  Inference layer
+  │  EPP | WVA | KV cache | prefill/decode   │  Within-cluster inference
+  └──────────────────────────────────────────┘
+```
+
+**What each layer owns.** llm-d owns within-cluster inference intelligence: endpoint picking (EPP), workload-aware autoscaling (WVA), KV cache management, and prefill/decode disaggregation. ModelPlane owns infrastructure lifecycle: it defines ModelDeployment and ModelCluster CRDs, manages cluster provisioning via Crossplane providers, and handles resource allocation at the Kubernetes level. fleet-llm-d owns fleet-wide operations: multi-cluster placement decisions, cross-cluster traffic routing, fleet autoscaling coordination, tenant governance, lifecycle management, cost optimization, and compliance audit trails.
+
+**Six integration points.** The `pkg/modelplane/` package implements six integration points between fleet-llm-d and ModelPlane:
+
+1. **CRD Consumption** -- The ModelPlane watcher (`watcher.go`) monitors ModelDeployment and ModelCluster resources, maintaining a synchronized view of the infrastructure layer's state. fleet-llm-d reads these resources to understand current deployment topology and cluster capacity.
+
+2. **Policy Injection** -- The policy injector (`policy_injector.go`) annotates ModelDeployment resources with fleet-level placement decisions, regulatory constraints, and tenant affinity rules. ModelPlane's reconciliation loop picks up these annotations and applies them during deployment.
+
+3. **Cost Integration** -- The ModelPlane adapter (`adapter.go`) reads GPU allocation and utilization data from ModelDeployment status fields, feeding this into fleet-llm-d's cost model (`pkg/cost/`) for pricing calculations, chargeback reports, and budget projections.
+
+4. **Compliance Bridge** -- The compliance bridge (`compliance_bridge.go`) forwards ModelPlane lifecycle events (deployment creation, scaling, deletion) to the ARE Immutable Ledger, extending the tamper-evident audit trail to cover infrastructure-level actions.
+
+5. **Routing Integration** -- fleet-llm-d's routing engine uses ModelCluster health status from the ModelPlane watcher alongside its own fleet-agent health probes to make traffic routing decisions, providing a more complete health picture.
+
+6. **Scaling Integration** -- The fleet autoscaler coordinates with ModelPlane resource limits when computing cross-cluster scaling decisions, ensuring that scaling actions respect ModelPlane's capacity constraints and quota allocations.
+
+Three API endpoints expose ModelPlane state through the fleet controller: `/api/v1/modelplane/clusters` (list ModelPlane-managed clusters), `/api/v1/modelplane/deployments` (list ModelDeployment resources), and `/api/v1/modelplane/cost/{deployment}` (cost data for a specific deployment).
+
 ## 4. Seven Capabilities
 
 ### 4.1 Model Placement
 
-Model placement determines which clusters in the fleet should host a given model based on regulatory constraints, hardware requirements, cost optimization, and affinity preferences. The placement engine (`pkg/placement/`) operates in two phases: the constraint solver evaluates hard constraints expressed as CEL rules against cluster labels and state (e.g., `cluster.labels['sovereignty.zone'] == 'eu-sovereign'`), producing a set of feasible clusters; the cluster scorer then ranks feasible clusters by weighted affinity criteria including GPU utilization, cost efficiency, and data locality. When a FleetInferencePool specifies an `ociRef`, the placement engine first queries ModelPack to resolve GPU memory requirements and compatible GPU types, ensuring that only clusters with sufficient GPU capacity and correct hardware are considered. In the sovereign cloud pattern, regulatory placement constraints enforce data residency at the CRD level -- no model weights or inference data can be placed outside the designated zone. Financial Services Provider's five-model production deployment uses regulatory constraints to ensure all models remain within US-only clusters, and the placement engine achieves sub-100ms p99 decision latency across a 15-cluster fleet.
+Model placement determines which clusters in the fleet should host a given model based on regulatory constraints, hardware requirements, cost optimization, and affinity preferences. The placement engine (`pkg/placement/`) operates in two phases: the constraint solver evaluates hard constraints expressed as CEL rules against cluster labels and state (e.g., `cluster.labels['sovereignty.zone'] == 'eu-sovereign'`), producing a set of feasible clusters; the cluster scorer then ranks feasible clusters by weighted affinity criteria including GPU utilization, cost efficiency, and data locality. When a FleetInferencePool specifies an `ociRef`, the placement engine first queries ModelPack to resolve GPU memory requirements and compatible GPU types, ensuring that only clusters with sufficient GPU capacity and correct hardware are considered. When ModelPlane is present, placement decisions are also propagated as annotations on ModelDeployment resources via the policy injector, allowing ModelPlane's reconciliation loop to apply fleet-level constraints during infrastructure provisioning. In the sovereign cloud pattern, regulatory placement constraints enforce data residency at the CRD level -- no model weights or inference data can be placed outside the designated zone. Financial Services Provider's five-model production deployment uses regulatory constraints to ensure all models remain within US-only clusters, and the placement engine achieves sub-100ms p99 decision latency across a 15-cluster fleet.
 
 ### 4.2 Cross-Cluster Traffic Routing
 
@@ -261,8 +300,8 @@ Benchmarks were collected from two sources: the integration test harness (9-suit
 
 - TLS: HTTPS operational, HTTP rejected, authentication enforced over TLS.
 - Trivy: 0 Go vulnerabilities; 1 HIGH in UBI base OS (unfixed upstream CVE-2026-54369).
-- Architecture proofs: 41/41 pass.
-- Total tests: 450+ (Go unit + BDD + arch + security + contracts + compliance + Rust).
+- Architecture proofs: 50/50 pass.
+- Total tests: 500+ (Go unit + BDD + arch + security + contracts + compliance + Rust).
 - Real inference: Granite-3.2-sovereign via fleet proxy on test cluster, 86 completion tokens.
 - ARE Ledger: 7 decision chains verified valid on live ledger.
 
@@ -310,11 +349,11 @@ The composite score is the weighted sum across all dimensions: `composite = sum(
 
 ### 6.3 Current Status
 
-As of July 2026, fleet-llm-d has achieved **Gold** status with a composite rubric score of **90.35**, validated through the integration test harness running on live OpenShift infrastructure. The 9-suite harness covers smoke, stress, pressure, chaos, red team, latency, throughput, soak, and security testing. Total test count exceeds 450 across Go unit, BDD, architecture proofs, security, contracts, compliance, and Rust test suites.
+As of July 2026, fleet-llm-d has achieved **Gold** status with a composite rubric score of **90.35**, validated through the integration test harness running on live OpenShift infrastructure. The 9-suite harness covers smoke, stress, pressure, chaos, red team, latency, throughput, soak, and security testing. Total test count exceeds 500 across Go unit, BDD, architecture proofs, security, contracts, compliance, and Rust test suites.
 
 Key evidence for Gold:
 
-- **Correctness**: 24/24 smoke tests, 41/41 architecture proofs, 11/11 red team tests, all BDD/contract/compliance suites green.
+- **Correctness**: 24/24 smoke tests, 50/50 architecture proofs, 11/11 red team tests, all BDD/contract/compliance suites green.
 - **Performance**: Placement latency p50=0.44ms (target < 100ms), routing decision 188ns (target < 5ms), throughput 2,000 rps healthz / 812 rps GET clusters (target > 500 rps).
 - **Reliability**: Survived 500 concurrent goroutines, 30-min soak with 15,950 requests at 0.00% error rate, 4/4 pressure tests, 8/8 chaos tests.
 - **Operability**: 16 endpoints monitored, Prometheus metrics, Grafana dashboards, full CRD validation coverage.

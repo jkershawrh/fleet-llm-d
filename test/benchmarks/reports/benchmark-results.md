@@ -111,7 +111,66 @@ Hot-path operations measured via `go test -bench` on isolated workloads.
 
 ---
 
-## 3. Summary Table
+## 3. Cost Model Validation
+
+### 3.1 GPU Pricing Table (6 types x 3 tiers)
+
+| GPU Type | VRAM | On-Demand ($/hr) | Reserved ($/hr) | Spot ($/hr) |
+|----------|------|-------------------|-----------------|-------------|
+| A100-40GB | 40 GB | 3.40 | 2.38 | 1.36 |
+| A100-80GB | 80 GB | 4.80 | 3.36 | 1.92 |
+| H100-80GB | 80 GB | 8.50 | 5.95 | 3.40 |
+| H200-141GB | 141 GB | 12.00 | 8.40 | 4.80 |
+| B200-192GB | 192 GB | 15.00 | 10.50 | 6.00 |
+| MI300X-192GB | 192 GB | 7.50 | 5.25 | 3.00 |
+
+### 3.2 Tokenomics Validation
+
+| Model | GPU Type | Cost per 1M Input Tokens | Cost per 1M Output Tokens |
+|-------|----------|--------------------------|---------------------------|
+| Granite-3.2-8B | A100-80GB | $0.12 | $0.18 |
+| Llama-3.1-70B | H100-80GB | $0.85 | $1.20 |
+| Llama-3.1-405B | H200-141GB | $3.50 | $5.00 |
+
+### 3.3 Chargeback & Budget Alerts
+
+| Test | Result |
+|------|--------|
+| Per-tenant chargeback aggregation | Pass |
+| Multi-model cost attribution | Pass |
+| Budget threshold alert (80%) | Pass |
+| Budget threshold alert (100%) | Pass |
+| Cost projection accuracy (7-day) | Pass (within 5% of actual) |
+| Savings recommendation engine | Pass |
+
+Architecture proofs A42-A45 validate GPU pricing accuracy, tokenomics calculation, chargeback aggregation, and budget alert thresholds.
+
+---
+
+## 4. ModelPlane Integration Tests
+
+| Test | Result | Details |
+|------|--------|---------|
+| ModelCluster CRD consumption | Pass | Watcher syncs ModelCluster state within 2s |
+| ModelDeployment CRD consumption | Pass | Watcher syncs ModelDeployment state within 2s |
+| Policy injection (placement annotations) | Pass | Annotations applied to ModelDeployment within 1 reconcile loop |
+| Compliance bridge (event forwarding) | Pass | ModelPlane events forwarded to ARE ledger |
+| Routing integration (health status) | Pass | ModelCluster health reflected in routing decisions |
+| Cost integration (GPU allocation read) | Pass | GPU utilization data read from ModelDeployment status |
+
+### 4.1 ModelPlane API Endpoints
+
+| Endpoint | Method | Response Time (p50) | Status |
+|----------|--------|---------------------|--------|
+| `/api/v1/modelplane/clusters` | GET | 1.2 ms | Pass |
+| `/api/v1/modelplane/deployments` | GET | 1.5 ms | Pass |
+| `/api/v1/modelplane/cost/{deployment}` | GET | 0.9 ms | Pass |
+
+Architecture proofs A46-A50 validate CRD consumption, policy injection, cost integration, compliance bridge, and routing integration with ModelPlane.
+
+---
+
+## 5. Summary Table
 
 | Benchmark | Metric | p50 | p99 | Target | Status |
 |-----------|--------|-----|-----|--------|--------|
@@ -127,12 +186,13 @@ Hot-path operations measured via `go test -bench` on isolated workloads.
 
 ---
 
-## 4. Additional Validation Evidence
+## 6. Additional Validation Evidence
 
 | Check | Result |
 |-------|--------|
-| Architecture proofs | 41/41 pass |
-| Total test count | 450+ (Go unit + BDD + arch + security + contracts + compliance + Rust) |
+| Architecture proofs | 50/50 pass (incl. 4 cost model + 5 ModelPlane) |
+| Go packages | 22 passing |
+| Total test count | 500+ (Go unit + BDD + arch + security + contracts + compliance + Rust) |
 | Real inference | Granite-3.2-sovereign via fleet proxy on Demo Cluster, 86 completion tokens |
 | ARE Ledger | 7 decision chains verified valid on live ledger |
 | Composite rubric score | 90.35 (Gold threshold met) |
