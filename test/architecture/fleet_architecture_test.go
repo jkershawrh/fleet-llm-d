@@ -27,6 +27,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
+	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
@@ -1698,6 +1699,226 @@ func TestA45_Cost_PlacementPrefersCheaper(t *testing.T) {
 	// The solver should prefer cheap-a100 (lower utilization = higher cost score).
 	if decisions[0].ClusterID != "cheap-a100" {
 		t.Fatalf("expected solver to prefer cheap-a100, got %s", decisions[0].ClusterID)
+	}
+}
+
+// ===========================================================================
+// MODELPLANE INTEGRATION (A46-A50)
+// ===========================================================================
+
+func TestA46_ModelPlane_ClusterMapsToFleetCluster(t *testing.T) {
+	claim(t, "A46", "modelplane", "TDD", "InferenceCluster maps to ClusterInfo with correct GPUCapacity")
+
+	ic := modelplane.InferenceCluster{
+		Name:     "mp-cluster",
+		Region:   "us-east-1",
+		Provider: "gke",
+		Labels:   map[string]string{"env": "prod"},
+		Status:   modelplane.ClusterStatus{Phase: "Ready", Nodes: 10},
+		Pools: []modelplane.NodePool{
+			{Name: "pool-a", GPUType: "H200", Count: 8, Available: 6},
+			{Name: "pool-b", GPUType: "A100", Count: 4, Available: 2},
+		},
+	}
+
+	ci := modelplane.InferenceClusterToClusterInfo(ic)
+
+	if ci.Name != "mp-cluster" {
+		t.Fatalf("Name = %q, want 'mp-cluster'", ci.Name)
+	}
+	if ci.Region != "us-east-1" {
+		t.Fatalf("Region = %q, want 'us-east-1'", ci.Region)
+	}
+	// Total GPU: 8 + 4 = 12, Available: 6 + 2 = 8
+	if ci.GPUCapacity.Total != 12 {
+		t.Fatalf("GPUCapacity.Total = %d, want 12", ci.GPUCapacity.Total)
+	}
+	if ci.GPUCapacity.Available != 8 {
+		t.Fatalf("GPUCapacity.Available = %d, want 8", ci.GPUCapacity.Available)
+	}
+	if len(ci.GPUCapacity.Types) != 2 {
+		t.Fatalf("GPUCapacity.Types len = %d, want 2 (H200, A100)", len(ci.GPUCapacity.Types))
+	}
+}
+
+func TestA47_ModelPlane_EndpointMapsToBackend(t *testing.T) {
+	claim(t, "A47", "modelplane", "TDD", "ModelEndpoint maps to Backend with correct URL and Healthy")
+
+	me := modelplane.ModelEndpoint{
+		Name:      "granite-ep",
+		Namespace: "fleet",
+		URL:       "http://granite-vllm.fleet.svc:8000",
+		Model:     "granite-3b",
+		Cluster:   "prod-east",
+		Ready:     true,
+	}
+
+	b := modelplane.ModelEndpointToBackend(me)
+
+	if b.Name != "granite-ep" {
+		t.Fatalf("Name = %q, want 'granite-ep'", b.Name)
+	}
+	if b.URL != "http://granite-vllm.fleet.svc:8000" {
+		t.Fatalf("URL = %q, want 'http://granite-vllm.fleet.svc:8000'", b.URL)
+	}
+	if !b.Healthy {
+		t.Fatal("Healthy should be true when Ready is true")
+	}
+
+	// Verify not-ready endpoint
+	me.Ready = false
+	b2 := modelplane.ModelEndpointToBackend(me)
+	if b2.Healthy {
+		t.Fatal("Healthy should be false when Ready is false")
+	}
+}
+
+func TestA48_ModelPlane_PolicyInjectsAnnotations(t *testing.T) {
+	claim(t, "A48", "modelplane", "TDD", "PolicyInjector sends PATCH with correct annotations")
+
+	var receivedMethod, receivedPath string
+	var receivedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedPath = r.URL.Path
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pi := modelplane.NewPolicyInjector(server.URL, "test-token")
+	ctx := context.Background()
+
+	constraints := map[string]string{
+		"fleet.llm-d.ai/region":   "us-east-1",
+		"fleet.llm-d.ai/gpu-type": "H200",
+	}
+	err := pi.ApplyPlacementAnnotations(ctx, "granite-deploy", "fleet-ns", constraints)
+	if err != nil {
+		t.Fatalf("ApplyPlacementAnnotations: %v", err)
+	}
+
+	if receivedMethod != http.MethodPatch {
+		t.Fatalf("method = %q, want PATCH", receivedMethod)
+	}
+	expectedPath := "/apis/modelplane.ai/v1alpha1/namespaces/fleet-ns/modeldeployments/granite-deploy"
+	if receivedPath != expectedPath {
+		t.Fatalf("path = %q, want %q", receivedPath, expectedPath)
+	}
+
+	var patch map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &patch); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	metadata, ok := patch["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatal("patch missing 'metadata' object")
+	}
+	annotations, ok := metadata["annotations"].(map[string]interface{})
+	if !ok {
+		t.Fatal("patch missing 'metadata.annotations' object")
+	}
+	if annotations["fleet.llm-d.ai/region"] != "us-east-1" {
+		t.Fatalf("annotation region = %v, want 'us-east-1'", annotations["fleet.llm-d.ai/region"])
+	}
+}
+
+func TestA49_ModelPlane_DeploymentCostFromInferenceClass(t *testing.T) {
+	claim(t, "A49", "cost", "TDD", "Deployment cost = replicas * GPU hourly rate")
+
+	table := cost.DefaultPricingTable()
+
+	md := modelplane.ModelDeployment{
+		Name:     "h200-deploy",
+		Model:    "llama-70b",
+		Replicas: 4,
+		Status: modelplane.DeploymentStatus{
+			Phase:    "Running",
+			Clusters: []string{"h200-cluster"},
+		},
+	}
+
+	clusters := []modelplane.InferenceCluster{
+		{
+			Name:   "h200-cluster",
+			Region: "us-east-1",
+			Pools:  []modelplane.NodePool{{Name: "pool-1", GPUType: "H200", Count: 8, Available: 4}},
+		},
+	}
+
+	totalCost, err := cost.ComputeDeploymentCost(md, clusters, table)
+	if err != nil {
+		t.Fatalf("ComputeDeploymentCost: %v", err)
+	}
+
+	// Expected: 4 replicas * $4.50/hr (H200 on-demand) = $18.00/hr
+	expected := 4 * 4.50
+	if totalCost != expected {
+		t.Fatalf("cost = %f, want %f (4 * $4.50 H200 hourly)", totalCost, expected)
+	}
+}
+
+func TestA50_ModelPlane_EventsRecordedToLedger(t *testing.T) {
+	claim(t, "A50", "modelplane", "CDD", "ModelPlane events recorded to immutable ledger")
+
+	lc := ledger.NewInMemoryLedgerClient()
+	fr := ledger.NewFleetRecorder(lc, "test-agent", "arch-test")
+	bridge := modelplane.NewComplianceBridge(fr)
+	ctx := context.Background()
+
+	// Record cluster provisioned
+	cluster := modelplane.InferenceCluster{
+		Name:     "new-cluster",
+		Region:   "us-east-1",
+		Provider: "gke",
+		Status:   modelplane.ClusterStatus{Phase: "Ready", Nodes: 8},
+	}
+	_, err := bridge.RecordClusterProvisioned(ctx, cluster)
+	if err != nil {
+		t.Fatalf("RecordClusterProvisioned: %v", err)
+	}
+
+	// Record deployment created
+	deployment := modelplane.ModelDeployment{
+		Name:      "granite-deploy",
+		Namespace: "fleet",
+		Model:     "granite-3b",
+		Engine:    "vllm",
+		Replicas:  4,
+	}
+	_, err = bridge.RecordDeploymentCreated(ctx, deployment)
+	if err != nil {
+		t.Fatalf("RecordDeploymentCreated: %v", err)
+	}
+
+	// Verify 2 ledger entries with correct types
+	entries := lc.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 ledger entries, got %d", len(entries))
+	}
+	if entries[0].Type != "modelplane.cluster.provisioned" {
+		t.Fatalf("entry[0] type = %q, want 'modelplane.cluster.provisioned'", entries[0].Type)
+	}
+	if entries[1].Type != "modelplane.deployment.created" {
+		t.Fatalf("entry[1] type = %q, want 'modelplane.deployment.created'", entries[1].Type)
+	}
+
+	// Verify content is valid JSON with expected fields
+	var content0 map[string]interface{}
+	if err := json.Unmarshal(entries[0].Content, &content0); err != nil {
+		t.Fatalf("unmarshal entry[0] content: %v", err)
+	}
+	if content0["cluster"] != "new-cluster" {
+		t.Fatalf("entry[0] cluster = %v, want 'new-cluster'", content0["cluster"])
+	}
+
+	var content1 map[string]interface{}
+	if err := json.Unmarshal(entries[1].Content, &content1); err != nil {
+		t.Fatalf("unmarshal entry[1] content: %v", err)
+	}
+	if content1["deployment"] != "granite-deploy" {
+		t.Fatalf("entry[1] deployment = %v, want 'granite-deploy'", content1["deployment"])
 	}
 }
 

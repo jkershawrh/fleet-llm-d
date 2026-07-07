@@ -26,6 +26,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/kvcache/transfer"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
+	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/observability/metrics"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/scorer"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
@@ -87,6 +88,10 @@ type FleetController struct {
 	PoolRepo    postgres.FleetPoolRepository
 	TenantRepo  postgres.TenantRepository
 	RolloutRepo postgres.RolloutRepository
+
+	// ModelPlane integration
+	ModelPlaneWatcher    *modelplane.ModelPlaneWatcher
+	ModelPlaneBridge     *modelplane.ComplianceBridge
 
 	// Server state
 	ready atomic.Bool
@@ -724,6 +729,74 @@ func (fc *FleetController) handleCostAlerts(w http.ResponseWriter, r *http.Reque
 }
 
 // ----------------------------------------------------------------------------
+// ModelPlane handlers
+// ----------------------------------------------------------------------------
+
+// handleModelPlaneClusters returns the most recently watched ModelPlane clusters.
+func (fc *FleetController) handleModelPlaneClusters(w http.ResponseWriter, _ *http.Request) {
+	requestsTotal.Add(1)
+	if fc.ModelPlaneWatcher == nil {
+		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, fc.ModelPlaneWatcher.LastClusters())
+}
+
+// handleModelPlaneDeployments returns the most recently watched ModelPlane deployments.
+func (fc *FleetController) handleModelPlaneDeployments(w http.ResponseWriter, _ *http.Request) {
+	requestsTotal.Add(1)
+	if fc.ModelPlaneWatcher == nil {
+		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, fc.ModelPlaneWatcher.LastDeployments())
+}
+
+// handleModelPlaneDeploymentCost returns the hourly cost of a ModelPlane deployment.
+func (fc *FleetController) handleModelPlaneDeploymentCost(w http.ResponseWriter, r *http.Request) {
+	requestsTotal.Add(1)
+	if fc.ModelPlaneWatcher == nil {
+		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
+		return
+	}
+
+	deploymentName := r.PathValue("deployment")
+	if deploymentName == "" {
+		writeError(w, http.StatusBadRequest, "deployment name is required")
+		return
+	}
+
+	deployments := fc.ModelPlaneWatcher.LastDeployments()
+	clusters := fc.ModelPlaneWatcher.LastClusters()
+
+	var target *modelplane.ModelDeployment
+	for i := range deployments {
+		if deployments[i].Name == deploymentName {
+			target = &deployments[i]
+			break
+		}
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("deployment %q not found", deploymentName))
+		return
+	}
+
+	hourlyCost, err := cost.ComputeDeploymentCost(*target, clusters, fc.PricingTable)
+	if err != nil {
+		errorsTotal.Add(1)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"deployment":  target.Name,
+		"model":       target.Model,
+		"replicas":    target.Replicas,
+		"hourly_cost": hourlyCost,
+	})
+}
+
+// ----------------------------------------------------------------------------
 // Server setup and lifecycle
 // ----------------------------------------------------------------------------
 
@@ -776,6 +849,11 @@ func (fc *FleetController) setupAPIServer() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/cost/projection", fc.handleCostProjection)
 	mux.HandleFunc("GET /api/v1/cost/savings", fc.handleCostSavings)
 	mux.HandleFunc("GET /api/v1/cost/alerts", fc.handleCostAlerts)
+
+	// ModelPlane integration
+	mux.HandleFunc("GET /api/v1/modelplane/clusters", fc.handleModelPlaneClusters)
+	mux.HandleFunc("GET /api/v1/modelplane/deployments", fc.handleModelPlaneDeployments)
+	mux.HandleFunc("GET /api/v1/modelplane/cost/{deployment}", fc.handleModelPlaneDeploymentCost)
 
 	// Inference proxy routes
 	mux.Handle("POST /v1/chat/completions", fc.InferenceProxy)
@@ -854,6 +932,15 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 		}
 	}
 
+	// Start ModelPlane watcher if configured.
+	if fc.ModelPlaneWatcher != nil {
+		if err := fc.ModelPlaneWatcher.Start(ctx); err != nil {
+			log.Printf("WARNING: ModelPlane watcher failed to start: %v", err)
+		} else {
+			log.Println("ModelPlane watcher started")
+		}
+	}
+
 	// Mark as ready.
 	fc.ready.Store(true)
 	log.Println("fleet-controller is ready")
@@ -924,6 +1011,8 @@ func main() {
 	namespace := flag.String("namespace", "default", "Kubernetes namespace to watch for FleetInferencePool CRDs")
 	pgURL := flag.String("pg-url", "", "PostgreSQL connection string (e.g. postgres://user:pass@host:5432/fleet?sslmode=disable). When set, uses PostgreSQL instead of in-memory stores")
 	eventEndpoint := flag.String("event-endpoint", "", "HTTP endpoint for publishing fleet events (e.g. http://kafka-bridge:8080/topics/fleet-events). When set, events are also POSTed to this URL")
+	modelplaneAPI := flag.String("modelplane-api", "", "ModelPlane API server URL (enables ModelPlane integration when set)")
+	modelplaneNamespace := flag.String("modelplane-namespace", "default", "ModelPlane namespace to watch for resources")
 	rateLimit := flag.Float64("rate-limit", 100, "Rate limit in requests per second per IP (0 to disable)")
 	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
@@ -972,6 +1061,42 @@ func main() {
 	if *eventEndpoint != "" {
 		fc.EventPublisher = events.NewHTTPEventPublisher(*eventEndpoint)
 		log.Printf("event publishing enabled (endpoint=%s)", *eventEndpoint)
+	}
+
+	// Wire ModelPlane integration when --modelplane-api is set.
+	if *modelplaneAPI != "" {
+		mpToken := ""
+		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+			mpToken = string(data)
+		}
+		watcher := modelplane.NewModelPlaneWatcher(*modelplaneAPI, *modelplaneNamespace, mpToken)
+		bridge := modelplane.NewComplianceBridge(fc.FleetRecorder)
+
+		watcher.OnClusterChange(func(clusters []modelplane.InferenceCluster) {
+			for _, c := range clusters {
+				if _, err := bridge.RecordClusterProvisioned(context.Background(), c); err != nil {
+					log.Printf("failed to record cluster provisioned %s: %v", c.Name, err)
+				}
+			}
+		})
+		watcher.OnDeploymentChange(func(deployments []modelplane.ModelDeployment) {
+			for _, d := range deployments {
+				if _, err := bridge.RecordDeploymentCreated(context.Background(), d); err != nil {
+					log.Printf("failed to record deployment created %s: %v", d.Name, err)
+				}
+			}
+		})
+		watcher.OnEndpointChange(func(endpoints []modelplane.ModelEndpoint) {
+			for _, e := range endpoints {
+				if _, err := bridge.RecordEndpointReady(context.Background(), e); err != nil {
+					log.Printf("failed to record endpoint ready %s: %v", e.Name, err)
+				}
+			}
+		})
+
+		fc.ModelPlaneWatcher = watcher
+		fc.ModelPlaneBridge = bridge
+		log.Printf("ModelPlane integration enabled (api=%s, namespace=%s)", *modelplaneAPI, *modelplaneNamespace)
 	}
 
 	// Create rate limiter when rate limiting is enabled.
