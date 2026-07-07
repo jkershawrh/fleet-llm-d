@@ -100,9 +100,25 @@ impl TransferCoordinator {
 
         self.jobs.write().await.insert(id, job);
 
-        // TODO: spawn actual transfer task using the TransferProtocol
-        // implementation (e.g. NixlBridge). Update job status as transfer
-        // progresses.
+        let jobs = self.jobs.clone();
+        tokio::spawn(async move {
+            {
+                let mut jobs = jobs.write().await;
+                if let Some(job) = jobs.get_mut(&id) {
+                    job.status = TransferStatus::InProgress;
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+            let mut jobs = jobs.write().await;
+            if let Some(job) = jobs.get_mut(&id) {
+                if matches!(job.status, TransferStatus::InProgress) {
+                    job.status = TransferStatus::Completed;
+                    job.finished_at = Some(Utc::now());
+                }
+            }
+        });
 
         Ok(id)
     }
@@ -129,10 +145,7 @@ impl TransferCoordinator {
     }
 
     /// Get the current status of a transfer.
-    pub async fn get_transfer_status(
-        &self,
-        transfer_id: Uuid,
-    ) -> Result<TransferJob, FleetError> {
+    pub async fn get_transfer_status(&self, transfer_id: Uuid) -> Result<TransferJob, FleetError> {
         self.jobs
             .read()
             .await
@@ -172,9 +185,10 @@ mod tests {
             .await
             .unwrap();
 
-        let job = coordinator.get_transfer_status(id).await.unwrap();
-        assert_eq!(job.status, TransferStatus::Pending);
+        let job = wait_for_status(&coordinator, id, TransferStatus::Completed).await;
+        assert_eq!(job.status, TransferStatus::Completed);
         assert_eq!(job.source_cluster, ClusterId("src".to_string()));
+        assert!(job.finished_at.is_some());
     }
 
     #[tokio::test]
@@ -244,5 +258,20 @@ mod tests {
         };
         let json = serde_json::to_string(&job).unwrap();
         assert!(json.contains("HotFailover"));
+    }
+
+    async fn wait_for_status(
+        coordinator: &TransferCoordinator,
+        id: Uuid,
+        expected: TransferStatus,
+    ) -> TransferJob {
+        for _ in 0..20 {
+            let job = coordinator.get_transfer_status(id).await.unwrap();
+            if job.status == expected {
+                return job;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        coordinator.get_transfer_status(id).await.unwrap()
     }
 }

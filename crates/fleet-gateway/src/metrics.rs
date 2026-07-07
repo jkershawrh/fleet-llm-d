@@ -97,13 +97,7 @@ impl GatewayMetrics {
     }
 
     /// Record a completed request.
-    pub fn record_request(
-        &self,
-        cluster: &str,
-        model: &str,
-        tenant: &str,
-        duration_secs: f64,
-    ) {
+    pub fn record_request(&self, cluster: &str, model: &str, tenant: &str, duration_secs: f64) {
         let labels = RequestLabels {
             cluster: cluster.to_string(),
             model: model.to_string(),

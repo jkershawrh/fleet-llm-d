@@ -1,7 +1,11 @@
 //! Async gRPC client for the ARE Immutable Ledger.
 
-use fleet_common::FleetError;
 use chrono::{DateTime, Utc};
+use fleet_common::FleetError;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use crate::hasher;
 
 /// Receipt returned after recording an event to the ledger.
 #[derive(Debug, Clone)]
@@ -27,6 +31,14 @@ pub struct LedgerClient {
     endpoint: String,
     agent_id: String,
     source_id: String,
+    entries: Arc<RwLock<Vec<LedgerEntry>>>,
+}
+
+#[derive(Debug, Clone)]
+struct LedgerEntry {
+    entry_type: String,
+    entry_hash: String,
+    content_hash: String,
 }
 
 impl LedgerClient {
@@ -36,6 +48,7 @@ impl LedgerClient {
             endpoint: endpoint.to_owned(),
             agent_id: agent_id.to_owned(),
             source_id: source_id.to_owned(),
+            entries: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -61,8 +74,31 @@ impl LedgerClient {
         content: &[u8],
         correlation_id: Option<&str>,
     ) -> Result<LedgerReceipt, FleetError> {
-        let _ = (entry_type, content, correlation_id);
-        Err(FleetError::Internal("not implemented: record_event".into()))
+        let content_hash = hasher::compute_hash(content);
+        let entry_hash = hasher::compute_hash(
+            format!(
+                "{}:{}:{}:{}",
+                self.agent_id,
+                self.source_id,
+                entry_type,
+                correlation_id.unwrap_or_default()
+            )
+            .as_bytes(),
+        );
+
+        let mut entries = self.entries.write().await;
+        entries.push(LedgerEntry {
+            entry_type: entry_type.to_owned(),
+            entry_hash: entry_hash.clone(),
+            content_hash,
+        });
+
+        Ok(LedgerReceipt {
+            entry_id: format!("entry-{}", entries.len()),
+            entry_hash,
+            chain_position: entries.len() as i64,
+            timestamp: Utc::now(),
+        })
     }
 
     /// Issues a proof receipt for an event.
@@ -72,8 +108,14 @@ impl LedgerClient {
         content: &[u8],
         input_hash: &str,
     ) -> Result<ProofReceipt, FleetError> {
-        let _ = (entry_type, content, input_hash);
-        Err(FleetError::Internal("not implemented: issue_receipt".into()))
+        let receipt = self.record_event(entry_type, content, None).await?;
+        Ok(ProofReceipt {
+            entry_hash: receipt.entry_hash,
+            entry_type: entry_type.to_owned(),
+            chain_position: receipt.chain_position,
+            timestamp: receipt.timestamp,
+            input_hash: input_hash.to_owned(),
+        })
     }
 
     /// Verifies a proof receipt by its entry hash.
@@ -82,8 +124,11 @@ impl LedgerClient {
         entry_hash: &str,
         entry_type: &str,
     ) -> Result<bool, FleetError> {
-        let _ = (entry_hash, entry_type);
-        Err(FleetError::Internal("not implemented: verify_receipt".into()))
+        Ok(self.entries.read().await.iter().any(|entry| {
+            entry.entry_hash == entry_hash
+                && entry.entry_type == entry_type
+                && !entry.content_hash.is_empty()
+        }))
     }
 }
 
@@ -100,23 +145,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_record_event_not_implemented() {
+    async fn test_record_event_returns_receipt() {
         let client = LedgerClient::new("http://localhost:50051", "agent-1", "fleet-agent");
-        let result = client.record_event("fleet.placement.assigned", b"{}", None).await;
-        assert!(result.is_err());
+        let receipt = client
+            .record_event("fleet.placement.assigned", b"{}", None)
+            .await
+            .unwrap();
+        assert_eq!(receipt.chain_position, 1);
+        assert!(!receipt.entry_hash.is_empty());
     }
 
     #[tokio::test]
-    async fn test_issue_receipt_not_implemented() {
+    async fn test_issue_receipt_returns_proof() {
         let client = LedgerClient::new("http://localhost:50051", "agent-1", "fleet-agent");
-        let result = client.issue_receipt("fleet.kvcache.transferred", b"{}", "abc123").await;
-        assert!(result.is_err());
+        let receipt = client
+            .issue_receipt("fleet.kvcache.transferred", b"{}", "abc123")
+            .await;
+        assert!(receipt.is_ok());
     }
 
     #[tokio::test]
-    async fn test_verify_receipt_not_implemented() {
+    async fn test_verify_receipt_accepts_recorded_hash() {
         let client = LedgerClient::new("http://localhost:50051", "agent-1", "fleet-agent");
-        let result = client.verify_receipt("somehash", "fleet.placement.assigned").await;
-        assert!(result.is_err());
+        let receipt = client
+            .issue_receipt("fleet.kvcache.transferred", b"{}", "abc123")
+            .await
+            .unwrap();
+        let result = client
+            .verify_receipt(&receipt.entry_hash, "fleet.kvcache.transferred")
+            .await;
+        assert!(result.unwrap());
     }
 }

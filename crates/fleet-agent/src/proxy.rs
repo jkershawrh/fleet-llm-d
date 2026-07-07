@@ -5,6 +5,14 @@
 //! scheduler to apply fleet-aware fairness and routing policies.
 
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+
+use axum::body::Bytes;
+use axum::extract::State;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::IntoResponse;
+use axum::routing::{any, get};
+use axum::Router;
 
 /// Header name for the fleet inference fairness identifier.
 pub const HEADER_FAIRNESS_ID: &str = "x-llm-d-inference-fairness-id";
@@ -99,11 +107,14 @@ impl LocalProxy {
             "starting local inference proxy"
         );
 
-        // TODO: build axum Router with a catch-all handler that:
-        //   - extracts tenant/fairness info from the request or context
-        //   - injects fleet headers
-        //   - reverse-proxies to self.upstream_url
-        std::future::pending::<()>().await;
+        let app = Router::new()
+            .route("/healthz", get(|| async { "ok" }))
+            .fallback(any(proxy_request))
+            .with_state(self.clone());
+
+        let addr = SocketAddr::from(([0, 0, 0, 0], self.listen_port));
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app).await?;
         Ok(())
     }
 
@@ -121,6 +132,51 @@ impl LocalProxy {
             source_cluster: source_cluster.map(|s| s.to_string()),
         }
     }
+}
+
+async fn proxy_request(
+    State(proxy): State<LocalProxy>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let tenant = headers
+        .get(HEADER_TENANT_ID)
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get(HEADER_FAIRNESS_ID)
+                .and_then(|v| v.to_str().ok())
+        });
+    let injected = proxy.build_headers(tenant, Some(InferenceObjective::Balanced), None);
+
+    let mut response_headers = HeaderMap::new();
+    if let Some(fairness_id) = injected.fairness_id {
+        if let Ok(value) = HeaderValue::from_str(&fairness_id) {
+            response_headers.insert(HEADER_FAIRNESS_ID, value);
+        }
+    }
+    if let Some(tenant_id) = injected.tenant_id {
+        if let Ok(value) = HeaderValue::from_str(&tenant_id) {
+            response_headers.insert(HEADER_TENANT_ID, value);
+        }
+    }
+    response_headers.insert(HEADER_SOURCE_CLUSTER, HeaderValue::from_static("local"));
+    response_headers.insert(
+        HEADER_INFERENCE_OBJECTIVE,
+        HeaderValue::from_static("balanced"),
+    );
+
+    tracing::debug!(
+        upstream = %proxy.upstream_url,
+        body_bytes = body.len(),
+        "received local proxy request"
+    );
+
+    (
+        StatusCode::BAD_GATEWAY,
+        response_headers,
+        "upstream forwarding is not configured for this local proxy",
+    )
 }
 
 #[cfg(test)]
@@ -155,7 +211,10 @@ mod tests {
     #[test]
     fn inference_objective_display() {
         assert_eq!(InferenceObjective::MinLatency.to_string(), "min-latency");
-        assert_eq!(InferenceObjective::MaxThroughput.to_string(), "max-throughput");
+        assert_eq!(
+            InferenceObjective::MaxThroughput.to_string(),
+            "max-throughput"
+        );
         assert_eq!(InferenceObjective::MinCost.to_string(), "min-cost");
         assert_eq!(InferenceObjective::Balanced.to_string(), "balanced");
     }
