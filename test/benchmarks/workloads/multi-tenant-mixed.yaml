@@ -1,0 +1,182 @@
+# Multi-tenant mixed workload for fleet-llm-d benchmarks.
+# Characteristics: multiple tenants with different priorities, rate limits,
+# and workload profiles running concurrently on shared infrastructure.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: multi-tenant-mixed
+  labels:
+    workload-type: multi-tenant
+    latency-class: mixed
+spec:
+  description: >-
+    Simulates a multi-tenant deployment where tenants with different
+    priority levels, quota allocations, and workload types share the
+    same fleet-llm-d infrastructure. Tests tenant isolation, fair
+    scheduling under contention, and priority-based preemption. Each
+    tenant profile references a TenantProfile CRD configuration.
+
+  model:
+    name: meta-llama/Llama-3.1-70B-Instruct
+    source: huggingface
+    gpuType: nvidia-h100
+
+  tenants:
+    - name: production-api
+      priority: 900
+      description: >-
+        Production customer-facing API. Highest priority with strict
+        latency SLOs and guaranteed capacity.
+      tenant_profile_ref: production-api-tp
+      quota:
+        max_tokens_per_minute: 2000000
+        max_concurrent_requests: 500
+        gpu_budget: 32
+      rate_limit:
+        requests_per_second: 100
+        burst_size: 200
+      workload:
+        type: chat-multi-turn
+        input_tokens:
+          min: 64
+          max: 4096
+          mean: 1024
+        output_tokens:
+          min: 32
+          max: 1024
+          mean: 256
+      traffic:
+        target_qps: 40
+        arrival_pattern: poisson
+      slo:
+        ttft_p99_ms: 250
+        tpot_p99_ms: 40
+        e2e_p99_ms: 5000
+        success_rate: 0.999
+
+    - name: internal-analytics
+      priority: 500
+      description: >-
+        Internal analytics pipeline. Medium priority with relaxed
+        latency but high throughput requirements.
+      tenant_profile_ref: internal-analytics-tp
+      quota:
+        max_tokens_per_minute: 5000000
+        max_concurrent_requests: 200
+        gpu_budget: 16
+      rate_limit:
+        requests_per_second: 20
+        burst_size: 50
+      workload:
+        type: document-summarization
+        input_tokens:
+          min: 8192
+          max: 65536
+          mean: 24576
+        output_tokens:
+          min: 256
+          max: 2048
+          mean: 1024
+      traffic:
+        target_qps: 8
+        arrival_pattern: constant
+      slo:
+        ttft_p99_ms: 5000
+        tpot_p99_ms: 60
+        e2e_p99_ms: 90000
+        success_rate: 0.995
+
+    - name: dev-sandbox
+      priority: 100
+      description: >-
+        Developer sandbox for experimentation. Lowest priority,
+        best-effort with aggressive rate limiting.
+      tenant_profile_ref: dev-sandbox-tp
+      quota:
+        max_tokens_per_minute: 500000
+        max_concurrent_requests: 50
+        gpu_budget: 4
+      rate_limit:
+        requests_per_second: 10
+        burst_size: 20
+      workload:
+        type: mixed
+        input_tokens:
+          min: 32
+          max: 16384
+          mean: 2048
+        output_tokens:
+          min: 16
+          max: 4096
+          mean: 512
+      traffic:
+        target_qps: 8
+        arrival_pattern: bursty
+        burst_factor: 5.0
+      slo:
+        ttft_p99_ms: 2000
+        tpot_p99_ms: 80
+        e2e_p99_ms: 30000
+        success_rate: 0.990
+
+    - name: partner-integration
+      priority: 700
+      description: >-
+        Partner integration API. High priority with per-partner rate
+        limits and cost controls.
+      tenant_profile_ref: partner-integration-tp
+      quota:
+        max_tokens_per_minute: 1000000
+        max_concurrent_requests: 150
+        gpu_budget: 8
+      rate_limit:
+        requests_per_second: 30
+        burst_size: 60
+      workload:
+        type: rag-retrieval
+        input_tokens:
+          min: 512
+          max: 16384
+          mean: 4096
+        output_tokens:
+          min: 64
+          max: 1024
+          mean: 384
+      traffic:
+        target_qps: 15
+        arrival_pattern: poisson
+      slo:
+        ttft_p99_ms: 500
+        tpot_p99_ms: 45
+        e2e_p99_ms: 10000
+        success_rate: 0.998
+
+  # Aggregate fleet traffic across all tenants.
+  aggregate_traffic:
+    total_target_qps: 71
+    total_concurrency: 900
+    duration: 1200s
+    warmup: 60s
+
+  contention_scenarios:
+    - name: steady-state
+      description: All tenants within their quotas.
+      duration: 300s
+
+    - name: burst-contention
+      description: >-
+        dev-sandbox bursts to 5x its target QPS while production-api
+        maintains steady load. Validates priority preemption.
+      duration: 300s
+      overrides:
+        dev-sandbox:
+          target_qps: 40
+
+    - name: quota-exhaustion
+      description: >-
+        internal-analytics exceeds its token-per-minute quota.
+        Validates rate limiting without impacting other tenants.
+      duration: 300s
+      overrides:
+        internal-analytics:
+          target_qps: 50

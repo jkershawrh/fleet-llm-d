@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fleet-llm-d
+resources:
+  - ../../base
+patches:
+  # Patch fleet-controller: 3 replicas, federation env vars, mesh annotations
+  - target:
+      kind: Deployment
+      name: fleet-controller
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: fleet-controller
+        annotations:
+          fleet.llm-d.ai/mesh-enabled: "true"
+          fleet.llm-d.ai/peer-port: "8443"
+      spec:
+        replicas: 3
+        template:
+          metadata:
+            annotations:
+              fleet.llm-d.ai/mesh-enabled: "true"
+              fleet.llm-d.ai/peer-port: "8443"
+          spec:
+            containers:
+              - name: fleet-controller
+                env:
+                  - name: FLEET_FEDERATION_ENABLED
+                    value: "true"
+                  - name: FLEET_PEER_DISCOVERY
+                    value: "dns"
+                  - name: FLEET_CLUSTER_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: spec.nodeName
+  # Patch fleet-agent: mesh networking annotations
+  - target:
+      kind: Deployment
+      name: fleet-agent
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: fleet-agent
+        annotations:
+          fleet.llm-d.ai/mesh-enabled: "true"
+          fleet.llm-d.ai/peer-port: "8443"
+      spec:
+        template:
+          metadata:
+            annotations:
+              fleet.llm-d.ai/mesh-enabled: "true"
+              fleet.llm-d.ai/peer-port: "8443"

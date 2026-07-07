@@ -1,0 +1,114 @@
+# fleet-llm-d Scoring Rubric
+# Defines quality dimensions, their weights, and minimum score thresholds
+# required at each deployment stage.
+
+metadata:
+  generated_at: "2026-07-06T00:00:00Z"
+  version: "0.1.0"
+  project: fleet-llm-d
+  description: >
+    Scoring rubric for fleet-llm-d readiness gates. Each dimension carries a
+    weight (all weights sum to 1.0) and defines minimum score thresholds
+    (0-100) that must be met before promotion to the next stage.
+
+stages:
+  - dev
+  - staging
+  - production
+
+dimensions:
+
+  correctness:
+    weight: 0.30
+    description: >
+      Functional accuracy of the system. Measures whether capabilities
+      produce correct results under normal and edge-case inputs, including
+      placement decisions, routing logic, and lifecycle state transitions.
+    metrics:
+      - unit test pass rate
+      - BDD scenario pass rate
+      - contract conformance rate
+      - regression test stability
+    minimum_thresholds:
+      dev: 60
+      staging: 85
+      production: 95
+
+  performance:
+    weight: 0.25
+    description: >
+      Latency, throughput, and resource efficiency under load. Covers
+      request routing latency, autoscaling response time, KV-transfer
+      bandwidth, and benchmark results against defined SLOs.
+    metrics:
+      - p50 / p95 / p99 request latency
+      - throughput (requests per second)
+      - autoscale reaction time (seconds to scale)
+      - KV-transfer throughput (GB/s)
+      - benchmark regression delta (percent)
+    minimum_thresholds:
+      dev: 50
+      staging: 75
+      production: 90
+
+  reliability:
+    weight: 0.25
+    description: >
+      System resilience and fault tolerance. Evaluates behavior during
+      node failures, network partitions, rolling upgrades, and sustained
+      load. Includes chaos-engineering and soak-test outcomes.
+    metrics:
+      - availability (percent uptime)
+      - mean time to recovery (MTTR)
+      - error rate under fault injection
+      - graceful degradation score
+      - soak test pass rate (24h+)
+    minimum_thresholds:
+      dev: 50
+      staging: 80
+      production: 95
+
+  operability:
+    weight: 0.10
+    description: >
+      Ease of deployment, monitoring, and day-2 operations. Assesses
+      observability coverage (metrics, logs, traces), alerting fidelity,
+      runbook completeness, and CRD/API ergonomics.
+    metrics:
+      - observability coverage (percent of components instrumented)
+      - alert signal-to-noise ratio
+      - runbook coverage (percent of failure modes documented)
+      - CRD validation coverage
+      - upgrade path test pass rate
+    minimum_thresholds:
+      dev: 40
+      staging: 70
+      production: 85
+
+  security:
+    weight: 0.10
+    description: >
+      Security posture of the system. Covers authentication, authorization,
+      tenant isolation, secrets management, supply-chain integrity, and
+      vulnerability scanning results.
+    metrics:
+      - CVE scan pass rate (critical/high)
+      - RBAC policy conformance
+      - tenant isolation test pass rate
+      - secrets-in-code scan (zero findings)
+      - image signature verification
+      - network policy coverage
+    minimum_thresholds:
+      dev: 50
+      staging: 80
+      production: 95
+
+scoring:
+  scale: 0-100
+  passing_rule: >
+    A capability is promotable to a stage only when every dimension meets
+    or exceeds that stage's minimum threshold. The composite score is the
+    weighted sum across all dimensions, but no single dimension may fall
+    below its stage minimum regardless of the composite.
+  composite_formula: >
+    composite = sum(dimension.weight * dimension.score for each dimension)

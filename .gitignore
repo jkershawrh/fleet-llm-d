@@ -1,0 +1,58 @@
+# Go
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Rust
+/target/
+crates/*/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node/TypeScript
+node_modules/
+web/node_modules/
+web/.next/
+web/out/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+/build/
+/dist/
+
+# Environment
+.env
+.env.local
+*.pem
+
+# Generated
+pkg/apis/fleet/v1alpha1/zz_generated.*
+api/proto/**/*.pb.go
+api/proto/**/*.pb.ts
+web/src/lib/api-client.generated.ts

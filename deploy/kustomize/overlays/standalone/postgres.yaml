@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fleet-postgres
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  replicas: 1
+  serviceName: fleet-postgres
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-postgres
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-postgres
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: fleet-llm-d
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_DB
+              value: fleet
+            - name: POSTGRES_USER
+              value: fleet
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-postgres
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - fleet
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - fleet
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-postgres
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fleet-postgres
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

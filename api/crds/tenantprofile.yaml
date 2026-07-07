@@ -1,0 +1,246 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tenantprofiles.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: TenantProfile
+    listKind: TenantProfileList
+    plural: tenantprofiles
+    singular: tenantprofile
+    shortNames:
+      - tp
+      - tps
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Priority
+          type: integer
+          jsonPath: .spec.priority
+          description: Tenant priority level
+        - name: Max-TPM
+          type: integer
+          jsonPath: .spec.quotas.maxTokensPerMinute
+          description: Max tokens per minute quota
+        - name: GPU-Budget
+          type: integer
+          jsonPath: .spec.quotas.gpuBudget.maxGPUs
+          description: Maximum GPU allocation
+        - name: Monthly-Cost
+          type: string
+          jsonPath: .status.usage.currentMonthCost
+          description: Current month cost
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            TenantProfile defines per-tenant governance including quotas,
+            rate limits, priority, cost controls, and cluster access
+            restrictions. Each tenant in a multi-tenant fleet-llm-d
+            deployment has one TenantProfile.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired tenant governance configuration.
+              properties:
+                quotas:
+                  type: object
+                  description: >-
+                    Resource quotas that limit the tenant's consumption of
+                    fleet resources.
+                  properties:
+                    maxTokensPerMinute:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      description: >-
+                        Maximum number of tokens (input + output) the tenant
+                        may consume per minute across all models.
+                    maxConcurrentRequests:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Maximum number of concurrent inference requests the
+                        tenant may have in flight.
+                    maxModels:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Maximum number of distinct models the tenant may
+                        have deployed simultaneously.
+                    gpuBudget:
+                      type: object
+                      description: >-
+                        GPU resource budget for the tenant.
+                      properties:
+                        maxGPUs:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                          description: >-
+                            Maximum total GPUs the tenant may consume across
+                            all clusters.
+                        gpuTypes:
+                          type: array
+                          description: >-
+                            Allowed GPU types the tenant may use. If empty,
+                            all GPU types are permitted.
+                          items:
+                            type: string
+                rateLimit:
+                  type: object
+                  description: >-
+                    Rate limiting configuration for the tenant's API requests.
+                  properties:
+                    requestsPerSecond:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Maximum sustained request rate in requests per second.
+                    burstSize:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Maximum burst size above the sustained rate. Allows
+                        short spikes in traffic before rate limiting kicks in.
+                priority:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  maximum: 1000
+                  description: >-
+                    Tenant priority level. Higher values indicate higher
+                    priority. Used for request scheduling and resource
+                    allocation during contention. 0 is lowest priority.
+                  default: 100
+                costControl:
+                  type: object
+                  description: >-
+                    Cost management configuration for the tenant.
+                  properties:
+                    monthlyBudget:
+                      type: string
+                      description: >-
+                        Monthly cost budget as a decimal string with currency
+                        (e.g. "5000.00"). When exceeded, the tenant's requests
+                        may be throttled or rejected based on policy.
+                    alertThreshold:
+                      type: number
+                      format: double
+                      minimum: 0
+                      maximum: 1
+                      description: >-
+                        Fraction of the monthly budget (0.0-1.0) at which a
+                        cost alert is triggered.
+                      default: 0.8
+                clusters:
+                  type: object
+                  description: >-
+                    Cluster access restrictions for the tenant.
+                  properties:
+                    allowed:
+                      type: array
+                      description: >-
+                        Explicit list of cluster names the tenant is allowed
+                        to use. If non-empty, only these clusters are
+                        available. Mutually exclusive with denied.
+                      items:
+                        type: string
+                    denied:
+                      type: array
+                      description: >-
+                        List of cluster names the tenant is explicitly denied
+                        access to. All other clusters are available. Mutually
+                        exclusive with allowed.
+                      items:
+                        type: string
+            status:
+              type: object
+              description: Observed usage and status of the tenant.
+              properties:
+                usage:
+                  type: object
+                  description: >-
+                    Current resource usage for the tenant.
+                  properties:
+                    currentMonthCost:
+                      type: string
+                      description: >-
+                        Current month's accumulated cost as a decimal string
+                        (e.g. "2345.67").
+                    tokensConsumed:
+                      type: integer
+                      format: int64
+                      description: >-
+                        Total tokens consumed in the current billing period.
+                    avgLatency:
+                      type: string
+                      description: >-
+                        Average end-to-end request latency observed for
+                        this tenant (e.g. "245ms").
+                    activeModels:
+                      type: integer
+                      format: int32
+                      description: >-
+                        Number of models currently active for this tenant.
+                    currentConcurrentRequests:
+                      type: integer
+                      format: int32
+                      description: >-
+                        Current number of in-flight requests for this tenant.
+                conditions:
+                  type: array
+                  description: >-
+                    Standard Kubernetes conditions for the resource.
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: >-
+                          Type of the condition (e.g. "QuotaExceeded",
+                          "BudgetAlert", "RateLimited").
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      reason:
+                        type: string
+                        description: Machine-readable reason for the condition.
+                      message:
+                        type: string
+                        description: Human-readable detail message.
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: Timestamp of last condition transition.

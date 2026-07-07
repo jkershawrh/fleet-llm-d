@@ -1,0 +1,142 @@
+# Cross-cluster routing latency benchmark scenario.
+# Measures the overhead introduced by the fleet gateway when routing
+# inference requests across multiple clusters.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: BenchmarkScenario
+metadata:
+  name: cross-cluster-latency
+  labels:
+    category: fleet-routing
+    severity: performance
+spec:
+  description: >-
+    Measures fleet gateway routing overhead by comparing direct
+    single-cluster inference latency against routed multi-cluster
+    inference. Exercises weighted, geographic, and KV-cache-affinity
+    routing strategies. The key metric is the incremental TTFT and
+    E2E latency attributable to the fleet routing layer.
+
+  workload_ref: chat-multi-turn
+
+  fleet_topology:
+    clusters:
+      - name: us-east-1
+        region: us-east
+        gpu_type: nvidia-h100
+        replicas: 4
+        latency_from_gateway_ms: 2
+      - name: us-west-2
+        region: us-west
+        gpu_type: nvidia-h100
+        replicas: 4
+        latency_from_gateway_ms: 35
+      - name: eu-west-1
+        region: eu-west
+        gpu_type: nvidia-h100
+        replicas: 4
+        latency_from_gateway_ms: 85
+
+    gateway:
+      location: us-east
+      health_check_interval: 10s
+      unhealthy_threshold: 3
+
+  routing_policies:
+    - name: weighted-even
+      strategy: weighted
+      weights:
+        - cluster: us-east-1
+          weight: 34
+        - cluster: us-west-2
+          weight: 33
+        - cluster: eu-west-1
+          weight: 33
+
+    - name: geographic-local
+      strategy: geographic
+      prefer_local: true
+      kv_cache_affinity: false
+
+    - name: kv-cache-affinity
+      strategy: weighted
+      kv_cache_affinity: true
+      weights:
+        - cluster: us-east-1
+          weight: 50
+        - cluster: us-west-2
+          weight: 30
+        - cluster: eu-west-1
+          weight: 20
+
+  phases:
+    - name: baseline-direct
+      description: >-
+        Direct requests to a single cluster without the fleet gateway
+        to establish baseline latency.
+      duration: 300s
+      routing_bypass: true
+      target_cluster: us-east-1
+      traffic:
+        qps: 50
+      metrics:
+        - ttft_p50_ms
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - e2e_p99_ms
+
+    - name: routed-weighted
+      description: >-
+        Route through fleet gateway using weighted distribution.
+      duration: 300s
+      routing_policy: weighted-even
+      traffic:
+        qps: 50
+      metrics:
+        - ttft_p50_ms
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - e2e_p99_ms
+        - routing_decision_latency_ms
+        - cross_cluster_overhead_ms
+
+    - name: routed-geographic
+      description: >-
+        Route through fleet gateway using geographic locality.
+      duration: 300s
+      routing_policy: geographic-local
+      traffic:
+        qps: 50
+        source_regions:
+          - region: us-east
+            weight: 40
+          - region: us-west
+            weight: 30
+          - region: eu-west
+            weight: 30
+      metrics:
+        - ttft_p50_ms
+        - ttft_p99_ms
+        - routing_decision_latency_ms
+        - local_routing_ratio
+
+    - name: routed-kv-affinity
+      description: >-
+        Route with KV cache affinity enabled, measuring cache hit
+        rate improvements against routing overhead.
+      duration: 600s
+      routing_policy: kv-cache-affinity
+      traffic:
+        qps: 50
+      metrics:
+        - ttft_p50_ms
+        - ttft_p99_ms
+        - kv_cache_hit_rate
+        - routing_decision_latency_ms
+
+  success_criteria:
+    # Fleet gateway routing overhead should not exceed 5ms at p50.
+    max_routing_overhead_p50_ms: 5
+    # Fleet gateway routing overhead should not exceed 15ms at p99.
+    max_routing_overhead_p99_ms: 15
+    # KV cache affinity routing should improve cache hit rate by > 20%.
+    min_kv_cache_hit_rate_improvement: 0.20

@@ -1,0 +1,20 @@
+[package]
+name = "fleet-ledger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ARE Immutable Ledger integration for fleet-llm-d agents"
+
+[dependencies]
+fleet-common = { path = "../fleet-common" }
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }

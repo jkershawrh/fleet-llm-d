@@ -1,0 +1,516 @@
+apiVersion: fleet-llm-d.io/v1alpha1
+kind: Workflow
+metadata:
+  name: cluster-onboard
+  description: >
+    Onboards a new Kubernetes cluster into the fleet-llm-d inference fleet.
+    Discovers GPU resources, deploys the fleet agent, validates connectivity
+    and inference readiness, and gradually enables production traffic routing.
+  version: "1.0.0"
+  labels:
+    category: onboarding
+    criticality: high
+
+spec:
+  timeout: 3600s
+  concurrency:
+    maxParallel: 3
+    policy: queue
+
+  parameters:
+    - name: clusterName
+      type: string
+      required: true
+      description: Unique name for the cluster within the fleet
+    - name: clusterEndpoint
+      type: string
+      required: true
+      description: Kubernetes API server endpoint URL
+    - name: clusterRegion
+      type: string
+      required: true
+      description: Geographic region (e.g. us-east-1, eu-west-1)
+    - name: provider
+      type: string
+      required: true
+      enum: [aws, gcp, azure, on-prem, openshift]
+      description: Infrastructure provider
+    - name: kubeconfig
+      type: secret
+      required: true
+      description: Reference to kubeconfig secret for cluster access
+    - name: gpuOperatorVersion
+      type: string
+      default: "v24.6.0"
+      description: NVIDIA GPU Operator version to validate or install
+    - name: agentVersion
+      type: string
+      default: latest
+      description: Fleet agent version to deploy
+    - name: maxTrafficPercentage
+      type: integer
+      default: 100
+      description: Maximum traffic percentage after onboarding
+    - name: trafficRampSteps
+      type: list
+      default: [10, 25, 50, 75, 100]
+      description: Traffic percentage ramp-up steps
+
+  stages:
+    - name: register
+      description: >
+        Register the cluster in the fleet control plane, validate API access,
+        and verify prerequisite software versions.
+      timeout: 300s
+      steps:
+        - name: validate-api-access
+          action: cluster.validateAccess
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            endpoint: "{{ parameters.clusterEndpoint }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            requiredPermissions:
+              - apiGroups: [""]
+                resources: [nodes, pods, services, configmaps, secrets, namespaces]
+                verbs: [get, list, watch, create, update, delete]
+              - apiGroups: [apps]
+                resources: [deployments, daemonsets, statefulsets]
+                verbs: [get, list, watch, create, update, delete]
+              - apiGroups: [nvidia.com]
+                resources: ["*"]
+                verbs: [get, list, watch]
+          successCriteria:
+            - expr: "result.apiReachable == true"
+            - expr: "result.authValid == true"
+            - expr: "result.permissionsSufficient == true"
+
+        - name: check-prerequisites
+          action: cluster.checkPrerequisites
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            requirements:
+              kubernetesVersion: ">=1.28.0"
+              containerRuntime: containerd
+              cniPlugin: [calico, cilium, flannel]
+              storageClass: true
+              ingressController: true
+              certManager: ">=1.12.0"
+          successCriteria:
+            - expr: "result.allPrerequisitesMet == true"
+            - expr: "result.kubernetesVersion >= '1.28.0'"
+
+        - name: register-in-control-plane
+          action: fleet.registerCluster
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            endpoint: "{{ parameters.clusterEndpoint }}"
+            region: "{{ parameters.clusterRegion }}"
+            provider: "{{ parameters.provider }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            labels:
+              fleet.llm-d.io/region: "{{ parameters.clusterRegion }}"
+              fleet.llm-d.io/provider: "{{ parameters.provider }}"
+              fleet.llm-d.io/status: onboarding
+          successCriteria:
+            - expr: "result.registered == true"
+            - expr: "result.clusterId != ''"
+
+      on_failure:
+        action: workflow.abort
+        params:
+          reason: "Cluster registration failed: API access or prerequisites not met"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-infra"
+
+    - name: discover-resources
+      description: >
+        Discover and inventory all GPU resources on the cluster including GPU
+        type, count, memory, topology, and NVLINK connectivity.
+      timeout: 600s
+      steps:
+        - name: validate-gpu-operator
+          action: cluster.validateGpuOperator
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            expectedVersion: "{{ parameters.gpuOperatorVersion }}"
+            components:
+              - nvidia-driver-daemonset
+              - nvidia-device-plugin
+              - gpu-feature-discovery
+              - dcgm-exporter
+          successCriteria:
+            - expr: "result.operatorHealthy == true"
+            - expr: "result.allComponentsRunning == true"
+
+        - name: discover-gpu-nodes
+          action: cluster.discoverGpus
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            inventoryDetails:
+              - gpuModel
+              - gpuMemoryMB
+              - gpuCount
+              - nvlinkTopology
+              - pcieTopology
+              - numaAffinity
+              - driverVersion
+              - cudaVersion
+          successCriteria:
+            - expr: "result.gpuNodesFound > 0"
+            - expr: "result.totalGpuCount > 0"
+
+        - name: benchmark-gpu-performance
+          action: cluster.benchmarkGpus
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            gpuNodes: "{{ steps.discover-gpu-nodes.result.gpuNodes }}"
+            benchmarks:
+              - name: memory-bandwidth
+                type: gpu-burn
+                durationSeconds: 30
+              - name: p2p-bandwidth
+                type: nccl-test
+                operation: all_reduce
+                messageSizesMB: [256, 1024, 4096]
+              - name: host-to-device
+                type: bandwidth-test
+                direction: h2d
+            maxParallelNodes: 4
+          successCriteria:
+            - expr: "result.allBenchmarksPassed == true"
+            - expr: "result.failedGpuCount == 0"
+
+        - name: register-gpu-inventory
+          action: fleet.registerGpuInventory
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            inventory: "{{ steps.discover-gpu-nodes.result }}"
+            benchmarks: "{{ steps.benchmark-gpu-performance.result }}"
+            capacityLabels:
+              - gpuType
+              - gpuMemoryTier
+              - nvlinkEnabled
+              - maxTensorParallelism
+          successCriteria:
+            - expr: "result.inventoryRegistered == true"
+
+      on_failure:
+        action: workflow.retry
+        params:
+          maxRetries: 2
+          backoff: exponential
+          initialDelay: 60s
+          notify:
+            - channel: slack
+              target: "#fleet-llm-infra"
+
+    - name: deploy-agent
+      description: >
+        Deploy the fleet-llm-d agent to the cluster. The agent manages model
+        lifecycle, reports health telemetry, and executes placement decisions.
+      timeout: 600s
+      steps:
+        - name: create-namespace
+          action: cluster.createNamespace
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            namespace: fleet-llm-system
+            labels:
+              app.kubernetes.io/part-of: fleet-llm-d
+              pod-security.kubernetes.io/enforce: restricted
+
+        - name: deploy-agent-secrets
+          action: cluster.deploySecrets
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            namespace: fleet-llm-system
+            secrets:
+              - name: fleet-control-plane-token
+                type: Opaque
+                source: vault
+                vaultPath: "secret/fleet-llm/clusters/{{ parameters.clusterName }}/agent-token"
+              - name: model-registry-credentials
+                type: kubernetes.io/dockerconfigjson
+                source: vault
+                vaultPath: "secret/fleet-llm/registry/pull-secret"
+              - name: tls-certs
+                type: kubernetes.io/tls
+                source: cert-manager
+                issuer: fleet-llm-ca
+          successCriteria:
+            - expr: "result.allSecretsDeployed == true"
+
+        - name: deploy-fleet-agent
+          action: cluster.deployAgent
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            namespace: fleet-llm-system
+            agentVersion: "{{ parameters.agentVersion }}"
+            config:
+              controlPlaneUrl: "https://control.fleet-llm-d.internal"
+              clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+              reportIntervalSeconds: 15
+              heartbeatIntervalSeconds: 5
+              metricsPort: 9090
+              modelCachePath: /var/lib/fleet-llm/models
+              modelCacheSizeGB: 500
+              maxConcurrentPulls: 2
+              logLevel: info
+            resources:
+              requests:
+                cpu: 500m
+                memory: 512Mi
+              limits:
+                cpu: 2000m
+                memory: 2Gi
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+          successCriteria:
+            - expr: "result.agentRunning == true"
+            - expr: "result.replicasReady == result.replicasDesired"
+
+        - name: deploy-metrics-stack
+          action: cluster.deployMetrics
+          params:
+            clusterName: "{{ parameters.clusterName }}"
+            kubeconfig: "{{ parameters.kubeconfig }}"
+            namespace: fleet-llm-system
+            components:
+              - name: dcgm-exporter
+                enabled: true
+              - name: prometheus-agent
+                enabled: true
+                remoteWriteUrl: "https://metrics.fleet-llm-d.internal/api/v1/write"
+              - name: otel-collector
+                enabled: true
+                otlpEndpoint: "https://traces.fleet-llm-d.internal:4317"
+          successCriteria:
+            - expr: "result.allComponentsRunning == true"
+            - expr: "result.metricsFlowing == true"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: register
+          cleanup:
+            - action: cluster.deleteNamespace
+              params:
+                clusterName: "{{ parameters.clusterName }}"
+                kubeconfig: "{{ parameters.kubeconfig }}"
+                namespace: fleet-llm-system
+          notify:
+            - channel: slack
+              target: "#fleet-llm-infra"
+            - channel: pagerduty
+              severity: high
+
+    - name: validate
+      description: >
+        Validate end-to-end connectivity between the fleet agent and the
+        control plane, verify inference capability with a test model, and
+        confirm telemetry pipeline integrity.
+      timeout: 900s
+      steps:
+        - name: validate-agent-connectivity
+          action: agent.validateConnectivity
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            checks:
+              - control-plane-heartbeat
+              - metrics-pipeline
+              - log-forwarding
+              - model-registry-access
+              - secret-store-access
+            timeoutPerCheck: 60s
+          successCriteria:
+            - expr: "result.allChecksPass == true"
+            - expr: "result.heartbeatLatencyMs < 500"
+
+        - name: deploy-test-model
+          action: testing.deployTestModel
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            testModel: fleet-llm/test-model-tiny
+            runtime: vllm
+            gpuCount: 1
+            namespace: fleet-llm-system
+          successCriteria:
+            - expr: "result.modelReady == true"
+            - expr: "result.startupTimeSeconds < 120"
+
+        - name: run-inference-validation
+          action: testing.runInferenceTest
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            testModel: fleet-llm/test-model-tiny
+            tests:
+              - name: basic-completion
+                type: completion
+                prompt: "Hello, this is a connectivity test."
+                maxTokens: 50
+              - name: streaming
+                type: streaming-completion
+                prompt: "Count from 1 to 10."
+                maxTokens: 100
+              - name: concurrent-load
+                type: load-test
+                concurrency: 8
+                requests: 100
+                prompt: "Explain inference."
+                maxTokens: 50
+          successCriteria:
+            - expr: "result.allTestsPassed == true"
+            - expr: "result.errorRate == 0.0"
+
+        - name: validate-telemetry-pipeline
+          action: monitoring.validatePipeline
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            expectedMetrics:
+              - dcgm_gpu_utilization
+              - dcgm_gpu_memory_used
+              - dcgm_gpu_temperature
+              - vllm_request_latency_seconds
+              - vllm_tokens_generated_total
+              - fleet_agent_heartbeat_timestamp
+            validationWindow: 120s
+          successCriteria:
+            - expr: "result.allMetricsPresent == true"
+            - expr: "result.dataFreshness < 30"
+
+        - name: cleanup-test-model
+          action: testing.cleanupTestModel
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            testModel: fleet-llm/test-model-tiny
+            namespace: fleet-llm-system
+          successCriteria:
+            - expr: "result.cleanedUp == true"
+
+      on_failure:
+        action: workflow.retry
+        params:
+          maxRetries: 1
+          backoff: fixed
+          initialDelay: 120s
+          notify:
+            - channel: slack
+              target: "#fleet-llm-infra"
+
+    - name: enable-routing
+      description: >
+        Gradually enable production traffic routing to the new cluster.
+        Traffic ramps through configured percentage steps with health
+        monitoring at each level.
+      timeout: 1800s
+      steps:
+        - name: add-to-routing-pool
+          action: routing.addCluster
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            clusterName: "{{ parameters.clusterName }}"
+            region: "{{ parameters.clusterRegion }}"
+            initialWeight: 0
+            healthCheckConfig:
+              path: /healthz
+              intervalSeconds: 10
+              failureThreshold: 3
+              successThreshold: 2
+          successCriteria:
+            - expr: "result.addedToPool == true"
+
+        - name: gradual-traffic-ramp
+          action: routing.gradualRamp
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            steps: "{{ parameters.trafficRampSteps }}"
+            maxPercentage: "{{ parameters.maxTrafficPercentage }}"
+            observationWindowPerStep: 300s
+            healthGates:
+              - metric: error_rate
+                maxThreshold: 0.01
+              - metric: p99_latency_ms
+                maxThreshold: 2000
+              - metric: gpu_utilization
+                maxThreshold: 0.95
+              - metric: agent_heartbeat_age_seconds
+                maxThreshold: 30
+            autoRollback: true
+          successCriteria:
+            - expr: "result.finalWeight == parameters.maxTrafficPercentage"
+            - expr: "result.allGatesPassed == true"
+
+        - name: update-cluster-status
+          action: fleet.updateClusterStatus
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            status: active
+            labels:
+              fleet.llm-d.io/status: active
+              fleet.llm-d.io/onboarded-at: "{{ now() }}"
+            metadata:
+              gpuInventory: "{{ stages.discover-resources.steps.discover-gpu-nodes.result }}"
+              agentVersion: "{{ parameters.agentVersion }}"
+              routingWeight: "{{ steps.gradual-traffic-ramp.result.finalWeight }}"
+          successCriteria:
+            - expr: "result.statusUpdated == true"
+
+        - name: configure-cluster-alerts
+          action: monitoring.configureAlerts
+          params:
+            clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+            clusterName: "{{ parameters.clusterName }}"
+            alerts:
+              - name: agent-disconnected
+                condition: "agent_heartbeat_age_seconds > 60"
+                severity: critical
+                window: 2m
+              - name: gpu-node-unhealthy
+                condition: "unhealthy_gpu_node_count > 0"
+                severity: warning
+                window: 5m
+              - name: high-gpu-temperature
+                condition: "max_gpu_temperature_celsius > 85"
+                severity: warning
+                window: 5m
+              - name: cluster-capacity-low
+                condition: "available_gpu_slots / total_gpu_slots < 0.1"
+                severity: warning
+                window: 10m
+              - name: model-pull-failures
+                condition: "model_pull_failure_count > 3"
+                severity: critical
+                window: 15m
+          successCriteria:
+            - expr: "result.alertsConfigured == true"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: validate
+          steps:
+            - name: remove-from-routing
+              action: routing.removeCluster
+              params:
+                clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+                drainTimeoutSeconds: 60
+            - name: set-status-failed
+              action: fleet.updateClusterStatus
+              params:
+                clusterId: "{{ stages.register.steps.register-in-control-plane.result.clusterId }}"
+                status: onboarding-failed
+          notify:
+            - channel: slack
+              target: "#fleet-llm-infra"
+            - channel: pagerduty
+              severity: high
