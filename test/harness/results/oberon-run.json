@@ -1,0 +1,374 @@
+{
+  "timestamp": "2026-07-07T06:15:20Z",
+  "target": "https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com",
+  "total_passed": 7,
+  "total_failed": 40,
+  "total_skipped": 1,
+  "duration_ns": 0,
+  "suites": [
+    {
+      "name": "smoke",
+      "passed": 0,
+      "failed": 22,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "health:/healthz",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "health:/readyz",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/readyz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "auth:no-token-rejected",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "auth:valid-token-accepted",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "crud:create-cluster",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "metrics:reachable",
+          "passed": false,
+          "detail": "request error: do request: Get \"http://localhost:9090/metrics\": dial tcp [::1]:9090: connect: connection refused"
+        },
+        {
+          "name": "reach:GET:/healthz",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/readyz",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/readyz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/clusters",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:POST:/api/v1/clusters",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/pools",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/pools\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/tenants",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/tenants\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/metrics/fleet",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/metrics/fleet\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/rollouts",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/rollouts\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:POST:/api/v1/rollouts",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/rollouts\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/verify/chains",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/verify/chains\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:POST:/v1/chat/completions",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/v1/chat/completions\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:POST:/v1/completions",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/v1/completions\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:POST:/api/v1/webhook/fleetinferencepool",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/webhook/fleetinferencepool\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:POST:/api/v1/webhook/validate",
+          "passed": false,
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/webhook/validate\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/tenants/test-tenant/usage",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/tenants/test-tenant/usage\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "reach:GET:/api/v1/metrics/model/test-model",
+          "passed": false,
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/metrics/model/test-model\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        }
+      ]
+    },
+    {
+      "name": "stress",
+      "passed": 0,
+      "failed": 6,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "stress:1-goroutines",
+          "passed": false,
+          "detail": "total=10 ok=0 errors=10 error_rate=100.0% p50=0.0ms p95=0.0ms p99=0.0ms"
+        },
+        {
+          "name": "stress:10-goroutines",
+          "passed": false,
+          "detail": "total=100 ok=0 errors=100 error_rate=100.0% p50=0.0ms p95=0.0ms p99=0.0ms"
+        },
+        {
+          "name": "stress:50-goroutines",
+          "passed": false,
+          "detail": "total=500 ok=0 errors=500 error_rate=100.0% p50=0.0ms p95=0.0ms p99=0.0ms"
+        },
+        {
+          "name": "stress:100-goroutines",
+          "passed": false,
+          "detail": "total=1000 ok=0 errors=1000 error_rate=100.0% p50=0.0ms p95=0.0ms p99=0.0ms"
+        },
+        {
+          "name": "stress:200-goroutines",
+          "passed": false,
+          "detail": "total=2000 ok=0 errors=2000 error_rate=100.0% p50=0.0ms p95=0.0ms p99=0.0ms"
+        },
+        {
+          "name": "stress:500-goroutines",
+          "passed": false,
+          "detail": "total=5000 ok=0 errors=5000 error_rate=100.0% p50=0.0ms p95=0.0ms p99=0.0ms"
+        }
+      ],
+      "extra": {
+        "breaking_point": 1,
+        "level_100_error_rate": 100,
+        "level_100_p50_ms": 0,
+        "level_100_p95_ms": 0,
+        "level_100_p99_ms": 0,
+        "level_10_error_rate": 100,
+        "level_10_p50_ms": 0,
+        "level_10_p95_ms": 0,
+        "level_10_p99_ms": 0,
+        "level_1_error_rate": 100,
+        "level_1_p50_ms": 0,
+        "level_1_p95_ms": 0,
+        "level_1_p99_ms": 0,
+        "level_200_error_rate": 100,
+        "level_200_p50_ms": 0,
+        "level_200_p95_ms": 0,
+        "level_200_p99_ms": 0,
+        "level_500_error_rate": 100,
+        "level_500_p50_ms": 0,
+        "level_500_p95_ms": 0,
+        "level_500_p99_ms": 0,
+        "level_50_error_rate": 100,
+        "level_50_p50_ms": 0,
+        "level_50_p95_ms": 0,
+        "level_50_p99_ms": 0
+      }
+    },
+    {
+      "name": "pressure",
+      "passed": 1,
+      "failed": 3,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "pressure:50-goroutines-same-id",
+          "passed": false,
+          "detail": "successes=0 failures=50 (409 conflict is acceptable)"
+        },
+        {
+          "name": "pressure:read-write-races",
+          "passed": true,
+          "detail": "read_5xx=64190 write_5xx=64181 (no panics observed)"
+        },
+        {
+          "name": "pressure:rapid-register-deregister-1000x",
+          "passed": false,
+          "detail": "successes=0 failures=1000"
+        },
+        {
+          "name": "pressure:burst-500-in-1s",
+          "passed": false,
+          "detail": "successes=0 failures=500 duration=3.9ms"
+        }
+      ],
+      "extra": {
+        "burst_duration_ms": 3
+      }
+    },
+    {
+      "name": "chaos",
+      "passed": 6,
+      "failed": 2,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "chaos:1mb-body",
+          "passed": true,
+          "detail": "connection rejected (expected): do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "chaos:invalid-json",
+          "passed": true,
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "chaos:unicode-emoji",
+          "passed": true,
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "chaos:burst-1000",
+          "passed": false,
+          "detail": "successes=0 failures=1000"
+        },
+        {
+          "name": "chaos:null-bytes",
+          "passed": true,
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "chaos:empty-post-body",
+          "passed": true,
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "chaos:long-field-values",
+          "passed": true,
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        },
+        {
+          "name": "chaos:post-chaos-health",
+          "passed": false,
+          "detail": "server unreachable after chaos: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+        }
+      ]
+    },
+    {
+      "name": "redteam",
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "redteam:all",
+          "passed": false,
+          "detail": "SKIP: no --secret provided for token generation"
+        }
+      ]
+    },
+    {
+      "name": "latency",
+      "passed": 0,
+      "failed": 4,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "latency:health",
+          "passed": false,
+          "detail": "n=0 errors=1000 p50=0.0ms p95=0.0ms p99=0.0ms min=0.0ms max=0.0ms mean=0.0ms"
+        },
+        {
+          "name": "latency:auth-reads",
+          "passed": false,
+          "detail": "n=0 errors=1000 p50=0.0ms p95=0.0ms p99=0.0ms min=0.0ms max=0.0ms mean=0.0ms"
+        },
+        {
+          "name": "latency:auth-writes",
+          "passed": false,
+          "detail": "n=0 errors=1000 p50=0.0ms p95=0.0ms p99=0.0ms min=0.0ms max=0.0ms mean=0.0ms"
+        },
+        {
+          "name": "latency:metrics",
+          "passed": false,
+          "detail": "n=0 errors=1000 p50=0.0ms p95=0.0ms p99=0.0ms min=0.0ms max=0.0ms mean=0.0ms"
+        }
+      ],
+      "extra": {
+        "auth-reads_max_ms": 0,
+        "auth-reads_mean_ms": 0,
+        "auth-reads_min_ms": 0,
+        "auth-reads_p50_ms": 0,
+        "auth-reads_p95_ms": 0,
+        "auth-reads_p99_ms": 0,
+        "auth-writes_max_ms": 0,
+        "auth-writes_mean_ms": 0,
+        "auth-writes_min_ms": 0,
+        "auth-writes_p50_ms": 0,
+        "auth-writes_p95_ms": 0,
+        "auth-writes_p99_ms": 0,
+        "health_max_ms": 0,
+        "health_mean_ms": 0,
+        "health_min_ms": 0,
+        "health_p50_ms": 0,
+        "health_p95_ms": 0,
+        "health_p99_ms": 0,
+        "metrics_max_ms": 0,
+        "metrics_mean_ms": 0,
+        "metrics_min_ms": 0,
+        "metrics_p50_ms": 0,
+        "metrics_p95_ms": 0,
+        "metrics_p99_ms": 0
+      }
+    },
+    {
+      "name": "throughput",
+      "passed": 0,
+      "failed": 3,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "throughput:healthz",
+          "passed": false,
+          "detail": "max_sustained_rps=0 (p99 \u003c 500ms)"
+        },
+        {
+          "name": "throughput:get-clusters",
+          "passed": false,
+          "detail": "max_sustained_rps=0 (p99 \u003c 500ms)"
+        },
+        {
+          "name": "throughput:post-clusters",
+          "passed": false,
+          "detail": "max_sustained_rps=0 (p99 \u003c 500ms)"
+        }
+      ],
+      "extra": {
+        "get-clusters_max_rps": 0,
+        "healthz_max_rps": 0,
+        "post-clusters_max_rps": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "timestamp": "2026-07-07T06:12:01Z",
+  "target": "http://localhost:38080",
+  "total_passed": 24,
+  "total_failed": 0,
+  "total_skipped": 0,
+  "duration_ns": 0,
+  "suites": [
+    {
+      "name": "smoke",
+      "passed": 24,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ns": 0,
+      "checks": [
+        {
+          "name": "health:/healthz",
+          "passed": true,
+          "detail": "status=200 OK body={\"status\":\"ok\"} ",
+          "latency_ms": 21
+        },
+        {
+          "name": "health:/readyz",
+          "passed": true,
+          "detail": "status=200 OK body={\"status\":\"ready\"} "
+        },
+        {
+          "name": "auth:no-token-rejected",
+          "passed": true,
+          "detail": "expected 401, got 401 Unauthorized"
+        },
+        {
+          "name": "auth:valid-token-accepted",
+          "passed": true,
+          "detail": "status=200 OK"
+        },
+        {
+          "name": "crud:create-cluster",
+          "passed": true,
+          "detail": "status=201 Created body={\"id\":\"smoke-43000\",\"status\":\"registered\"} ",
+          "latency_ms": 2
+        },
+        {
+          "name": "crud:read-clusters",
+          "passed": true,
+          "detail": "status=200 OK contains=true",
+          "latency_ms": 2
+        },
+        {
+          "name": "crud:delete-cluster",
+          "passed": true,
+          "detail": "status=200 OK",
+          "latency_ms": 1
+        },
+        {
+          "name": "metrics:reachable",
+          "passed": true,
+          "detail": "status=200 OK body_len=3961",
+          "latency_ms": 5
+        },
+        {
+          "name": "reach:GET:/healthz",
+          "passed": true,
+          "detail": "status=200 OK latency=317.0us"
+        },
+        {
+          "name": "reach:GET:/readyz",
+          "passed": true,
+          "detail": "status=200 OK latency=222.0us"
+        },
+        {
+          "name": "reach:GET:/api/v1/clusters",
+          "passed": true,
+          "detail": "status=200 OK latency=1.3ms",
+          "latency_ms": 1
+        },
+        {
+          "name": "reach:POST:/api/v1/clusters",
+          "passed": true,
+          "detail": "status=201 Created latency=571.0us"
+        },
+        {
+          "name": "reach:GET:/api/v1/pools",
+          "passed": true,
+          "detail": "status=200 OK latency=1.4ms",
+          "latency_ms": 1
+        },
+        {
+          "name": "reach:GET:/api/v1/tenants",
+          "passed": true,
+          "detail": "status=200 OK latency=443.0us"
+        },
+        {
+          "name": "reach:GET:/api/v1/metrics/fleet",
+          "passed": true,
+          "detail": "status=500 Internal Server Error latency=918.0us"
+        },
+        {
+          "name": "reach:GET:/api/v1/rollouts",
+          "passed": true,
+          "detail": "status=200 OK latency=655.0us"
+        },
+        {
+          "name": "reach:POST:/api/v1/rollouts",
+          "passed": true,
+          "detail": "status=400 Bad Request latency=800.0us"
+        },
+        {
+          "name": "reach:GET:/api/v1/verify/chains",
+          "passed": true,
+          "detail": "status=200 OK latency=2.1ms",
+          "latency_ms": 2
+        },
+        {
+          "name": "reach:POST:/v1/chat/completions",
+          "passed": true,
+          "detail": "status=502 Bad Gateway latency=699.0us"
+        },
+        {
+          "name": "reach:POST:/v1/completions",
+          "passed": true,
+          "detail": "status=502 Bad Gateway latency=308.0us"
+        },
+        {
+          "name": "reach:POST:/api/v1/webhook/fleetinferencepool",
+          "passed": true,
+          "detail": "status=400 Bad Request latency=1.3ms",
+          "latency_ms": 1
+        },
+        {
+          "name": "reach:POST:/api/v1/webhook/validate",
+          "passed": true,
+          "detail": "status=400 Bad Request latency=409.0us"
+        },
+        {
+          "name": "reach:GET:/api/v1/tenants/test-tenant/usage",
+          "passed": true,
+          "detail": "status=500 Internal Server Error latency=1.0ms",
+          "latency_ms": 1
+        },
+        {
+          "name": "reach:GET:/api/v1/metrics/model/test-model",
+          "passed": true,
+          "detail": "status=500 Internal Server Error latency=363.0us"
+        }
+      ]
+    }
+  ]
+}
