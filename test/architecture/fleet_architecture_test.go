@@ -21,6 +21,7 @@ import (
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
+	"github.com/llm-d/fleet-llm-d/pkg/cost"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
@@ -1557,6 +1558,146 @@ func TestA41_Validation_WebhookRejectsInvalidCRDs(t *testing.T) {
 	}
 	if !foundModelError {
 		t.Fatalf("expected model name error in details, got: %v", result.Details)
+	}
+}
+
+// ===========================================================================
+// COST AND TOKENOMICS (A42-A45)
+// ===========================================================================
+
+func TestA42_Cost_TokenCostCalculation(t *testing.T) {
+	claim(t, "A42", "cost", "TDD", "ComputeTokenCost produces reasonable per-M-token cost")
+
+	pricing := cost.DefaultPricingTable()
+
+	// H200 on-demand at 1000 tok/s:
+	// $4.50/hr / 3600s / 1000 tok/s * 1M = ~$1.25 per million tokens
+	tc, err := cost.ComputeTokenCost("granite-3b", "H200", "on-demand", 1000, pricing)
+	if err != nil {
+		t.Fatalf("ComputeTokenCost: %v", err)
+	}
+
+	// Verify the cost is in a reasonable range (~$1.25/M tokens).
+	if tc.CostPerMToken < 1.0 || tc.CostPerMToken > 1.5 {
+		t.Fatalf("CostPerMToken = %f, expected ~1.25 (range 1.0-1.5)", tc.CostPerMToken)
+	}
+
+	if tc.CostPerHour != 4.50 {
+		t.Fatalf("CostPerHour = %f, want 4.50", tc.CostPerHour)
+	}
+}
+
+func TestA43_Cost_ChargebackReport(t *testing.T) {
+	claim(t, "A43", "cost", "TDD", "Chargeback report total equals sum of line items")
+
+	pricing := cost.DefaultPricingTable()
+	now := time.Now()
+
+	usage := []cost.UsageRecord{
+		{TenantID: "tenant-x", Model: "granite-3b", Cluster: "us-east", GPUType: "H200", Tokens: 500_000, Duration: 1 * time.Hour, Timestamp: now},
+		{TenantID: "tenant-x", Model: "llama-70b", Cluster: "eu-west", GPUType: "A100", Tokens: 300_000, Duration: 2 * time.Hour, Timestamp: now.Add(-time.Hour)},
+		{TenantID: "tenant-x", Model: "granite-3b", Cluster: "us-east", GPUType: "H200", Tokens: 200_000, Duration: 30 * time.Minute, Timestamp: now.Add(time.Hour)},
+	}
+
+	report := cost.GenerateChargebackReport("tenant-x", usage, pricing, 5000.0)
+
+	if report.TenantID != "tenant-x" {
+		t.Fatalf("TenantID = %q, want 'tenant-x'", report.TenantID)
+	}
+
+	// Should have 2 line items (granite-3b/us-east grouped, llama-70b/eu-west separate).
+	if len(report.CostBreakdown) != 2 {
+		t.Fatalf("expected 2 line items, got %d", len(report.CostBreakdown))
+	}
+
+	// Verify TotalCost equals sum of line item costs.
+	var sumCost float64
+	for _, item := range report.CostBreakdown {
+		sumCost += item.Cost
+	}
+	diff := report.TotalCost - sumCost
+	if diff < -0.01 || diff > 0.01 {
+		t.Fatalf("TotalCost (%f) != sum of line items (%f)", report.TotalCost, sumCost)
+	}
+
+	if report.TotalCost <= 0 {
+		t.Fatal("TotalCost should be positive")
+	}
+}
+
+func TestA44_Cost_BudgetAlert(t *testing.T) {
+	claim(t, "A44", "cost", "TDD", "Warning alert fires when cost exceeds 80%% of budget")
+
+	configs := []cost.TenantBudgetConfig{
+		{TenantID: "tenant-alert", MonthlyBudget: 1000, WarningAt: 0.8, CriticalAt: 0.95},
+	}
+	currentCosts := map[string]float64{
+		"tenant-alert": 850, // 85% of $1000
+	}
+
+	alerts := cost.CheckBudgetAlerts(configs, currentCosts)
+
+	foundWarning := false
+	for _, a := range alerts {
+		if a.AlertLevel == "warning" && a.TenantID == "tenant-alert" {
+			foundWarning = true
+			if a.Threshold != 0.8 {
+				t.Fatalf("warning threshold = %f, want 0.8", a.Threshold)
+			}
+			if a.CurrentCost != 850 {
+				t.Fatalf("current cost = %f, want 850", a.CurrentCost)
+			}
+			break
+		}
+	}
+	if !foundWarning {
+		t.Fatal("expected warning alert at 85% budget usage")
+	}
+}
+
+func TestA45_Cost_PlacementPrefersCheaper(t *testing.T) {
+	claim(t, "A45", "cost", "TDD", "Placement solver prefers cheaper cluster when both meet SLO")
+
+	s := solver.NewConstraintSolver()
+	ctx := context.Background()
+
+	// Two clusters: one expensive (H200, high utilization), one cheap (A100, low utilization).
+	clusters := []solver.ClusterInfo{
+		{
+			ID: "expensive-h200", Name: "expensive", Region: "us-east-1",
+			Labels:      map[string]string{"region": "us-east-1"},
+			GPUCapacity: solver.GPUCapacity{Available: 4, Total: 8, Types: []string{"H200"}},
+			Utilization: 0.8, // High utilization = higher cost score penalty
+		},
+		{
+			ID: "cheap-a100", Name: "cheap", Region: "us-west-2",
+			Labels:      map[string]string{"region": "us-west-2"},
+			GPUCapacity: solver.GPUCapacity{Available: 6, Total: 8, Types: []string{"A100"}},
+			Utilization: 0.2, // Low utilization = better cost score
+		},
+	}
+
+	pool := makePool("cost-test-model", "huggingface", 1)
+
+	// Use cost-optimization affinity to ensure the solver prefers the cheaper option.
+	policy := v1alpha1.PlacementPolicySpec{
+		Affinity: []v1alpha1.AffinityRule{
+			{Type: "cost-optimization", Weight: 1.0},
+		},
+	}
+
+	decisions, err := s.Solve(ctx, pool, clusters, policy)
+	if err != nil {
+		t.Fatalf("Solve: %v", err)
+	}
+
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 decision (maxClusters=1), got %d", len(decisions))
+	}
+
+	// The solver should prefer cheap-a100 (lower utilization = higher cost score).
+	if decisions[0].ClusterID != "cheap-a100" {
+		t.Fatalf("expected solver to prefer cheap-a100, got %s", decisions[0].ClusterID)
 	}
 }
 
