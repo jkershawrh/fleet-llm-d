@@ -508,3 +508,15 @@ func TestProxyRequest_StreamingSSE_LiveFlush(t *testing.T) {
 		t.Errorf("expected last event to be data: [DONE], got %q", events[2])
 	}
 }
+
+func BenchmarkSelectBackend(b *testing.B) {
+	proxy := NewInferenceProxy()
+	proxy.RegisterBackend("bench-model", Backend{Name: "b1", URL: "http://b1:8000", Runtime: "vllm", Healthy: true, LatencyMs: 10})
+	proxy.RegisterBackend("bench-model", Backend{Name: "b2", URL: "http://b2:8000", Runtime: "vllm", Healthy: true, LatencyMs: 20})
+	headers := http.Header{}
+	headers.Set("x-llm-d-inference-objective", "realtime")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		proxy.SelectBackend("bench-model", headers)
+	}
+}
