@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report matrix matrix-report
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-all
 
 # ──────────────────────────────────────────────
 # Build
@@ -133,3 +133,52 @@ matrix:
 matrix-report:
 	@echo "Matrix report generation requires the matrix-reporter tool"
 	@echo "Install: go install github.com/llm-d/fleet-llm-d/cmd/matrix-reporter@latest"
+
+# ──────────────────────────────────────────────
+# Test Harness
+# ──────────────────────────────────────────────
+
+HARNESS_URL     ?= http://localhost:8080
+HARNESS_METRICS ?= http://localhost:9090
+HARNESS_TOKEN   ?=
+HARNESS_SECRET  ?=
+HARNESS_OUTPUT  ?= test/harness/results/report.json
+HARNESS_DURATION ?= 5m
+
+HARNESS_FLAGS = --url=$(HARNESS_URL) --metrics=$(HARNESS_METRICS) --output=$(HARNESS_OUTPUT) --duration=$(HARNESS_DURATION)
+ifdef HARNESS_TOKEN
+HARNESS_FLAGS += --token=$(HARNESS_TOKEN)
+endif
+ifdef HARNESS_SECRET
+HARNESS_FLAGS += --secret=$(HARNESS_SECRET)
+endif
+
+harness-build:
+	go build -o bin/fleet-harness ./test/harness
+
+harness-smoke: harness-build
+	./bin/fleet-harness --suite=smoke $(HARNESS_FLAGS)
+
+harness-stress: harness-build
+	./bin/fleet-harness --suite=stress $(HARNESS_FLAGS)
+
+harness-soak: harness-build
+	./bin/fleet-harness --suite=soak $(HARNESS_FLAGS)
+
+harness-pressure: harness-build
+	./bin/fleet-harness --suite=pressure $(HARNESS_FLAGS)
+
+harness-chaos: harness-build
+	./bin/fleet-harness --suite=chaos $(HARNESS_FLAGS)
+
+harness-redteam: harness-build
+	./bin/fleet-harness --suite=redteam $(HARNESS_FLAGS)
+
+harness-latency: harness-build
+	./bin/fleet-harness --suite=latency $(HARNESS_FLAGS)
+
+harness-throughput: harness-build
+	./bin/fleet-harness --suite=throughput $(HARNESS_FLAGS)
+
+harness-all: harness-build
+	./bin/fleet-harness --suite=all $(HARNESS_FLAGS)
