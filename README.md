@@ -105,6 +105,8 @@ fleet-llm-d sits on top of [ModelPlane](https://github.com/modelplane) as the op
 
 The `modelplane` package (`pkg/modelplane/`) provides six integration points: CRD consumption (reading ModelDeployment and ModelCluster resources), policy injection (annotating ModelDeployments with fleet placement decisions), cost integration (feeding GPU pricing into fleet cost projections), compliance bridge (forwarding ModelPlane events to the ARE ledger), routing integration (using ModelCluster health for traffic decisions), and scaling integration (coordinating fleet autoscaling with ModelPlane resource limits). Three API endpoints expose ModelPlane state: `/api/v1/modelplane/clusters`, `/api/v1/modelplane/deployments`, and `/api/v1/modelplane/cost/{deployment}`.
 
+**Live Integration Proof.** A ModelPlane mock API (`cmd/modelplane-mock/`) is deployed on the Demo Cluster OpenShift cluster, serving 3 InferenceClusters, 2 ModelDeployments, 3 ModelEndpoints, and 3 InferenceClasses. The fleet-controller consumes this data live: `/api/v1/modelplane/clusters` returns 3 clusters and `/api/v1/modelplane/deployments` returns 2 deployments. Cost calculation from ModelPlane InferenceClass GPU pricing is proven end-to-end -- the `granite-fleet` deployment computes to **$20.60/hr**. The initial 503 gap (ModelPlane endpoints returning service-unavailable) is now closed; all three endpoints return real data. A collaboration proposal has been submitted as [modelplaneai/modelplane#326](https://github.com/modelplaneai/modelplane/issues/326).
+
 ### Cost Model
 
 fleet-llm-d includes a full cost model (`pkg/cost/`) for GPU inference economics:
@@ -282,7 +284,8 @@ fleet-llm-d/
 │   └── crds/                    # 7 CRD definitions
 ├── cmd/
 │   ├── fleet-controller/        # Go control plane binary
-│   └── fleetctl/                # CLI tool
+│   ├── fleetctl/                # CLI tool
+│   └── modelplane-mock/         # ModelPlane mock API server
 ├── pkg/
 │   ├── placement/               # solver, scorer
 │   ├── routing/                 # balancer, policy
@@ -332,7 +335,7 @@ fleet-llm-d/
 
 ## REST API
 
-The fleet controller exposes 24 REST endpoints. See [`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete OpenAPI 3.1 specification.
+The fleet controller exposes 27 REST endpoints. See [`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete OpenAPI 3.1 specification.
 
 ## Infrastructure
 

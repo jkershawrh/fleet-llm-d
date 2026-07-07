@@ -208,6 +208,8 @@ fleet-llm-d operates as the **operations layer** on top of ModelPlane, which pro
 
 Three API endpoints expose ModelPlane state through the fleet controller: `/api/v1/modelplane/clusters` (list ModelPlane-managed clusters), `/api/v1/modelplane/deployments` (list ModelDeployment resources), and `/api/v1/modelplane/cost/{deployment}` (cost data for a specific deployment).
 
+**Live Integration Proof.** The ModelPlane integration is proven end-to-end with a mock API (`cmd/modelplane-mock/`) deployed on the Demo Cluster OpenShift cluster. The mock serves ModelPlane's CRD types: 3 InferenceClusters, 2 ModelDeployments, 3 ModelEndpoints, and 3 InferenceClasses. The fleet-controller consumes this data live -- `/api/v1/modelplane/clusters` returns 3 clusters and `/api/v1/modelplane/deployments` returns 2 deployments. Cost calculation from ModelPlane InferenceClass GPU pricing is proven: the `granite-fleet` deployment computes to $20.60/hr based on InferenceClass-provided GPU rates. The initial 503 gap (ModelPlane endpoints returning service-unavailable before the mock was deployed) is closed; all three endpoints now return real data. A collaboration proposal for deeper integration has been submitted as [modelplaneai/modelplane#326](https://github.com/modelplaneai/modelplane/issues/326).
+
 ## 4. Seven Capabilities
 
 ### 4.1 Model Placement
