@@ -1,0 +1,313 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: modellifecycles.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: ModelLifecycle
+    listKind: ModelLifecycleList
+    plural: modellifecycles
+    singular: modellifecycle
+    shortNames:
+      - mlc
+      - mlcs
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Model
+          type: string
+          jsonPath: .spec.model.name
+          description: Model being rolled out
+        - name: Version
+          type: string
+          jsonPath: .spec.model.version
+          description: Target model version
+        - name: Strategy
+          type: string
+          jsonPath: .spec.strategy.type
+          description: Rollout strategy type
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+          description: Current rollout phase
+        - name: Weight
+          type: integer
+          jsonPath: .status.currentWeight
+          description: Current canary traffic weight
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            ModelLifecycle manages fleet-wide model deployment lifecycle
+            operations including canary rollouts, rolling updates, and
+            blue-green deployments across multiple clusters with SLO-gated
+            promotion.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired lifecycle rollout configuration.
+              required:
+                - model
+                - fleetPoolRef
+                - strategy
+              properties:
+                model:
+                  type: object
+                  description: >-
+                    The model and version being rolled out.
+                  required:
+                    - name
+                    - version
+                  properties:
+                    name:
+                      type: string
+                      description: >-
+                        Name of the model (e.g. "meta-llama/Llama-3.1-70B-Instruct").
+                    version:
+                      type: string
+                      description: >-
+                        Target version to roll out.
+                fleetPoolRef:
+                  type: object
+                  description: >-
+                    Reference to the FleetInferencePool this lifecycle
+                    operation targets.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: Name of the FleetInferencePool.
+                    namespace:
+                      type: string
+                      description: >-
+                        Namespace of the FleetInferencePool. Defaults to the
+                        same namespace as this resource.
+                strategy:
+                  type: object
+                  description: >-
+                    Rollout strategy configuration.
+                  required:
+                    - type
+                  properties:
+                    type:
+                      type: string
+                      description: >-
+                        Type of rollout strategy.
+                      enum:
+                        - canary
+                        - rolling
+                        - blue-green
+                    canary:
+                      type: object
+                      description: >-
+                        Canary-specific rollout configuration. Required when
+                        strategy type is "canary".
+                      properties:
+                        initialWeight:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                          maximum: 100
+                          description: >-
+                            Initial traffic weight percentage directed to the
+                            new version.
+                          default: 5
+                        weightIncrement:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 100
+                          description: >-
+                            Percentage to increase canary weight at each
+                            promotion step.
+                          default: 10
+                        interval:
+                          type: string
+                          description: >-
+                            Duration between canary promotion steps
+                            (e.g. "10m", "1h").
+                          default: "15m"
+                        sloGate:
+                          type: object
+                          description: >-
+                            SLO conditions that must be met before promoting
+                            the canary to the next weight.
+                          properties:
+                            maxLatencyP99Ms:
+                              type: integer
+                              format: int32
+                              description: >-
+                                Maximum p99 latency in milliseconds.
+                            minSuccessRate:
+                              type: number
+                              format: double
+                              minimum: 0
+                              maximum: 1
+                              description: >-
+                                Minimum success rate (0.0-1.0).
+                            maxTTFTMs:
+                              type: integer
+                              format: int32
+                              description: >-
+                                Maximum time-to-first-token in milliseconds.
+                            minThroughputTokensPerSec:
+                              type: integer
+                              format: int32
+                              description: >-
+                                Minimum throughput in tokens per second.
+                        rollbackOnFailure:
+                          type: boolean
+                          description: >-
+                            Whether to automatically roll back the canary
+                            if SLO gates fail.
+                          default: true
+                        maxFailedChecks:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          description: >-
+                            Number of consecutive failed SLO checks before
+                            triggering a rollback.
+                          default: 3
+                clusters:
+                  type: object
+                  description: >-
+                    Cluster ordering configuration for the rollout.
+                  properties:
+                    order:
+                      type: array
+                      description: >-
+                        Ordered list of cluster names defining the sequence
+                        in which the rollout proceeds. If empty, clusters
+                        are updated in parallel.
+                      items:
+                        type: string
+            status:
+              type: object
+              description: Observed state of the lifecycle rollout.
+              properties:
+                phase:
+                  type: string
+                  description: >-
+                    Current phase of the rollout.
+                  enum:
+                    - Pending
+                    - Progressing
+                    - Paused
+                    - Complete
+                    - RolledBack
+                    - Failed
+                currentWeight:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  maximum: 100
+                  description: >-
+                    Current traffic weight percentage on the new version.
+                startTime:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Timestamp when the rollout started.
+                completionTime:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Timestamp when the rollout completed or was rolled back.
+                clusterStatus:
+                  type: array
+                  description: >-
+                    Per-cluster status of the rollout.
+                  items:
+                    type: object
+                    required:
+                      - cluster
+                    properties:
+                      cluster:
+                        type: string
+                        description: Name of the cluster.
+                      phase:
+                        type: string
+                        description: >-
+                          Phase of the rollout in this cluster.
+                        enum:
+                          - Pending
+                          - Progressing
+                          - Complete
+                          - RolledBack
+                          - Failed
+                      currentWeight:
+                        type: integer
+                        format: int32
+                        minimum: 0
+                        maximum: 100
+                        description: >-
+                          Current traffic weight on the new version in this
+                          cluster.
+                      sloMet:
+                        type: boolean
+                        description: >-
+                          Whether the SLO gate conditions are currently met
+                          in this cluster.
+                      lastCheckTime:
+                        type: string
+                        format: date-time
+                        description: >-
+                          Timestamp of the last SLO check in this cluster.
+                      message:
+                        type: string
+                        description: >-
+                          Human-readable status message for this cluster.
+                conditions:
+                  type: array
+                  description: >-
+                    Standard Kubernetes conditions for the resource.
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: >-
+                          Type of the condition (e.g. "Progressing",
+                          "SLOGatePassed", "RollbackTriggered").
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      reason:
+                        type: string
+                        description: Machine-readable reason for the condition.
+                      message:
+                        type: string
+                        description: Human-readable detail message.
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: Timestamp of last condition transition.

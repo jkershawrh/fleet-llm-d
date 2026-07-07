@@ -1,0 +1,720 @@
+openapi: "3.1.0"
+info:
+  title: fleet-llm-d Fleet Controller API
+  version: "1.0.0"
+  description: |
+    REST API for the fleet-llm-d fleet controller. Manages multi-cluster GPU
+    inference pools, tenant usage tracking, model rollouts, and ledger-based
+    compliance verification.
+  license:
+    name: Apache 2.0
+    identifier: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  contact:
+    name: fleet-llm-d maintainers
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: health
+    description: Liveness and readiness probes
+  - name: clusters
+    description: Cluster registration and lifecycle
+  - name: pools
+    description: Fleet inference pool inventory
+  - name: tenants
+    description: Tenant listing and usage tracking
+  - name: metrics
+    description: Fleet-wide and per-model metrics
+  - name: rollouts
+    description: Model rollout lifecycle (create, promote, rollback)
+  - name: compliance
+    description: Ledger decision-chain verification
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------- health ----------
+  /healthz:
+    get:
+      operationId: getLiveness
+      summary: Liveness probe
+      description: Returns 200 when the process is alive.
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Readiness probe
+      description: Returns 200 when the server is ready to accept traffic.
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Server is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- clusters ----------
+  /api/v1/clusters:
+    get:
+      operationId: listClusters
+      summary: List all registered clusters
+      tags: [clusters]
+      responses:
+        "200":
+          description: Array of cluster information objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClusterInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: registerCluster
+      summary: Register a new cluster
+      tags: [clusters]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterRegistration"
+      responses:
+        "201":
+          description: Cluster registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/clusters/{id}:
+    delete:
+      operationId: deregisterCluster
+      summary: Deregister a cluster
+      tags: [clusters]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "204":
+          description: Cluster deregistered successfully
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- pools ----------
+  /api/v1/pools:
+    get:
+      operationId: listPools
+      summary: List all fleet inference pools
+      tags: [pools]
+      responses:
+        "200":
+          description: Array of inference pool objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PoolInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- tenants ----------
+  /api/v1/tenants:
+    get:
+      operationId: listTenants
+      summary: List all tenants
+      tags: [tenants]
+      responses:
+        "200":
+          description: Array of tenant objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/tenants/{id}/usage:
+    get:
+      operationId: getTenantUsage
+      summary: Get usage for a specific tenant
+      tags: [tenants]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: Tenant usage data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantUsage"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- metrics ----------
+  /api/v1/metrics/fleet:
+    get:
+      operationId: getFleetMetrics
+      summary: Get fleet-wide aggregated metrics
+      tags: [metrics]
+      responses:
+        "200":
+          description: Aggregated fleet metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetMetrics"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/metrics/model/{model}:
+    get:
+      operationId: getModelMetrics
+      summary: Get metrics for a specific model
+      tags: [metrics]
+      parameters:
+        - $ref: "#/components/parameters/ModelName"
+      responses:
+        "200":
+          description: Per-model metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelMetrics"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- rollouts ----------
+  /api/v1/rollouts:
+    get:
+      operationId: listRollouts
+      summary: List all rollouts
+      tags: [rollouts]
+      responses:
+        "200":
+          description: Array of rollout objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RolloutInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: createRollout
+      summary: Create a new rollout
+      tags: [rollouts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RolloutCreateRequest"
+      responses:
+        "201":
+          description: Rollout created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolloutInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/rollouts/{id}/promote:
+    post:
+      operationId: promoteRollout
+      summary: Promote a canary rollout
+      tags: [rollouts]
+      parameters:
+        - $ref: "#/components/parameters/RolloutID"
+      responses:
+        "200":
+          description: Rollout promoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolloutState"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/rollouts/{id}/rollback:
+    post:
+      operationId: rollbackRollout
+      summary: Rollback a rollout
+      tags: [rollouts]
+      parameters:
+        - $ref: "#/components/parameters/RolloutID"
+      responses:
+        "200":
+          description: Rollout rolled back
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolloutState"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- compliance ----------
+  /api/v1/verify/chains:
+    get:
+      operationId: verifyChains
+      summary: Verify all ledger decision chains
+      description: |
+        Validates the integrity of every decision chain stored in the ledger.
+        Returns a map keyed by chain name to its verification result.
+      tags: [compliance]
+      responses:
+        "200":
+          description: Map of chain name to verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/ChainVerification"
+              example:
+                placement:
+                  valid: true
+                  entries_checked: 142
+                  chain_type: placement
+                  verified_at: "2026-07-06T12:00:00Z"
+                routing:
+                  valid: true
+                  entries_checked: 89
+                  chain_type: routing
+                  verified_at: "2026-07-06T12:00:00Z"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  # ---------- security schemes ----------
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Optional Bearer token for authenticated access
+
+  # ---------- reusable parameters ----------
+  parameters:
+    ClusterID:
+      name: id
+      in: path
+      required: true
+      description: Unique cluster identifier
+      schema:
+        type: string
+      example: cluster-us-east-1a
+
+    TenantID:
+      name: id
+      in: path
+      required: true
+      description: Unique tenant identifier
+      schema:
+        type: string
+      example: tenant-acme
+
+    ModelName:
+      name: model
+      in: path
+      required: true
+      description: Model name (e.g. granite-3b, llama-70b)
+      schema:
+        type: string
+      example: granite-3b
+
+    RolloutID:
+      name: id
+      in: path
+      required: true
+      description: Unique rollout identifier
+      schema:
+        type: string
+      example: rollout-abc123
+
+  # ---------- reusable responses ----------
+  responses:
+    BadRequest:
+      description: Invalid request body or parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "name is required"
+
+    NotFound:
+      description: Requested resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "resource not found"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "internal server error"
+
+  # ---------- schemas ----------
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+      example:
+        error: "something went wrong"
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+      example:
+        status: ok
+
+    GPUCapacity:
+      type: object
+      properties:
+        available:
+          type: integer
+          description: Number of GPUs currently available
+        total:
+          type: integer
+          description: Total number of GPUs in the cluster
+        types:
+          type: array
+          items:
+            type: string
+          description: GPU hardware types present (e.g. A100, H100)
+      example:
+        available: 6
+        total: 8
+        types: ["A100", "H100"]
+
+    ClusterInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        region:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        gpu_capacity:
+          $ref: "#/components/schemas/GPUCapacity"
+        utilization:
+          type: number
+          format: double
+          description: Current cluster utilization (0.0 - 1.0)
+      example:
+        id: cluster-us-east-1a
+        name: us-east-prod
+        region: us-east-1
+        labels:
+          env: production
+          tier: gpu
+        gpu_capacity:
+          available: 6
+          total: 8
+          types: ["A100"]
+        utilization: 0.75
+
+    ClusterRegistration:
+      type: object
+      required: [name]
+      properties:
+        id:
+          type: string
+          description: Optional client-provided ID; server generates one if omitted
+        name:
+          type: string
+          description: Human-readable cluster name
+        region:
+          type: string
+          description: Cloud region or data-center location
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: Arbitrary key-value metadata
+      example:
+        name: eu-west-staging
+        region: eu-west-1
+        labels:
+          env: staging
+
+    PoolInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        model_name:
+          type: string
+        model_source:
+          type: string
+        placement_policy:
+          type: string
+        routing_policy:
+          type: string
+        scaling_policy:
+          type: string
+        status:
+          type: string
+      example:
+        id: pool-granite-3b
+        name: granite-3b-pool
+        model_name: granite-3b
+        model_source: registry.example.com/models/granite-3b:v2
+        placement_policy: spread
+        routing_policy: least-load
+        scaling_policy: auto
+        status: ready
+
+    TenantInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        priority:
+          type: integer
+          description: Scheduling priority (higher = more important)
+      example:
+        id: tenant-acme
+        name: Acme Corp
+        priority: 10
+
+    TenantUsage:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+        tokens_consumed:
+          type: integer
+          format: int64
+          description: Total tokens consumed by this tenant
+        total_cost:
+          type: string
+          description: Total cost as a decimal string (e.g. "42.50")
+        request_count:
+          type: integer
+          format: int64
+          description: Total number of inference requests
+        avg_latency_ms:
+          type: integer
+          description: Average end-to-end latency in milliseconds
+      example:
+        tenant_id: tenant-acme
+        tokens_consumed: 1250000
+        total_cost: "42.50"
+        request_count: 8700
+        avg_latency_ms: 320
+
+    FleetMetrics:
+      type: object
+      properties:
+        total_gpus:
+          type: integer
+          description: Total GPUs across all clusters
+        active_models:
+          type: integer
+          description: Number of models currently serving traffic
+        total_throughput:
+          type: number
+          format: double
+          description: Aggregate throughput in tokens per second
+        avg_ttft_ms:
+          type: number
+          format: double
+          description: Average time-to-first-token in milliseconds
+      example:
+        total_gpus: 64
+        active_models: 5
+        total_throughput: 12500.0
+        avg_ttft_ms: 85.3
+
+    ModelMetrics:
+      type: object
+      properties:
+        model:
+          type: string
+        clusters:
+          type: array
+          items:
+            type: string
+          description: Clusters currently serving this model
+        throughput:
+          type: number
+          format: double
+          description: Throughput in tokens per second
+        ttft_p50_ms:
+          type: number
+          format: double
+          description: Time-to-first-token p50 in milliseconds
+        ttft_p95_ms:
+          type: number
+          format: double
+          description: Time-to-first-token p95 in milliseconds
+        ttft_p99_ms:
+          type: number
+          format: double
+          description: Time-to-first-token p99 in milliseconds
+        cache_hit_rate:
+          type: number
+          format: double
+          description: KV-cache hit rate (0.0 - 1.0)
+      example:
+        model: granite-3b
+        clusters: ["cluster-us-east-1a", "cluster-eu-west-1b"]
+        throughput: 4200.0
+        ttft_p50_ms: 62.1
+        ttft_p95_ms: 145.8
+        ttft_p99_ms: 310.2
+        cache_hit_rate: 0.73
+
+    RolloutInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        pool_id:
+          type: string
+        model_version:
+          type: string
+        status:
+          type: string
+          description: Current rollout status (e.g. canary, promoted, rolled-back)
+        started_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the rollout started
+        current_weight:
+          type: integer
+          description: Current traffic weight percentage (0-100)
+      example:
+        id: rollout-abc123
+        pool_id: pool-granite-3b
+        model_version: granite-3b:v3
+        status: canary
+        started_at: "2026-07-06T10:30:00Z"
+        current_weight: 20
+
+    RolloutCreateRequest:
+      type: object
+      required: [pool_id, model_version]
+      properties:
+        pool_id:
+          type: string
+          description: Target inference pool
+        model_version:
+          type: string
+          description: New model version to roll out
+        strategy:
+          type: string
+          description: Rollout strategy (e.g. canary, blue-green)
+      example:
+        pool_id: pool-granite-3b
+        model_version: granite-3b:v3
+        strategy: canary
+
+    RolloutState:
+      type: object
+      properties:
+        id:
+          type: string
+        phase:
+          type: string
+          description: Current rollout phase after the action
+        current_weight:
+          type: integer
+          description: Traffic weight percentage after the action (0-100)
+      example:
+        id: rollout-abc123
+        phase: promoted
+        current_weight: 100
+
+    ChainVerification:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          description: Whether the chain integrity check passed
+        entries_checked:
+          type: integer
+          format: int64
+          description: Number of ledger entries verified
+        chain_type:
+          type: string
+          description: Type of decision chain (e.g. placement, routing, scaling)
+        verified_at:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of the verification
+      example:
+        valid: true
+        entries_checked: 142
+        chain_type: placement
+        verified_at: "2026-07-06T12:00:00Z"

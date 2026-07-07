@@ -1,0 +1,189 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kvcachetransferpolicies.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: KVCacheTransferPolicy
+    listKind: KVCacheTransferPolicyList
+    plural: kvcachetransferpolicies
+    singular: kvcachetransferpolicy
+    shortNames:
+      - kvtp
+      - kvtps
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Protocol
+          type: string
+          jsonPath: .spec.transport.protocol
+          description: Transfer protocol
+        - name: Max-Bandwidth
+          type: integer
+          jsonPath: .spec.transport.maxBandwidthMbps
+          description: Maximum bandwidth in Mbps
+        - name: Triggers
+          type: integer
+          jsonPath: .status.triggerCount
+          description: Number of configured triggers
+          priority: 1
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            KVCacheTransferPolicy defines policies for cross-cluster KV cache
+            migration. It specifies when KV cache data should be transferred
+            between clusters, how the transfer is performed, and how source
+            data is retained after transfer.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired KV cache transfer policy configuration.
+              required:
+                - triggers
+                - transport
+              properties:
+                triggers:
+                  type: array
+                  description: >-
+                    Events or conditions that initiate a KV cache transfer.
+                    Multiple triggers can be defined; any matching trigger
+                    will initiate the associated action.
+                  minItems: 1
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - action
+                    properties:
+                      type:
+                        type: string
+                        description: >-
+                          Type of event that triggers the KV cache transfer.
+                        enum:
+                          - clusterFailover
+                          - loadMigration
+                          - scheduled
+                      action:
+                        type: string
+                        description: >-
+                          Transfer action to perform when the trigger fires.
+                        enum:
+                          - transferHot
+                          - transferPrefixTree
+                          - fullSync
+                      description:
+                        type: string
+                        description: >-
+                          Human-readable description of this trigger's purpose.
+                      schedule:
+                        type: string
+                        description: >-
+                          Cron expression for scheduled triggers (e.g.
+                          "0 */6 * * *" for every 6 hours). Only applicable
+                          when type is "scheduled".
+                      conditions:
+                        type: object
+                        description: >-
+                          Additional conditions that must be met for this
+                          trigger to fire.
+                        properties:
+                          minCacheSize:
+                            type: string
+                            description: >-
+                              Minimum KV cache size to warrant transfer
+                              (e.g. "1Gi", "500Mi").
+                          minHitRate:
+                            type: number
+                            format: double
+                            minimum: 0
+                            maximum: 1
+                            description: >-
+                              Minimum cache hit rate (0.0-1.0) for the cache
+                              to be considered worth transferring.
+                          maxStaleness:
+                            type: string
+                            description: >-
+                              Maximum age of cache entries to include in the
+                              transfer (e.g. "1h", "30m").
+                transport:
+                  type: object
+                  description: >-
+                    Transport configuration for KV cache data transfer.
+                  required:
+                    - protocol
+                  properties:
+                    protocol:
+                      type: string
+                      description: >-
+                        Protocol used for KV cache data transfer.
+                      enum:
+                        - nixl
+                        - grpc-fallback
+                    maxBandwidthMbps:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: >-
+                        Maximum bandwidth in megabits per second to consume
+                        for KV cache transfers. Prevents transfer traffic
+                        from saturating the network.
+                    compression:
+                      type: string
+                      description: >-
+                        Compression algorithm for transfer data.
+                      enum:
+                        - none
+                        - lz4
+                        - zstd
+                      default: lz4
+                    encryption:
+                      type: boolean
+                      description: >-
+                        Whether to encrypt KV cache data in transit.
+                      default: true
+                    maxConcurrentTransfers:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: >-
+                        Maximum number of concurrent transfer operations.
+                      default: 4
+                retention:
+                  type: object
+                  description: >-
+                    Retention configuration for source cluster data after
+                    a transfer completes.
+                  properties:
+                    sourceRetentionAfterTransfer:
+                      type: string
+                      description: >-
+                        Duration to retain KV cache data on the source cluster
+                        after a successful transfer (e.g. "1h", "30m", "0s"
+                        for immediate deletion). Provides a rollback window.
+                      default: "1h"
+                    maxRetentionSize:
+                      type: string
+                      description: >-
+                        Maximum total size of retained post-transfer cache
+                        data on the source cluster (e.g. "10Gi"). Oldest
+                        entries are evicted first.

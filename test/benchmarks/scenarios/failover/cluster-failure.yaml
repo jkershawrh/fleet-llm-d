@@ -1,0 +1,148 @@
+# Cluster failure and recovery benchmark scenario.
+# Kills a cluster, measures request drop rate during failover and
+# time to full recovery.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: BenchmarkScenario
+metadata:
+  name: cluster-failure
+  labels:
+    category: failover
+    severity: reliability
+spec:
+  description: >-
+    Simulates complete cluster failure while serving production traffic.
+    Measures how quickly the fleet gateway detects the failure, drains
+    in-flight requests, reroutes traffic to surviving clusters, and
+    returns to full SLO compliance. Validates that the failover routing
+    policy, health checks, and request retry logic work correctly under
+    realistic conditions.
+
+  workload_ref: chat-multi-turn
+
+  fleet_topology:
+    clusters:
+      - name: us-east-1
+        region: us-east
+        gpu_type: nvidia-h100
+        replicas: 4
+        role: primary
+      - name: us-west-2
+        region: us-west
+        gpu_type: nvidia-h100
+        replicas: 4
+        role: failover-1
+      - name: eu-west-1
+        region: eu-west
+        gpu_type: nvidia-h100
+        replicas: 2
+        role: failover-2
+
+    gateway:
+      location: us-east
+      health_check_interval: 5s
+      unhealthy_threshold: 3
+
+  routing_policy:
+    strategy: failover
+    rules:
+      - name: primary-with-failover
+        action:
+          prefer_local: true
+          kv_cache_affinity: true
+          failover:
+            clusters:
+              - us-west-2
+              - eu-west-1
+
+  phases:
+    - name: steady-state
+      description: >-
+        Establish baseline with all clusters healthy. Collect latency
+        and throughput baselines.
+      duration: 180s
+      traffic:
+        qps: 50
+      all_clusters_healthy: true
+      metrics:
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - e2e_p99_ms
+        - throughput_tokens_per_second
+        - success_rate
+        - requests_per_cluster
+
+    - name: inject-failure
+      description: >-
+        Abruptly kill the primary cluster (us-east-1). Simulate
+        complete node failure: all pods terminate, health checks fail.
+      duration: 120s
+      traffic:
+        qps: 50
+      fault_injection:
+        type: cluster-kill
+        target_cluster: us-east-1
+        kill_method: immediate
+        # Time at which the fault is injected (relative to phase start).
+        inject_at: 10s
+      metrics:
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - e2e_p99_ms
+        - success_rate
+        - failed_requests_count
+        - failover_detection_time_ms
+        - failover_reroute_time_ms
+        - requests_per_cluster
+
+    - name: degraded-steady-state
+      description: >-
+        Operate with the primary cluster down. Verify that the
+        surviving clusters absorb the full load within SLO.
+      duration: 300s
+      traffic:
+        qps: 50
+      cluster_overrides:
+        us-east-1:
+          status: offline
+      metrics:
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - e2e_p99_ms
+        - success_rate
+        - throughput_tokens_per_second
+        - gpu_utilization_per_cluster
+
+    - name: recovery
+      description: >-
+        Bring the failed cluster back online. Measure time for the
+        fleet to rebalance traffic and return to nominal state.
+      duration: 300s
+      traffic:
+        qps: 50
+      cluster_overrides:
+        us-east-1:
+          status: recovering
+          recovery_start: 30s
+          recovery_complete: 120s
+      metrics:
+        - ttft_p99_ms
+        - success_rate
+        - recovery_time_ms
+        - rebalance_time_ms
+        - requests_per_cluster
+
+  success_criteria:
+    # Gateway must detect the cluster failure within 20 seconds
+    # (health_check_interval * unhealthy_threshold + propagation).
+    max_failover_detection_time_ms: 20000
+    # Requests should begin rerouting within 2 seconds of detection.
+    max_failover_reroute_time_ms: 2000
+    # Maximum requests that may fail during the failover window.
+    max_failed_requests_during_failover: 50
+    # Request drop rate during failover must not exceed 2%.
+    max_request_drop_rate: 0.02
+    # Degraded-state SLOs (relaxed from steady-state).
+    degraded_ttft_p99_ms: 400
+    degraded_success_rate: 0.998
+    # Full recovery and rebalance within 3 minutes.
+    max_recovery_time_ms: 180000

@@ -1,0 +1,235 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["*"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go-build-test:
+    name: Go Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go build
+        run: go build ./...
+
+      - name: Go test with race detection
+        run: go test -race -count=1 -coverprofile=coverage.out ./pkg/...
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 14
+
+  rust-build-test:
+    name: Rust Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      - name: Cargo check
+        run: cargo check --workspace
+
+      - name: Cargo test
+        run: cargo test --workspace
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Cargo fmt check
+        run: cargo fmt --workspace -- --check
+
+  validate-crds:
+    name: Validate CRDs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate CRD YAML structure
+        run: |
+          pip install pyyaml
+          python3 -c "
+          import yaml, sys, glob, os
+
+          errors = []
+          for path in sorted(glob.glob('api/crds/*.yaml')):
+              name = os.path.basename(path)
+              if name == 'kustomization.yaml':
+                  continue
+              try:
+                  with open(path) as f:
+                      docs = list(yaml.safe_load_all(f))
+                  for doc in docs:
+                      if doc is None:
+                          continue
+                      if 'apiVersion' not in doc or 'kind' not in doc:
+                          errors.append(f'{name}: missing apiVersion or kind')
+                      if doc.get('kind') == 'CustomResourceDefinition':
+                          spec = doc.get('spec', {})
+                          if 'group' not in spec or 'names' not in spec:
+                              errors.append(f'{name}: CRD missing spec.group or spec.names')
+                  print(f'OK: {name}')
+              except yaml.YAMLError as e:
+                  errors.append(f'{name}: YAML parse error: {e}')
+
+          if errors:
+              print('\nValidation errors:')
+              for e in errors:
+                  print(f'  ERROR: {e}')
+              sys.exit(1)
+          else:
+              print('\nAll CRD files are valid.')
+          "
+
+      - name: Validate OpenAPI spec
+        run: |
+          python3 -c "
+          import yaml, sys
+
+          with open('api/openapi/fleet-api.yaml') as f:
+              spec = yaml.safe_load(f)
+
+          required = ['openapi', 'info', 'paths']
+          missing = [k for k in required if k not in spec]
+          if missing:
+              print(f'ERROR: OpenAPI spec missing required fields: {missing}')
+              sys.exit(1)
+          if not spec.get('openapi', '').startswith('3.'):
+              print(f'WARNING: Unexpected OpenAPI version: {spec.get(\"openapi\")}')
+          print(f'OpenAPI spec valid: {spec[\"info\"].get(\"title\", \"unknown\")} v{spec[\"info\"].get(\"version\", \"unknown\")}')
+          print(f'  Paths defined: {len(spec.get(\"paths\", {}))}')
+          "
+
+  validate-kustomize:
+    name: Validate Kustomize Overlays
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Render hub overlay
+        run: kustomize build deploy/kustomize/overlays/hub
+
+      - name: Render standalone overlay
+        run: kustomize build deploy/kustomize/overlays/standalone
+
+      - name: Render federated overlay
+        run: kustomize build deploy/kustomize/overlays/federated
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [go-build-test, rust-build-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build fleet-controller image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.controller
+          push: false
+          tags: fleet-controller:ci
+          cache-from: type=gha,scope=controller
+          cache-to: type=gha,mode=max,scope=controller
+
+      - name: Build fleet-agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.agent
+          push: false
+          tags: fleet-agent:ci
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+
+      - name: Build fleet-gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.gateway
+          push: false
+          tags: fleet-gateway:ci
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway
+
+  test-matrix:
+    name: Test Matrix
+    runs-on: ubuntu-latest
+    needs: [go-build-test, rust-build-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Run tests and capture results
+        run: go test -v ./pkg/... 2>&1 | tee test-results.txt
+
+      - name: Verify test matrix state
+        run: |
+          if [ -f test/matrix/matrix.yaml ]; then
+            echo "Test matrix file exists:"
+            cat test/matrix/matrix.yaml
+          else
+            echo "WARNING: test/matrix/matrix.yaml not found"
+          fi
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results.txt
+          retention-days: 14
