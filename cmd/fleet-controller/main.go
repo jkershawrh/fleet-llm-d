@@ -102,13 +102,16 @@ func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, names
 		Healthy:   true,
 		LatencyMs: 500,
 	})
-	proxy.RegisterBackend("granite-sovereign", routing.Backend{
-		Name:      "ovms-granite",
-		URL:       backendOVMS,
-		Runtime:   "ovms",
-		Healthy:   true,
-		LatencyMs: 200,
-	})
+	ovmsBackend := routing.Backend{
+		Name:       "ovms-granite",
+		URL:        backendOVMS,
+		Runtime:    "ovms",
+		PathPrefix: "/v3",
+		Healthy:    true,
+		LatencyMs:  200,
+	}
+	proxy.RegisterBackend("granite-sovereign", ovmsBackend)
+	proxy.RegisterBackend("granite-3.2-sovereign", ovmsBackend)
 
 	clusterClient := client.NewMultiClusterClient()
 	fleetRecorder := ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d")
