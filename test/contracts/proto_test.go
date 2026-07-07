@@ -51,7 +51,7 @@ func TestProtoFilesExist(t *testing.T) {
 	for _, domain := range expectedDomains {
 		found := false
 		for _, f := range files {
-			if strings.Contains(f, "/"+domain+"/") {
+			if strings.Contains(filepath.ToSlash(f), "/"+domain+"/") {
 				found = true
 				break
 			}

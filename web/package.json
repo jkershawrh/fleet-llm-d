@@ -6,10 +6,10 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint --config eslint.config.mjs \"src/**/*.{js,jsx,ts,tsx}\""
   },
   "dependencies": {
-    "next": "^14.2.0",
+    "next": "14.2.35",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "recharts": "^2.12.0"
@@ -18,11 +18,13 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "typescript": "^5",
-    "tailwindcss": "^3.4",
-    "postcss": "^8",
+    "@typescript-eslint/eslint-plugin": "^8.63.0",
+    "@typescript-eslint/parser": "^8.63.0",
     "autoprefixer": "^10",
     "eslint": "^8",
-    "eslint-config-next": "^14.2.0"
+    "eslint-config-next": "^14.2.0",
+    "postcss": "^8",
+    "tailwindcss": "^3.4",
+    "typescript": "^5"
   }
 }

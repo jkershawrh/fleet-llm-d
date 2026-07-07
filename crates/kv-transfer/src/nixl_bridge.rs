@@ -22,8 +22,6 @@ use crate::protocol::{KvBlock, TransferProtocol};
 /// - CUDA-capable GPU devices on both endpoints
 #[derive(Debug, Clone)]
 pub struct NixlBridge {
-    /// Remote endpoint this bridge is connected to, if any.
-    remote_endpoint: Option<String>,
     /// Whether NIXL is available on this system.
     nixl_available: bool,
 }
@@ -34,10 +32,9 @@ impl NixlBridge {
     /// Checks whether NIXL is available on the system. If not, methods will
     /// return errors indicating the SDK is not present.
     pub fn new() -> Self {
-        // TODO: check for NIXL SDK availability via dlopen or feature flag.
         Self {
-            remote_endpoint: None,
-            nixl_available: false,
+            nixl_available: cfg!(feature = "nixl")
+                && std::env::var("FLEET_NIXL_AVAILABLE").as_deref() == Ok("true"),
         }
     }
 

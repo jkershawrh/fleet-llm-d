@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -77,6 +78,7 @@ type FleetController struct {
 	InferenceProxy *routing.InferenceProxy
 
 	// Repositories for CRUD operations
+	ClusterRepo postgres.ClusterRepository
 	PoolRepo    postgres.FleetPoolRepository
 	TenantRepo  postgres.TenantRepository
 	RolloutRepo postgres.RolloutRepository
@@ -92,7 +94,17 @@ type FleetController struct {
 // CRDWatcher is created that polls the Kubernetes API for FleetInferencePool
 // changes.
 func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
-	ledgerClient := ledger.NewLedgerClient(ledgerEndpoint)
+	return NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
+}
+
+// NewFleetControllerWithLedgerConfig creates a FleetController with an
+// explicit ledger backend configuration.
+func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
+	ledgerClient, err := ledger.NewLedgerClientWithConfig(ledgerCfg)
+	if err != nil {
+		log.Printf("invalid ledger config (%s): %v; falling back to memory ledger", ledgerCfg.Mode, err)
+		ledgerClient = ledger.NewInMemoryLedgerClient()
+	}
 
 	proxy := routing.NewInferenceProxy()
 	proxy.RegisterBackend("granite-3.3-2b", routing.Backend{
@@ -113,7 +125,8 @@ func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, names
 	proxy.RegisterBackend("granite-sovereign", ovmsBackend)
 	proxy.RegisterBackend("granite-3.2-sovereign", ovmsBackend)
 
-	clusterClient := client.NewMultiClusterClient()
+	clusterRepo := postgres.NewInMemoryClusterRepository()
+	clusterClient := client.NewRepositoryClusterClient(clusterRepo)
 	fleetRecorder := ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d")
 	constraintSolver := solver.NewConstraintSolver()
 
@@ -170,6 +183,7 @@ func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, names
 		CRDWatcher:           crdWatcher,
 		FleetRecorder:        fleetRecorder,
 		InferenceProxy:       proxy,
+		ClusterRepo:          clusterRepo,
 		PoolRepo:             postgres.NewInMemoryFleetPoolRepository(),
 		TenantRepo:           postgres.NewInMemoryTenantRepository(),
 		RolloutRepo:          postgres.NewInMemoryRolloutRepository(),
@@ -248,13 +262,19 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 		Region: req.Region,
 		Labels: req.Labels,
 	}
+	reg, err := client.NormalizeClusterRegistration(reg)
+	if err != nil {
+		errorsTotal.Add(1)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := fc.ClusterClient.RegisterCluster(r.Context(), reg); err != nil {
 		errorsTotal.Add(1)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	clustersGauge.Add(1)
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "registered", "id": req.ID})
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "registered", "id": reg.ID})
 }
 
 // handleDeregisterCluster removes a cluster by ID.
@@ -550,17 +570,18 @@ func setupMetricsServer() *http.ServeMux {
 
 // Run starts the fleet controller HTTP servers and blocks until the context
 // is cancelled or a shutdown signal is received.
-func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey string, rateLimiter *auth.RateLimiter) error {
+func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey string, rateLimiter *auth.RateLimiter, rateLimitExempt []string) error {
 	// Create a context that is cancelled on SIGINT or SIGTERM.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Wrap the API server mux with auth middleware and rate limiting.
 	mux := fc.setupAPIServer()
-	exempt := []string{"/healthz", "/readyz", "/metrics"}
-	var handler http.Handler = auth.AuthMiddleware(authCfg, exempt, mux)
+	exempt := defaultExemptPaths(rateLimitExempt)
+	var handler http.Handler = auth.AuthorizationMiddleware(exempt, mux)
+	handler = auth.AuthMiddleware(authCfg, exempt, handler)
 	if rateLimiter != nil {
-		handler = auth.RateLimitMiddleware(rateLimiter, handler)
+		handler = auth.RateLimitMiddlewareWithExemptions(rateLimiter, exempt, handler)
 	}
 
 	apiServer := &http.Server{
@@ -638,10 +659,29 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 	return shutdownErr
 }
 
+func defaultExemptPaths(configured []string) []string {
+	if len(configured) == 0 {
+		return []string{"/healthz", "/readyz", "/metrics"}
+	}
+	return configured
+}
+
+func splitCSV(value string) []string {
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func main() {
 	port := flag.Int("port", 8080, "API server port")
 	metricsPort := flag.Int("metrics-port", 9090, "Metrics server port")
-	ledgerEndpoint := flag.String("ledger-endpoint", "localhost:9092", "ARE ledger gRPC endpoint")
+	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http, grpc")
+	ledgerEndpoint := flag.String("ledger-endpoint", "localhost:9092", "ARE ledger endpoint")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
@@ -654,9 +694,10 @@ func main() {
 	eventEndpoint := flag.String("event-endpoint", "", "HTTP endpoint for publishing fleet events (e.g. http://kafka-bridge:8080/topics/fleet-events). When set, events are also POSTed to this URL")
 	rateLimit := flag.Float64("rate-limit", 100, "Rate limit in requests per second per IP (0 to disable)")
 	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
+	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
 	flag.Parse()
 
-	log.Printf("fleet-controller starting (log-level=%s, ledger=%s)", *logLevel, *ledgerEndpoint)
+	log.Printf("fleet-controller starting (log-level=%s, ledger-mode=%s, ledger=%s)", *logLevel, *ledgerMode, *ledgerEndpoint)
 
 	// Build auth config: CLI flag takes precedence over env var.
 	authCfg := auth.ConfigFromEnv()
@@ -669,7 +710,10 @@ func main() {
 		authCfg.Enabled, *tlsCert != "" && *tlsKey != "", *kubeAPI, *namespace,
 		*pgURL != "", *eventEndpoint)
 
-	fc := NewFleetController(*ledgerEndpoint, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
+	fc := NewFleetControllerWithLedgerConfig(ledger.Config{
+		Mode:     ledger.Mode(*ledgerMode),
+		Endpoint: *ledgerEndpoint,
+	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
 
 	// Override stores with PostgreSQL when --pg-url is set.
 	if *pgURL != "" {
@@ -685,6 +729,8 @@ func main() {
 		}
 		log.Println("connected to PostgreSQL — using persistent stores")
 
+		fc.ClusterRepo = postgres.NewPGClusterRepository(pgClient)
+		fc.ClusterClient = client.NewRepositoryClusterClient(fc.ClusterRepo)
 		fc.PoolRepo = postgres.NewPGFleetPoolRepository(pgClient)
 		fc.TenantRepo = postgres.NewPGTenantRepository(pgClient)
 		fc.RolloutRepo = postgres.NewPGRolloutRepository(pgClient)
@@ -703,7 +749,7 @@ func main() {
 		log.Printf("rate limiting enabled (rate=%.0f/s, burst=%d)", *rateLimit, *rateBurst)
 	}
 
-	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey, rl); err != nil {
+	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey, rl, splitCSV(*rateLimitExempt)); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	_ "github.com/lib/pq"
 )
 
 // PGClient provides PostgreSQL-backed implementations of all repository

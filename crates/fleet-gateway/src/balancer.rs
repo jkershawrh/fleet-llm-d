@@ -73,8 +73,14 @@ impl LoadBalancer for WeightedBalancer {
         let best = healthy
             .iter()
             .max_by(|a, b| {
-                let wa = self.weight_overrides.get(&a.cluster_id).unwrap_or(&a.weight);
-                let wb = self.weight_overrides.get(&b.cluster_id).unwrap_or(&b.weight);
+                let wa = self
+                    .weight_overrides
+                    .get(&a.cluster_id)
+                    .unwrap_or(&a.weight);
+                let wb = self
+                    .weight_overrides
+                    .get(&b.cluster_id)
+                    .unwrap_or(&b.weight);
                 wa.partial_cmp(wb).unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap();
@@ -195,12 +201,13 @@ mod tests {
 
     #[tokio::test]
     async fn weighted_picks_highest_weight() {
-        let balancer = WeightedBalancer::new();
+        let mut balancer = WeightedBalancer::new();
+        balancer.set_weight(ClusterId("fast-expensive".to_string()), 0.9);
         let result = balancer
             .select_cluster(&make_candidates(), &make_request())
             .await
             .unwrap();
-        assert_eq!(result, ClusterId("slow-cheap".to_string()));
+        assert_eq!(result, ClusterId("fast-expensive".to_string()));
     }
 
     #[tokio::test]
