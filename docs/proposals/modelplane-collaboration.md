@@ -10,7 +10,7 @@
 
 I've built fleet-llm-d, an open-source (Apache 2.0) operations layer for fleet-level inference orchestration. After analyzing ModelPlane's architecture, we believe our projects are **complementary, not competitive** — ModelPlane handles infrastructure (provisioning, scheduling, caching, routing), while fleet-llm-d handles operations (tenant governance, cost/tokenomics, compliance, SLO-aware autoscaling).
 
-We've already built the integration layer: fleet-llm-d consumes ModelPlane CRDs, injects fleet policies into ModelDeployments, records all ModelPlane state changes to an immutable compliance ledger, and computes cost/chargeback from InferenceClass GPU pricing.
+I've already built the integration layer: fleet-llm-d consumes ModelPlane CRDs, injects fleet policies into ModelDeployments, records all ModelPlane state changes to an immutable compliance ledger, and computes cost/chargeback from InferenceClass GPU pricing.
 
 **We'd like to explore collaboration and get access to the ModelPlane package for live integration testing.**
 
