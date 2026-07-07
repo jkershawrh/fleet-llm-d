@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Title** | Fleet-Level Inference Orchestration for llm-d |
-| **Authors** | [Your name], Red Hat |
+| **Authors** | Jonathan Kershaw, Red Hat |
 | **Status** | Draft |
 | **Created** | 2026-07-06 |
 | **API Group** | fleet.llm-d.ai/v1alpha1 |
