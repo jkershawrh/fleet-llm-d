@@ -272,7 +272,7 @@ fleet-llm-d/
 ├── deploy/
 │   ├── kustomize/overlays/      # hub, standalone, federated
 │   ├── docker/                  # Dockerfiles (UBI base, non-root)
-│   └── dev-cluster-1/                  # Demo cluster deployment manifests
+│   └── demo-cluster/             # Demo cluster deployment manifests
 ├── examples/                    # Customer CRD examples (Telco, Financial Services, Sovereign)
 ├── workflows/                   # Deployment workflow definitions
 ├── docker-compose.yml           # Local dev infrastructure

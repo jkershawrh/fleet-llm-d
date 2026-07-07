@@ -51,6 +51,9 @@ Thumbs.db
 .env.local
 *.pem
 
+# Test harness results (may contain cluster URLs)
+test/harness/results/
+
 # Generated
 pkg/apis/fleet/v1alpha1/zz_generated.*
 api/proto/**/*.pb.go
