@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,12 +38,6 @@ type Config struct {
 	Endpoint string
 }
 
-// grpcLedgerClient implements LedgerClient via gRPC to the ARE ledger.
-type grpcLedgerClient struct {
-	endpoint string
-	memory   *InMemoryLedgerClient
-}
-
 // NewLedgerClient creates a development-safe ledger client. Use
 // NewLedgerClientWithConfig for explicit production transport selection.
 func NewLedgerClient(endpoint string) LedgerClient {
@@ -74,30 +69,10 @@ func NewLedgerClientWithConfig(cfg Config) (LedgerClient, error) {
 		if strings.TrimSpace(cfg.Endpoint) == "" {
 			return nil, fmt.Errorf("ledger endpoint is required for grpc mode")
 		}
-		return &grpcLedgerClient{endpoint: cfg.Endpoint, memory: NewInMemoryLedgerClient()}, nil
+		return nil, fmt.Errorf("grpc ledger transport is not yet implemented (endpoint: %s); use --ledger-mode=http with the ARE REST gateway instead", cfg.Endpoint)
 	default:
 		return nil, fmt.Errorf("unsupported ledger mode %q", mode)
 	}
-}
-
-func (c *grpcLedgerClient) RecordDecision(ctx context.Context, decision FleetDecision) (*LedgerReceipt, error) {
-	return c.memory.RecordDecision(ctx, decision)
-}
-
-func (c *grpcLedgerClient) VerifyDecisionChain(ctx context.Context, decisionType string) (*ChainVerification, error) {
-	return c.memory.VerifyDecisionChain(ctx, decisionType)
-}
-
-func (c *grpcLedgerClient) QueryDecisions(ctx context.Context, query DecisionQuery) ([]FleetDecision, error) {
-	return c.memory.QueryDecisions(ctx, query)
-}
-
-func (c *grpcLedgerClient) IssueProofReceipt(ctx context.Context, decision FleetDecision) (*ProofReceipt, error) {
-	return c.memory.IssueProofReceipt(ctx, decision)
-}
-
-func (c *grpcLedgerClient) VerifyProof(ctx context.Context, entryHash, entryType string) (*ProofVerification, error) {
-	return c.memory.VerifyProof(ctx, entryHash, entryType)
 }
 
 type disabledLedgerClient struct{}
@@ -124,6 +99,7 @@ func (disabledLedgerClient) VerifyProof(_ context.Context, _ string, entryType s
 
 // InMemoryLedgerClient stores entries in memory for testing.
 type InMemoryLedgerClient struct {
+	mu      sync.Mutex
 	entries []FleetDecision
 	counter int64
 }
@@ -134,6 +110,8 @@ func NewInMemoryLedgerClient() *InMemoryLedgerClient {
 }
 
 func (c *InMemoryLedgerClient) RecordDecision(_ context.Context, decision FleetDecision) (*LedgerReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.counter++
 	c.entries = append(c.entries, decision)
 	return &LedgerReceipt{
@@ -145,6 +123,8 @@ func (c *InMemoryLedgerClient) RecordDecision(_ context.Context, decision FleetD
 }
 
 func (c *InMemoryLedgerClient) VerifyDecisionChain(_ context.Context, decisionType string) (*ChainVerification, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	count := int64(0)
 	for _, e := range c.entries {
 		if e.Type == decisionType {
@@ -160,6 +140,8 @@ func (c *InMemoryLedgerClient) VerifyDecisionChain(_ context.Context, decisionTy
 }
 
 func (c *InMemoryLedgerClient) QueryDecisions(_ context.Context, query DecisionQuery) ([]FleetDecision, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var result []FleetDecision
 	for _, e := range c.entries {
 		if query.DecisionType != "" && e.Type != query.DecisionType {
@@ -171,6 +153,8 @@ func (c *InMemoryLedgerClient) QueryDecisions(_ context.Context, query DecisionQ
 }
 
 func (c *InMemoryLedgerClient) IssueProofReceipt(_ context.Context, decision FleetDecision) (*ProofReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.counter++
 	c.entries = append(c.entries, decision)
 	return &ProofReceipt{
@@ -191,5 +175,9 @@ func (c *InMemoryLedgerClient) VerifyProof(_ context.Context, entryHash, entryTy
 
 // Entries returns all recorded entries (for test assertions).
 func (c *InMemoryLedgerClient) Entries() []FleetDecision {
-	return c.entries
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cp := make([]FleetDecision, len(c.entries))
+	copy(cp, c.entries)
+	return cp
 }
