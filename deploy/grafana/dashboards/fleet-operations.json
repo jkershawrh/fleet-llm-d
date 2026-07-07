@@ -1,0 +1,276 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Fleet Controller Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Clusters Registered",
+      "type": "stat",
+      "targets": [{ "expr": "fleet_clusters_registered", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Total Requests",
+      "type": "stat",
+      "targets": [{ "expr": "fleet_requests_total", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Errors",
+      "type": "stat",
+      "targets": [{ "expr": "fleet_errors_total", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "blue", "value": null}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Active Pools",
+      "type": "stat",
+      "targets": [{ "expr": "fleet_pools_active", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "purple", "value": null}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Active Tenants",
+      "type": "stat",
+      "targets": [{ "expr": "fleet_tenants_active", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "orange", "value": null}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "id": 6,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Active Rollouts",
+      "type": "stat",
+      "targets": [{ "expr": "fleet_rollouts_active", "refId": "A" }]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "title": "ARE Immutable Ledger",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "are-ledger" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 6 },
+      "id": 7,
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Ledger Entries Written",
+      "type": "stat",
+      "targets": [{ "expr": "are_ledger_entries_written_total", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "are-ledger" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 6 },
+      "id": 8,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Ledger Write Errors",
+      "type": "stat",
+      "targets": [{ "expr": "are_ledger_write_errors_total", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "are-ledger" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 6 },
+      "id": 9,
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Ledger Write Latency (p99)",
+      "type": "stat",
+      "targets": [{ "expr": "histogram_quantile(0.99, rate(are_ledger_write_duration_seconds_bucket[5m])) * 1000", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "are-ledger" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{"color": "green", "value": null}] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 6 },
+      "id": 10,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Chain Verifications",
+      "type": "stat",
+      "targets": [{ "expr": "are_ledger_verify_total", "refId": "A" }]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+      "id": 102,
+      "title": "Inference Routing",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "title": "Request Rate by Backend",
+      "type": "timeseries",
+      "targets": [{ "expr": "rate(fleet_requests_total[5m])", "legendFormat": "total req/s", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "fleet-controller" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "id": 12,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "title": "Error Rate",
+      "type": "timeseries",
+      "targets": [{ "expr": "rate(fleet_errors_total[5m])", "legendFormat": "errors/s", "refId": "A" }]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 },
+      "id": 103,
+      "title": "Cluster Infrastructure",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+      "id": 13,
+      "options": { "legend": { "displayMode": "list" } },
+      "title": "Node CPU Utilization",
+      "type": "timeseries",
+      "targets": [{ "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))", "legendFormat": "CPU %", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+      "id": 14,
+      "options": { "legend": { "displayMode": "list" } },
+      "title": "Node Memory Usage",
+      "type": "timeseries",
+      "targets": [{ "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "Used", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+      "id": 15,
+      "options": { "legend": { "displayMode": "list" } },
+      "title": "Pod Count by Namespace",
+      "type": "timeseries",
+      "targets": [{ "expr": "count(kube_pod_info{namespace=~\"fleet-llm-d|sovereign-ai-lab\"}) by (namespace)", "legendFormat": "{{namespace}}", "refId": "A" }]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "id": 104,
+      "title": "Fleet Controller Pod",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "id": 16,
+      "options": { "legend": { "displayMode": "list" } },
+      "title": "Controller Memory Usage",
+      "type": "timeseries",
+      "targets": [{ "expr": "container_memory_working_set_bytes{namespace=\"fleet-llm-d\",container=\"fleet-controller\"}", "legendFormat": "working set", "refId": "A" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "id": 17,
+      "options": { "legend": { "displayMode": "list" } },
+      "title": "Controller CPU Usage",
+      "type": "timeseries",
+      "targets": [{ "expr": "rate(container_cpu_usage_seconds_total{namespace=\"fleet-llm-d\",container=\"fleet-controller\"}[5m])", "legendFormat": "CPU cores", "refId": "A" }]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["fleet-llm-d", "operations"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "fleet-llm-d Operations",
+  "uid": "fleet-ops",
+  "version": 1
+}
