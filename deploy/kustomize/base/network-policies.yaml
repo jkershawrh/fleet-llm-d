@@ -1,0 +1,104 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-controller-ingress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-controller-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5432
+          protocol: TCP
+        - port: 9092
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 8099
+          protocol: TCP
+        - port: 28099
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-gateway-ingress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 8000
+          protocol: TCP
+        - port: 8081
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-agent-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-agent
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+        - port: 9092
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
