@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"expvar"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
+	"github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/kvcache/transfer"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
@@ -62,6 +64,12 @@ type FleetController struct {
 	ClusterClient        client.MultiClusterClient
 	EventPublisher       events.EventPublisher
 
+	// Reconciler watches fleet CRDs and reconciles desired state
+	Reconciler *controller.Reconciler
+
+	// CRDWatcher polls the K8s API for CRD changes (optional, only when kube-api is configured)
+	CRDWatcher *controller.CRDWatcher
+
 	// Ledger integration
 	FleetRecorder *ledger.FleetRecorder
 
@@ -79,8 +87,11 @@ type FleetController struct {
 
 // NewFleetController creates a new FleetController with all components
 // initialized using their default constructors. The backendVLLM and backendOVMS
-// parameters specify the base URLs for the default inference backends.
-func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS string) *FleetController {
+// parameters specify the base URLs for the default inference backends. The
+// kubeAPI and namespace parameters are optional; when kubeAPI is non-empty a
+// CRDWatcher is created that polls the Kubernetes API for FleetInferencePool
+// changes.
+func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
 	ledgerClient := ledger.NewLedgerClient(ledgerEndpoint)
 
 	proxy := routing.NewInferenceProxy()
@@ -99,8 +110,42 @@ func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS string) *FleetC
 		LatencyMs: 200,
 	})
 
+	clusterClient := client.NewMultiClusterClient()
+	fleetRecorder := ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d")
+	constraintSolver := solver.NewConstraintSolver()
+
+	// Create reconciler wired to the cluster client and constraint solver.
+	reconciler := controller.NewReconciler(constraintSolver, clusterClient.ListClusters)
+
+	// Wire the onChange callback so every placement decision is recorded
+	// to the ARE immutable ledger.
+	reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
+		for _, clusterID := range pool.DesiredClusters {
+			if _, err := fleetRecorder.RecordPlacement(
+				context.Background(),
+				pool.Model, clusterID, 1, "", "reconciler placement",
+			); err != nil {
+				log.Printf("failed to record placement for %s -> %s: %v", pool.Model, clusterID, err)
+			}
+		}
+	})
+
+	// Create CRDWatcher if Kubernetes API is configured.
+	var crdWatcher *controller.CRDWatcher
+	if kubeAPI != "" {
+		if namespace == "" {
+			namespace = "default"
+		}
+		// Read service account token for in-cluster auth.
+		token := ""
+		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+			token = string(data)
+		}
+		crdWatcher = controller.NewCRDWatcher(kubeAPI, namespace, token, reconciler)
+	}
+
 	return &FleetController{
-		Solver: solver.NewConstraintSolver(),
+		Solver: constraintSolver,
 		Scorer: scorer.NewCompositeScorer([]scorer.WeightedScorer{
 			{Scorer: scorer.NewCostScorer(), Weight: 0.3},
 			{Scorer: scorer.NewCapacityScorer(), Weight: 0.3},
@@ -116,9 +161,11 @@ func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS string) *FleetC
 		RolloutController:    rollout.NewRolloutController(),
 		MetricsFederator:     metrics.NewMetricsFederator(),
 		TransferOrchestrator: transfer.NewTransferOrchestrator(),
-		ClusterClient:        client.NewMultiClusterClient(),
+		ClusterClient:        clusterClient,
 		EventPublisher:       events.NewEventPublisher(),
-		FleetRecorder:        ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d"),
+		Reconciler:           reconciler,
+		CRDWatcher:           crdWatcher,
+		FleetRecorder:        fleetRecorder,
 		InferenceProxy:       proxy,
 		PoolRepo:             postgres.NewInMemoryFleetPoolRepository(),
 		TenantRepo:           postgres.NewInMemoryTenantRepository(),
@@ -224,9 +271,21 @@ func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deregistered", "id": id})
 }
 
-// handleListPools returns all fleet inference pools.
+// handleListPools returns all fleet inference pools. It merges data from
+// the reconciler (which tracks live CRD state) with the repository.
 func (fc *FleetController) handleListPools(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Add(1)
+
+	// Prefer reconciler state when available -- it reflects live CRD watches.
+	if fc.Reconciler != nil {
+		reconciled := fc.Reconciler.ListPools()
+		if len(reconciled) > 0 {
+			writeJSON(w, http.StatusOK, reconciled)
+			return
+		}
+	}
+
+	// Fall back to the store-backed repository.
 	pools, err := fc.PoolRepo.List(r.Context())
 	if err != nil {
 		errorsTotal.Add(1)
@@ -234,6 +293,23 @@ func (fc *FleetController) handleListPools(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, pools)
+}
+
+// handleGetPoolState returns the reconciled state for a single pool by name.
+func (fc *FleetController) handleGetPoolState(w http.ResponseWriter, r *http.Request) {
+	requestsTotal.Add(1)
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "pool name is required")
+		return
+	}
+	state, err := fc.Reconciler.GetPoolState(name)
+	if err != nil {
+		errorsTotal.Add(1)
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 // handleListTenants returns all tenants.
@@ -429,6 +505,12 @@ func (fc *FleetController) setupAPIServer() *http.ServeMux {
 	// Pools
 	mux.HandleFunc("GET /api/v1/pools", fc.handleListPools)
 
+	// Reconciler webhook (accepts CRD watch events)
+	if fc.Reconciler != nil {
+		mux.HandleFunc("POST /api/v1/webhook/fleetinferencepool", fc.Reconciler.WatchEndpoint())
+		mux.HandleFunc("GET /api/v1/pools/{name}/state", fc.handleGetPoolState)
+	}
+
 	// Tenants
 	mux.HandleFunc("GET /api/v1/tenants", fc.handleListTenants)
 	mux.HandleFunc("GET /api/v1/tenants/{id}/usage", fc.handleTenantUsage)
@@ -510,6 +592,15 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 		}
 	}()
 
+	// Start CRD watcher if Kubernetes API is configured.
+	if fc.CRDWatcher != nil {
+		if err := fc.CRDWatcher.Start(ctx); err != nil {
+			log.Printf("WARNING: CRD watcher failed to start: %v", err)
+		} else {
+			log.Println("CRD watcher started for FleetInferencePool resources")
+		}
+	}
+
 	// Mark as ready.
 	fc.ready.Store(true)
 	log.Println("fleet-controller is ready")
@@ -548,6 +639,10 @@ func main() {
 	authSecret := flag.String("auth-secret", "", "HMAC-SHA256 auth secret (alternative to FLEET_AUTH_SECRET env var)")
 	backendVLLM := flag.String("backend-vllm", "http://vllm-cpu.fleet-llm-d.svc:8000", "Base URL for the vLLM inference backend")
 	backendOVMS := flag.String("backend-ovms", "http://ovms-granite-external.fleet-llm-d.svc:8080", "Base URL for the OVMS inference backend")
+	kubeAPI := flag.String("kube-api", "", "Kubernetes API server URL (enables CRD watching when set)")
+	namespace := flag.String("namespace", "default", "Kubernetes namespace to watch for FleetInferencePool CRDs")
+	pgURL := flag.String("pg-url", "", "PostgreSQL connection string (e.g. postgres://user:pass@host:5432/fleet?sslmode=disable). When set, uses PostgreSQL instead of in-memory stores")
+	eventEndpoint := flag.String("event-endpoint", "", "HTTP endpoint for publishing fleet events (e.g. http://kafka-bridge:8080/topics/fleet-events). When set, events are also POSTed to this URL")
 	flag.Parse()
 
 	log.Printf("fleet-controller starting (log-level=%s, ledger=%s)", *logLevel, *ledgerEndpoint)
@@ -559,9 +654,37 @@ func main() {
 		authCfg.Enabled = true
 	}
 
-	log.Printf("auth enabled=%v, TLS enabled=%v", authCfg.Enabled, *tlsCert != "" && *tlsKey != "")
+	log.Printf("auth enabled=%v, TLS enabled=%v, kube-api=%q, namespace=%q, pg=%v, event-endpoint=%q",
+		authCfg.Enabled, *tlsCert != "" && *tlsKey != "", *kubeAPI, *namespace,
+		*pgURL != "", *eventEndpoint)
 
-	fc := NewFleetController(*ledgerEndpoint, *backendVLLM, *backendOVMS)
+	fc := NewFleetController(*ledgerEndpoint, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
+
+	// Override stores with PostgreSQL when --pg-url is set.
+	if *pgURL != "" {
+		db, err := sql.Open("postgres", *pgURL)
+		if err != nil {
+			log.Fatalf("failed to open postgres: %v", err)
+		}
+		defer db.Close()
+
+		pgClient := postgres.NewPGClientFromDB(db)
+		if err := pgClient.Ping(context.Background()); err != nil {
+			log.Fatalf("failed to ping postgres: %v", err)
+		}
+		log.Println("connected to PostgreSQL — using persistent stores")
+
+		fc.PoolRepo = postgres.NewPGFleetPoolRepository(pgClient)
+		fc.TenantRepo = postgres.NewPGTenantRepository(pgClient)
+		fc.RolloutRepo = postgres.NewPGRolloutRepository(pgClient)
+	}
+
+	// Override event publisher with HTTP publisher when --event-endpoint is set.
+	if *eventEndpoint != "" {
+		fc.EventPublisher = events.NewHTTPEventPublisher(*eventEndpoint)
+		log.Printf("event publishing enabled (endpoint=%s)", *eventEndpoint)
+	}
+
 	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey); err != nil {
 		log.Fatal(err)
 	}
