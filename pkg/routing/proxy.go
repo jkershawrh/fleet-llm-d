@@ -48,6 +48,23 @@ func (p *InferenceProxy) RegisterBackend(model string, backend Backend) {
 	p.backends[model] = append(p.backends[model], backend)
 }
 
+// UpdateBackendHealth sets the health status of a named backend for a model.
+func (p *InferenceProxy) UpdateBackendHealth(model, backendName string, healthy bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	backends, ok := p.backends[model]
+	if !ok {
+		return
+	}
+	for i, b := range backends {
+		if b.Name == backendName {
+			backends[i].Healthy = healthy
+			break
+		}
+	}
+}
+
 // SelectBackend picks the best backend for a request based on headers.
 // Returns (backend, reason, error).
 //

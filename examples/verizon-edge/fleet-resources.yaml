@@ -1,0 +1,385 @@
+# =============================================================================
+# Verizon AI Grid Pattern -- fleet-llm-d Edge Deployment
+# =============================================================================
+#
+# Pattern:  30+ edge sites with geographic routing and tenant self-service
+# Customer: Verizon (Telco Edge AI)
+# Use Case: Voice AI inference at the network edge for real-time call
+#           processing, IVR, transcription, and conversational agents.
+#
+# Architecture overview:
+#   - 30+ edge sites co-located at Verizon cell towers and regional data
+#     centers, each running a small GPU cluster (L40 or H100 nodes).
+#   - A "hub and spoke" topology: edge sites handle real-time traffic with
+#     sub-50ms latency guarantees, while regional hub clusters absorb batch
+#     and overflow work.
+#   - Geographic routing pins voice-AI requests to the nearest edge site to
+#     minimize round-trip latency for real-time call processing.
+#   - Batch workloads (transcription post-processing, analytics) are routed
+#     to the cheapest available cluster to optimize cost.
+#   - Canary rollouts protect production voice services: model updates start
+#     at 10% traffic and promote only after SLO gates pass.
+#
+# Resources defined in this file:
+#   1. PlacementPolicy    "verizon-edge-policy"        -- where models can run
+#   2. FleetRoutingPolicy "verizon-voice-ai-routing"   -- how traffic is routed
+#   3. TenantProfile      "verizon-voice-ai"           -- governance & quotas
+#   4. FleetInferencePool "verizon-voice-ai-pool"      -- the model deployment
+#
+# Apply with:
+#   kubectl apply -f fleet-resources.yaml
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. PlacementPolicy -- defines WHERE models can and should run
+# -----------------------------------------------------------------------------
+# The placement policy enforces hard constraints (must have the right GPU) and
+# expresses soft affinities (prefer data-local, cost-efficient clusters). For
+# a telco edge deployment, hardware constraints are critical because edge
+# sites have heterogeneous GPU inventory, and spreading ensures resilience
+# across geographic regions.
+# -----------------------------------------------------------------------------
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: verizon-edge-policy
+  labels:
+    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/pattern: edge-grid
+spec:
+  # ---------------------------------------------------------------------------
+  # constraints: hard requirements that MUST be satisfied
+  # ---------------------------------------------------------------------------
+  # Any cluster that fails a constraint is excluded from placement entirely.
+  # For Verizon's voice-AI workload we need specific GPU hardware to meet the
+  # model's memory and throughput requirements.
+  # ---------------------------------------------------------------------------
+  constraints:
+    - type: hardware
+      # CEL-style rule: the cluster must have either L40 or H100 GPUs.
+      # L40 nodes are deployed at most edge sites for cost efficiency.
+      # H100 nodes are available at regional hubs for higher throughput.
+      # Other GPU types (e.g. T4, A10) lack the memory bandwidth needed
+      # for the 120B-parameter voice model.
+      rule: "cluster.gpu.type in ['L40', 'H100']"
+      description: >-
+        Voice AI model requires L40 (edge sites) or H100 (regional hubs) GPUs.
+        These are the only GPU types with sufficient HBM bandwidth and VRAM to
+        serve the 120B-parameter model at acceptable latency.
+
+  # ---------------------------------------------------------------------------
+  # affinity: soft preferences that influence cluster SCORING
+  # ---------------------------------------------------------------------------
+  # Affinities do not exclude clusters -- they make some clusters more
+  # attractive than others. Weights range from 0.0 to 1.0 and are combined
+  # into a composite score by the placement controller.
+  # ---------------------------------------------------------------------------
+  affinity:
+    - type: dataLocality
+      # Weight 0.6 -- data locality is the strongest preference.
+      # For voice AI, the audio stream data originates at the edge site.
+      # Keeping inference co-located with data avoids backhaul latency and
+      # reduces bandwidth costs on Verizon's transport network.
+      weight: 0.6
+
+    - type: costEfficiency
+      # Weight 0.4 -- cost efficiency is the secondary preference.
+      # When multiple clusters satisfy data-locality equally (e.g. two
+      # edge sites in the same metro), prefer the cheaper one. This drives
+      # batch workloads toward off-peak or spot-capacity clusters.
+      weight: 0.4
+
+  # ---------------------------------------------------------------------------
+  # spreading: controls replica distribution across failure domains
+  # ---------------------------------------------------------------------------
+  # For a telco edge grid, spreading across regions ensures that a regional
+  # outage (fiber cut, power event) does not take down all voice-AI capacity.
+  # ---------------------------------------------------------------------------
+  spreading:
+    # maxSkew 3 allows moderate imbalance: some regions have more Verizon
+    # subscribers and need more replicas, but no region should have more than
+    # 3 extra replicas compared to the least-served region.
+    maxSkew: 3
+    # topologyKey "region" spreads across Verizon's geographic regions
+    # (e.g. northeast, southeast, midwest, west). This aligns with their
+    # network topology and failure domains.
+    topologyKey: region
+
+---
+
+# -----------------------------------------------------------------------------
+# 2. FleetRoutingPolicy -- defines HOW traffic reaches the right cluster
+# -----------------------------------------------------------------------------
+# The routing policy implements a weighted strategy with two rules:
+#   - Real-time voice traffic goes to the nearest edge site with strict
+#     latency requirements and automatic failover to regional hubs.
+#   - Batch traffic (transcription, analytics) goes to the cheapest cluster
+#     to maximize cost efficiency.
+# Rules are evaluated in order; the first match wins.
+# -----------------------------------------------------------------------------
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetRoutingPolicy
+metadata:
+  name: verizon-voice-ai-routing
+  labels:
+    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/pattern: edge-grid
+spec:
+  # Strategy "weighted" allows fine-grained traffic distribution and
+  # per-rule overrides. Unlike "geographic" (which is purely location-based)
+  # or "failover" (which is active-passive), weighted lets us combine
+  # locality preferences with cost optimization in a single policy.
+  strategy: weighted
+
+  rules:
+    # -------------------------------------------------------------------------
+    # Rule 1: Real-time voice inference
+    # -------------------------------------------------------------------------
+    # Matches requests tagged with the "realtime" inference objective header.
+    # Voice-AI calls (IVR, live transcription, conversational agents) are
+    # latency-critical -- every millisecond of delay degrades call quality.
+    # -------------------------------------------------------------------------
+    - name: realtime-voice
+      match:
+        headers:
+          # The x-llm-d-inference-objective header is set by the voice
+          # gateway at the edge site. It tells the fleet router what kind
+          # of workload this is so the right routing rules apply.
+          x-llm-d-inference-objective: "realtime"
+      action:
+        # preferLocal: route to the cluster closest to the request origin.
+        # For voice AI, the request originates at the cell tower / edge site,
+        # so "local" means the GPU cluster co-located at that site. This
+        # minimizes network hops and keeps latency within the 50ms budget.
+        preferLocal: true
+        # maxLatencyMs: hard latency ceiling in milliseconds.
+        # 50ms is the maximum acceptable round-trip for real-time voice.
+        # Any cluster that cannot meet this target is automatically excluded.
+        # This accounts for ~20ms model inference + ~30ms network overhead
+        # within a single edge site.
+        maxLatencyMs: 50
+        # failover: if the local edge site is down or overloaded, route to
+        # a regional hub. Regional hubs have H100 GPUs with more capacity
+        # and can absorb overflow traffic, though at slightly higher latency.
+        # Two hubs (east/west) provide geographic redundancy.
+        failover:
+          clusters:
+            - regional-hub-east
+            - regional-hub-west
+
+    # -------------------------------------------------------------------------
+    # Rule 2: Batch / non-real-time workloads
+    # -------------------------------------------------------------------------
+    # Matches requests tagged with the "batch" inference objective.
+    # Post-call transcription, sentiment analysis, and analytics workloads
+    # are latency-tolerant and should run on the cheapest available cluster
+    # to optimize Verizon's infrastructure spend.
+    # -------------------------------------------------------------------------
+    - name: batch-processing
+      match:
+        headers:
+          # Batch workloads are tagged by the transcription pipeline and
+          # analytics services. These can tolerate seconds of latency.
+          x-llm-d-inference-objective: "batch"
+      action:
+        # preferCheapest: route to the cluster with the lowest cost per
+        # token. This typically means a regional hub running during off-peak
+        # hours, or an edge site with spare capacity. The fleet controller
+        # continuously evaluates cost metrics across all clusters.
+        preferCheapest: true
+
+---
+
+# -----------------------------------------------------------------------------
+# 3. TenantProfile -- governance, quotas, and cost controls
+# -----------------------------------------------------------------------------
+# Each Verizon business unit or application team gets a TenantProfile that
+# caps resource usage, enforces rate limits, and tracks costs. The
+# "verizon-voice-ai" tenant represents the Voice AI platform team.
+# These controls prevent any single tenant from monopolizing the shared
+# edge GPU fleet and enable chargeback to business units.
+# -----------------------------------------------------------------------------
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: verizon-voice-ai
+  labels:
+    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/pattern: edge-grid
+    fleet.llm-d.ai/team: voice-ai-platform
+spec:
+  quotas:
+    # maxTokensPerMinute: 5 million tokens/min across all models.
+    # This is sized for ~1000 concurrent voice calls, each consuming
+    # ~5000 tokens/min (input audio chunks + generated responses).
+    # The quota prevents runaway workloads from starving other tenants.
+    maxTokensPerMinute: 5000000
+
+    # maxConcurrentRequests: 1000 in-flight requests at any time.
+    # Matches the expected peak concurrent call volume. Each active voice
+    # call maps to roughly one concurrent inference request. Going above
+    # this signals a capacity planning issue, not normal operation.
+    maxConcurrentRequests: 1000
+
+    # maxModels: 20 distinct models deployed simultaneously.
+    # The voice-AI team runs multiple model variants: base voice model,
+    # fine-tuned IVR models for different business lines, sentiment
+    # analysis models, and experimental canary versions. 20 gives room
+    # for production + staging + experimentation.
+    maxModels: 20
+
+    gpuBudget:
+      # maxGPUs: 64 GPUs across all clusters.
+      # Sized for the 120B model: each replica needs ~4 GPUs (tensor
+      # parallel across 4x L40 or 2x H100), and 64 GPUs allows up to
+      # 16 replicas spread across the edge grid. This balances coverage
+      # with cost -- Verizon pays per-GPU-hour.
+      maxGPUs: 64
+      # gpuTypes: restrict to L40 and H100 only.
+      # Matches the placement policy constraints. Even if other GPU types
+      # exist in the fleet, this tenant cannot use them, preventing
+      # accidental scheduling onto unsuitable hardware.
+      gpuTypes:
+        - L40
+        - H100
+
+  rateLimit:
+    # requestsPerSecond: 500 sustained RPS.
+    # This is the steady-state throughput ceiling. At ~500 RPS the fleet
+    # can serve all active voice calls plus batch workloads without
+    # saturating the inference servers. The rate limit protects against
+    # misbehaving clients or retry storms.
+    requestsPerSecond: 500
+    # burstSize: 1000 requests.
+    # Allows short traffic spikes (e.g. a surge of calls at the top of
+    # the hour) up to 2x the sustained rate before throttling kicks in.
+    # The burst budget refills at the requestsPerSecond rate.
+    burstSize: 1000
+
+  # priority: 100 (on a 0-1000 scale).
+  # Default priority tier. Voice AI is important but not the highest
+  # priority in the fleet. Emergency services or network management
+  # workloads would get higher priority (e.g. 500+). During GPU contention,
+  # higher-priority tenants preempt lower-priority ones.
+  priority: 100
+
+  costControl:
+    # monthlyBudget: $50,000/month.
+    # This is the chargeback ceiling for the voice-AI team. The fleet
+    # controller tracks GPU-hours, token throughput, and network egress
+    # to compute running cost. When the budget is exceeded, new requests
+    # may be throttled (but not dropped -- voice calls are too important
+    # to hard-reject).
+    monthlyBudget: "50000.00"
+    # alertThreshold: 0.8 (80% of budget).
+    # At $40,000 spend, the voice-AI team and FinOps get an alert.
+    # This gives ~6 days of runway to investigate and adjust before
+    # hitting the hard cap, assuming linear spend over the month.
+    alertThreshold: 0.8
+
+---
+
+# -----------------------------------------------------------------------------
+# 4. FleetInferencePool -- the actual model deployment
+# -----------------------------------------------------------------------------
+# The FleetInferencePool ties everything together: it declares WHAT model to
+# deploy, WHERE to place it (via the PlacementPolicy), HOW to route traffic
+# to it (via the FleetRoutingPolicy), and HOW to serve and update it.
+#
+# This resource drives the fleet controller to:
+#   1. Select clusters matching the placement policy
+#   2. Create per-cluster InferencePool resources from the template
+#   3. Configure cross-cluster routing per the routing policy
+#   4. Manage model rollouts with canary safety gates
+# -----------------------------------------------------------------------------
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetInferencePool
+metadata:
+  name: verizon-voice-ai-pool
+  labels:
+    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/pattern: edge-grid
+    fleet.llm-d.ai/team: voice-ai-platform
+spec:
+  model:
+    # name: the Hugging Face model identifier.
+    # "openai/gpt-oss-120b" is a 120-billion parameter open-source model
+    # optimized for voice and conversational workloads. The large parameter
+    # count delivers high-quality responses for complex IVR flows and
+    # multi-turn conversations.
+    name: "openai/gpt-oss-120b"
+    # source: where to pull model artifacts from.
+    # Hugging Face is used as the model registry. In production, Verizon
+    # may mirror this to an internal S3 bucket for air-gapped edge sites,
+    # but the fleet controller resolves the source at deployment time.
+    source: "huggingface"
+
+  placement:
+    # policyRef: link to the PlacementPolicy defined above.
+    # This tells the fleet controller to use "verizon-edge-policy" for
+    # cluster selection, applying the L40/H100 constraint and the
+    # data-locality / cost-efficiency affinities.
+    policyRef:
+      name: verizon-edge-policy
+    # minClusters: minimum 3 clusters for redundancy.
+    # With 30+ edge sites available, placing on at least 3 ensures the
+    # model survives the loss of any single site or even a regional
+    # failure. Three clusters provide geographic coverage across at
+    # least two Verizon regions.
+    minClusters: 3
+    # maxClusters: cap at 10 clusters to control cost.
+    # The fleet controller can scale out to 10 clusters during peak load,
+    # but placing on all 30+ sites would be wasteful. The placement
+    # controller selects the optimal subset based on affinity scores.
+    maxClusters: 10
+
+  routing:
+    # policyRef: link to the FleetRoutingPolicy defined above.
+    # Connects this pool to the "verizon-voice-ai-routing" policy, which
+    # implements real-time vs. batch routing rules with failover.
+    policyRef:
+      name: verizon-voice-ai-routing
+
+  serving:
+    # inferencePoolTemplate: defines how each per-cluster InferencePool
+    # is configured. The fleet controller stamps out one InferencePool
+    # resource per selected cluster, using this template.
+    inferencePoolTemplate:
+      targetPorts:
+        # serving: port 8000 for OpenAI-compatible inference API.
+        # This is the standard vLLM / TGI serving port. The voice gateway
+        # sends HTTP requests to this port for completions and chat.
+        serving: 8000
+        # health: port 8080 for health and readiness checks.
+        # The fleet controller and Kubernetes probes use this port to
+        # determine if the inference server is ready to accept traffic.
+        # A separate port avoids interference with serving under load.
+        health: 8080
+        # metrics: port 9090 for Prometheus metrics scraping.
+        # Exposes throughput, latency percentiles, GPU utilization, KV cache
+        # hit rates, and queue depth. These metrics feed the fleet scaling
+        # controller and the SLO gates used during canary rollouts.
+        metrics: 9090
+
+  lifecycle:
+    # rolloutStrategy: Canary
+    # Voice AI is a production-critical service -- a bad model update could
+    # degrade call quality for millions of subscribers. Canary rollouts
+    # send a small percentage of traffic to the new version first, then
+    # promote incrementally only if SLO gates pass. This is safer than
+    # Rolling (which updates all replicas sequentially) or AllAtOnce.
+    rolloutStrategy: Canary
+    canary:
+      # initialWeight: start with 10% of traffic on the new model version.
+      # This limits blast radius: if the new model has quality regressions,
+      # only 10% of voice calls are affected, and the system can roll back
+      # before the impact widens.
+      initialWeight: 10
+      # interval: 30 minutes between promotion steps.
+      # Each step increases canary traffic by weightIncrement (default 10%).
+      # 30 minutes gives enough time to accumulate statistically significant
+      # metrics (latency, success rate, audio quality scores) before deciding
+      # to promote or roll back. A full rollout from 10% to 100% takes
+      # approximately 4.5 hours.
+      interval: "30m"
