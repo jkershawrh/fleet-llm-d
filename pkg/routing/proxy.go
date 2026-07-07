@@ -17,6 +17,7 @@ type Backend struct {
 	Name      string  // e.g., "granite-vllm-pool", "granite-ovms-pool"
 	URL       string  // e.g., "http://vllm-cpu.fleet-llm-d.svc:8000"
 	Runtime   string  // "vllm" or "ovms"
+	PathPrefix string // API path prefix override (e.g., "/v3" for OVMS, "" for vLLM default /v1)
 	Healthy   bool
 	LatencyMs float64
 }
@@ -111,7 +112,11 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 	}
 
 	// Build the backend request, preserving the original path.
-	backendURL := backend.URL + r.URL.Path
+	path := r.URL.Path
+	if backend.PathPrefix != "" {
+		path = strings.Replace(path, "/v1/", backend.PathPrefix+"/", 1)
+	}
+	backendURL := backend.URL + path
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, backendURL, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, `{"error":"failed to create proxy request"}`, http.StatusBadGateway)
