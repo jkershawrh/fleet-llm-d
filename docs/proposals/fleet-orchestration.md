@@ -47,46 +47,46 @@ deploy, govern, and observe inference models across multiple clusters from a
 single control plane. No existing llm-d component addresses this.
 
 **Telecommunications (5 engagements):**
-- **Verizon** requires a multi-cluster mesh across 30+ edge sites with
+- **Telco Edge Provider** requires a multi-cluster mesh across 30+ edge sites with
   geographic routing, tenant self-service, and per-site GPU metering. Their
   voice AI workloads demand sub-50ms time-to-first-token, requiring models
   placed at network edge sites rather than centralized data centers.
-- **AT&T** asks for a single pane of glass across their inference fleet
+- **Enterprise Telco** asks for a single pane of glass across their inference fleet
   with per-tenant cost controls and chargeback to internal business units.
-- **T-Mobile** selected NVIDIA NVAIE + Rafay specifically for tenant
+- **Mobile Network Operator** selected NVIDIA NVAIE + Rafay specifically for tenant
   self-service and multi-cluster GPU management -- a competitive loss on
   exactly the capability gap this proposal addresses.
-- **Telefonica** needs sovereign zone isolation across EU member states
+- **European Telco Partner** needs sovereign zone isolation across EU member states
   with no cross-border inference data transfer.
-- **Deutsche Telekom** requires fleet-wide canary rollouts with automatic
+- **DACH Telco Partner** requires fleet-wide canary rollouts with automatic
   rollback when SLO gates are violated across their European edge network.
 
 **Financial Services (4 engagements):**
-- **Wells Fargo** runs a 5-model production deployment requiring
+- **Financial Services Provider** runs a 5-model production deployment requiring
   multi-region failover with regulatory placement constraints (OCC SR 11-7,
   SOC 2 Type II). Data must never leave designated US regions.
-- **Bank of America** named multi-cluster routing as their stated top
+- **Global Banking Partner** named multi-cluster routing as their stated top
   priority. Their architecture requires active-active inference across
   two US data center regions.
-- **JPMC** requires model governance and tenant isolation with immutable
+- **Investment Banking Partner** requires model governance and tenant isolation with immutable
   audit trails for every placement and routing decision.
-- **Goldman Sachs** needs fleet-wide GPU budget enforcement across
+- **Global Investment Bank** needs fleet-wide GPU budget enforcement across
   multiple trading desk tenants with hard cost caps.
 
 **Sovereign Cloud / Government (3 engagements):**
 - **OSAC (Open Sovereign AI Cloud)** needs air-gapped fleet-llm-d
   deployments per sovereign zone with no inter-zone inference data transfer
   and cryptographic model provenance verification.
-- **US DoD** requires FIPS 140-2/3 compliant inference orchestration with
+- **Government Defense Agency** requires FIPS 140-2/3 compliant inference orchestration with
   classification-level-aware routing within sovereign boundaries.
-- **T-Systems** (Deutsche Telekom sovereign cloud) offers GPU-as-a-Service
+- **DACH Sovereign Cloud Provider** (DACH Telco Partner sovereign cloud) offers GPU-as-a-Service
   to multiple government tenants, needing strict resource isolation, scale-to-zero
   for cost optimization, and per-tenant billing integration.
 
 **Other verticals (2 engagements):**
-- **BMW** requires edge inference at manufacturing sites with centralized
+- **Automotive Manufacturer Partner** requires edge inference at manufacturing sites with centralized
   model lifecycle management and quality-gated rollouts.
-- **Siemens** needs multi-cluster inference for industrial IoT workloads
+- **Industrial IoT Partner** needs multi-cluster inference for industrial IoT workloads
   with geographic affinity and failover between manufacturing regions.
 
 ### Competitive Landscape
@@ -109,7 +109,7 @@ actively contested space:
 
 - **NVIDIA NVAIE + Rafay**: The combination of NVIDIA AI Enterprise's GPU
   scheduling with Rafay's multi-cluster Kubernetes management provides
-  tenant self-service and GPU fleet management. This is the stack T-Mobile
+  tenant self-service and GPU fleet management. This is the stack Mobile Network Operator
   selected. It is proprietary and vendor-locked, but it works today.
 
 - **Anyscale / Ray Serve**: Ray's multi-node serving with Anyscale's
@@ -368,7 +368,7 @@ fleet-routed requests without any EPP code changes.
 ```
 fleet-gateway sets:
   x-llm-d-inference-objective: "realtime"   # from FleetRoutingPolicy match
-  x-llm-d-inference-fairness-id: "verizon-voice-ai"  # from TenantProfile
+  x-llm-d-inference-fairness-id: "telco-edge-voice-ai"  # from TenantProfile
 
 EPP receives these headers and applies:
   - Priority-aware pod selection (realtime -> low-queue pods)
@@ -757,10 +757,10 @@ Test breakdown:
 
 | Customer | Pattern | CRDs Exercised | Validation Level |
 |---|---|---|---|
-| Verizon | Telco AI Grid (30+ edge sites) | PlacementPolicy, FleetRoutingPolicy, TenantProfile, FleetInferencePool | Architecture review |
-| Wells Fargo | Regulated financial services | All 7 CRDs | Design partner |
+| Telco Edge Provider | Telco AI Grid (30+ edge sites) | PlacementPolicy, FleetRoutingPolicy, TenantProfile, FleetInferencePool | Architecture review |
+| Financial Services Provider | Regulated financial services | All 7 CRDs | Design partner |
 | OSAC | Sovereign cloud, GPU-as-a-Service | PlacementPolicy, TenantProfile, FleetScalingPolicy, FleetRoutingPolicy | Architecture review |
-| T-Mobile | Tenant self-service | TenantProfile, FleetInferencePool | Competitive loss analysis |
+| Mobile Network Operator | Tenant self-service | TenantProfile, FleetInferencePool | Competitive loss analysis |
 
 ---
 

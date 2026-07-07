@@ -1,15 +1,15 @@
 # fleet-llm-d Benchmark Results
 
 **Date:** July 2026
-**Environment:** dev-cluster-1 OpenShift cluster (in-cluster harness) + local Go microbenchmarks
+**Environment:** Demo Cluster OpenShift cluster (in-cluster harness) + local Go microbenchmarks
 **Controller version:** fleet-controller (Go 1.26+, UBI base image)
 **Composite rubric score:** 90.35 (Gold threshold met)
 
 ---
 
-## 1. dev-cluster-1 Test Harness Results
+## 1. Demo Cluster Test Harness Results
 
-The 9-suite test harness runs inside the dev-cluster-1 OpenShift cluster against a live fleet-controller deployment. All suites passed.
+The 9-suite test harness runs inside the Demo Cluster OpenShift cluster against a live fleet-controller deployment. All suites passed.
 
 ### 1.1 Smoke Tests
 
@@ -133,6 +133,6 @@ Hot-path operations measured via `go test -bench` on isolated workloads.
 |-------|--------|
 | Architecture proofs | 41/41 pass |
 | Total test count | 450+ (Go unit + BDD + arch + security + contracts + compliance + Rust) |
-| Real inference | Granite-3.2-sovereign via fleet proxy on dev-cluster-1, 86 completion tokens |
+| Real inference | Granite-3.2-sovereign via fleet proxy on Demo Cluster, 86 completion tokens |
 | ARE Ledger | 7 decision chains verified valid on live ledger |
 | Composite rubric score | 90.35 (Gold threshold met) |

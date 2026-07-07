@@ -131,8 +131,8 @@ Ready-to-apply CRD examples for specific deployment patterns:
 
 | Pattern | Directory | Key Features |
 |---|---|---|
-| **Telco AI Grid** | [`examples/verizon-edge/`](examples/verizon-edge/) | 30+ edge sites, geographic routing, 50ms latency target |
-| **Financial Services** | [`examples/wells-fargo/`](examples/wells-fargo/) | Regulatory data residency, SLO-gated canary, ARE ledger compliance |
+| **Telco AI Grid** | [`examples/telco-edge/`](examples/telco-edge/) | 30+ edge sites, geographic routing, 50ms latency target |
+| **Financial Services** | [`examples/financial-services/`](examples/financial-services/) | Regulatory data residency, SLO-gated canary, ARE ledger compliance |
 | **Sovereign Cloud** | [`examples/sovereign-cloud/`](examples/sovereign-cloud/) | Air-gapped zones, GPU-as-a-Service multi-tenancy, scale-to-zero |
 
 ## Deployment Modes
@@ -200,9 +200,9 @@ go test -tags=compliance ./test/compliance/...
 | Multi-Cluster | 3 | TDD | Cross-cluster routing, failover, multi-cluster placement |
 | Security | 2 | TDD | Rate limiting, webhook validation |
 
-### Test Harness (dev-cluster-1)
+### Test Harness (Demo Cluster)
 
-The fleet-llm-d test harness runs 9 suites against the fleet-controller deployed on the dev-cluster-1 OpenShift cluster, validating behavior under real-world conditions.
+The fleet-llm-d test harness runs 9 suites against the fleet-controller deployed on the Demo Cluster OpenShift cluster, validating behavior under real-world conditions.
 
 | Suite | Result | Highlights |
 |-------|--------|------------|
@@ -236,8 +236,8 @@ See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubri
 
 | Pattern | Example Customers | Profile | Reference |
 |---------|-------------------|---------|-----------|
-| **Telco** | Verizon, T-Mobile | 30+ edge sites, latency-sensitive placement, distributed GPU pools. | [`docs/customer-patterns/telco-ai-grid.md`](docs/customer-patterns/telco-ai-grid.md) |
-| **Financial** | Wells Fargo, Bank of America | Multi-region regulatory constraints, strict tenant isolation, audit trails. | [`docs/customer-patterns/financial-services.md`](docs/customer-patterns/financial-services.md) |
+| **Telco** | Telco Edge Provider, Mobile Network Operator | 30+ edge sites, latency-sensitive placement, distributed GPU pools. | [`docs/customer-patterns/telco-ai-grid.md`](docs/customer-patterns/telco-ai-grid.md) |
+| **Financial** | Financial Services Provider, Global Banking Partner | Multi-region regulatory constraints, strict tenant isolation, audit trails. | [`docs/customer-patterns/financial-services.md`](docs/customer-patterns/financial-services.md) |
 | **Sovereign** | OSAC partners | Air-gapped deployment, data residency enforcement, ARE Ledger integration. | [`docs/customer-patterns/sovereign-cloud.md`](docs/customer-patterns/sovereign-cloud.md) |
 
 ## Project Structure
@@ -272,8 +272,8 @@ fleet-llm-d/
 ├── deploy/
 │   ├── kustomize/overlays/      # hub, standalone, federated
 │   ├── docker/                  # Dockerfiles (UBI base, non-root)
-│   └── dev-cluster-1/                  # dev-cluster-1 cluster deployment manifests
-├── examples/                    # Customer CRD examples (Verizon, WF, Sovereign)
+│   └── dev-cluster-1/                  # Demo cluster deployment manifests
+├── examples/                    # Customer CRD examples (Telco, Financial Services, Sovereign)
 ├── workflows/                   # Deployment workflow definitions
 ├── docker-compose.yml           # Local dev infrastructure
 ├── docs/

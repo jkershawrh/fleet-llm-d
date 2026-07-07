@@ -1,9 +1,9 @@
 # =============================================================================
-# Wells Fargo -- Regulated Financial Services LLM Fleet Deployment
+# Financial Services Provider -- Regulated Financial Services LLM Fleet Deployment
 # =============================================================================
 #
 # This configuration demonstrates a production fleet-llm-d deployment for a
-# large regulated bank (Wells Fargo). The design addresses several requirements
+# large regulated bank (Financial Services Provider). The design addresses several requirements
 # unique to financial services:
 #
 #   1. Data Residency & Regulatory Compliance
@@ -30,12 +30,12 @@
 #      enforce these guardrails and trigger alerts at 70% burn rate.
 #
 # Resources in this file:
-#   - PlacementPolicy        "wf-regulatory-placement"
-#   - FleetRoutingPolicy     "wf-failover-routing"
-#   - TenantProfile          "wf-consumer-lending"
-#   - FleetInferencePool     "wf-fraud-detection-pool"
-#   - ModelLifecycle          "wf-granite-canary-rollout"
-#   - KVCacheTransferPolicy  "wf-cross-dc-failover-cache"
+#   - PlacementPolicy        "fs-regulatory-placement"
+#   - FleetRoutingPolicy     "fs-failover-routing"
+#   - TenantProfile          "fs-consumer-lending"
+#   - FleetInferencePool     "fs-fraud-detection-pool"
+#   - ModelLifecycle          "fs-granite-canary-rollout"
+#   - KVCacheTransferPolicy  "fs-cross-dc-failover-cache"
 #
 # =============================================================================
 
@@ -53,10 +53,10 @@
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: PlacementPolicy
 metadata:
-  name: wf-regulatory-placement
-  namespace: wf-fleet
+  name: fs-regulatory-placement
+  namespace: fs-fleet
   labels:
-    app.kubernetes.io/part-of: wells-fargo-fleet
+    app.kubernetes.io/part-of: financial-services-fleet
     fleet.llm-d.ai/compliance: "occ-soc2"
 spec:
   # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ spec:
 
   # ---------------------------------------------------------------------------
   # Soft affinities -- influence cluster scoring but do not exclude clusters.
-  # Weights sum to 1.0 and reflect Wells Fargo's priorities:
+  # Weights sum to 1.0 and reflect Financial Services Provider's priorities:
   #   - KV cache affinity (0.5): highest weight because fraud detection
   #     queries are highly conversational and benefit enormously from cache
   #     hits on prior context (customer history, transaction patterns).
@@ -155,10 +155,10 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: FleetRoutingPolicy
 metadata:
-  name: wf-failover-routing
-  namespace: wf-fleet
+  name: fs-failover-routing
+  namespace: fs-fleet
   labels:
-    app.kubernetes.io/part-of: wells-fargo-fleet
+    app.kubernetes.io/part-of: financial-services-fleet
     fleet.llm-d.ai/routing-strategy: failover
 spec:
   # Failover strategy: traffic goes to the primary cluster; if it becomes
@@ -249,10 +249,10 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: TenantProfile
 metadata:
-  name: wf-consumer-lending
-  namespace: wf-fleet
+  name: fs-consumer-lending
+  namespace: fs-fleet
   labels:
-    app.kubernetes.io/part-of: wells-fargo-fleet
+    app.kubernetes.io/part-of: financial-services-fleet
     fleet.llm-d.ai/lob: consumer-lending
     fleet.llm-d.ai/cost-center: "CC-4420"
 spec:
@@ -369,10 +369,10 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: FleetInferencePool
 metadata:
-  name: wf-fraud-detection-pool
-  namespace: wf-fleet
+  name: fs-fraud-detection-pool
+  namespace: fs-fleet
   labels:
-    app.kubernetes.io/part-of: wells-fargo-fleet
+    app.kubernetes.io/part-of: financial-services-fleet
     fleet.llm-d.ai/use-case: fraud-detection
     fleet.llm-d.ai/model-family: ibm-granite
 spec:
@@ -399,9 +399,9 @@ spec:
   # ---------------------------------------------------------------------------
   placement:
     policyRef:
-      # References wf-regulatory-placement which enforces US data residency
+      # References fs-regulatory-placement which enforces US data residency
       # and H100 hardware requirements.
-      name: wf-regulatory-placement
+      name: fs-regulatory-placement
     # Minimum 2 clusters: ensures the model is always running in at least
     # two clusters for high availability. If one cluster goes down, the
     # other continues serving without interruption. This is a hard
@@ -418,9 +418,9 @@ spec:
   # ---------------------------------------------------------------------------
   routing:
     policyRef:
-      # References wf-failover-routing which implements active-passive
+      # References fs-failover-routing which implements active-passive
       # failover between us-east (primary) and us-west (DR).
-      name: wf-failover-routing
+      name: fs-failover-routing
 
   # ---------------------------------------------------------------------------
   # Serving -- per-cluster InferencePool template
@@ -528,10 +528,10 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: ModelLifecycle
 metadata:
-  name: wf-granite-canary-rollout
-  namespace: wf-fleet
+  name: fs-granite-canary-rollout
+  namespace: fs-fleet
   labels:
-    app.kubernetes.io/part-of: wells-fargo-fleet
+    app.kubernetes.io/part-of: financial-services-fleet
     fleet.llm-d.ai/rollout-type: canary
     fleet.llm-d.ai/model-family: ibm-granite
     fleet.llm-d.ai/change-ticket: "CHG-2026-07-0042"
@@ -553,7 +553,7 @@ spec:
     # Targets the fraud detection pool defined above. The lifecycle
     # controller will coordinate with the pool to manage traffic weights
     # and health during the rollout.
-    name: wf-fraud-detection-pool
+    name: fs-fraud-detection-pool
 
   # ---------------------------------------------------------------------------
   # Strategy -- canary with conservative settings for financial services
@@ -650,10 +650,10 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: KVCacheTransferPolicy
 metadata:
-  name: wf-cross-dc-failover-cache
-  namespace: wf-fleet
+  name: fs-cross-dc-failover-cache
+  namespace: fs-fleet
   labels:
-    app.kubernetes.io/part-of: wells-fargo-fleet
+    app.kubernetes.io/part-of: financial-services-fleet
     fleet.llm-d.ai/transfer-purpose: failover-continuity
 spec:
   # ---------------------------------------------------------------------------

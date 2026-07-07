@@ -87,7 +87,7 @@ Feature: Tenant Profile Governance
     And the total across all cluster records should equal the aggregate tokensConsumed
 
   Scenario: Tenant usage metering is tamper-proof via ledger
-    Given tenant "verizon-voice-ai" consuming inference on cluster "us-east-1"
+    Given tenant "telco-voice-ai" consuming inference on cluster "us-east-1"
     When 1000000 tokens are consumed
     Then a ledger entry of type "fleet.tenant.usage" should be recorded
     And the entry should be hash-chained to the previous usage entry
