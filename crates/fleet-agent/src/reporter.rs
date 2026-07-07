@@ -74,6 +74,7 @@ impl FleetReporter for MetricsReporter {
             cluster_id = %status.id,
             healthy = status.healthy,
             gpus = format!("{}/{}", status.gpu_available, status.gpu_total),
+            control_plane = %self.control_plane_url,
             "reporting cluster status"
         );
 
@@ -86,6 +87,7 @@ impl FleetReporter for MetricsReporter {
             throughput = metrics.throughput_tps,
             ttft_p50 = metrics.ttft_p50_ms,
             queue_depth = metrics.queue_depth,
+            control_plane = %self.control_plane_url,
             "reporting inference metrics"
         );
 
@@ -94,7 +96,7 @@ impl FleetReporter for MetricsReporter {
     }
 
     async fn report_event(&self, event: &FleetEvent) -> Result<(), FleetError> {
-        tracing::info!(?event, "reporting fleet event");
+        tracing::info!(?event, control_plane = %self.control_plane_url, "reporting fleet event");
 
         // TODO: send event via gRPC to self.control_plane_url
         Ok(())
@@ -112,7 +114,10 @@ mod tests {
             ClusterId("test".to_string()),
             "http://localhost:9090".to_string(),
         );
-        assert_eq!(reporter.collect_interval_secs, DEFAULT_COLLECT_INTERVAL_SECS);
+        assert_eq!(
+            reporter.collect_interval_secs,
+            DEFAULT_COLLECT_INTERVAL_SECS
+        );
     }
 
     #[test]

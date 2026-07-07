@@ -31,5 +31,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 kube = { version = "0.99", features = ["runtime", "derive"] }
 k8s-openapi = { version = "0.24", features = ["latest"] }
-rdkafka = { version = "0.37", features = ["cmake-build"] }
 sha2 = "0.10"

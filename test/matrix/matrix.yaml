@@ -342,3 +342,32 @@ summary:
   total_tests: 166
   total_passing: 166
   overall_coverage: 75
+
+red_green_rubric:
+  tdd:
+    red: "A unit or package test fails for a concrete behavior gap."
+    green: "The smallest scoped implementation makes the package test pass."
+    checks:
+      - "go test ./pkg/... ./cmd/..."
+      - "cargo test --workspace"
+  cdd:
+    red: "A public API, OpenAPI, protobuf, or storage contract fails."
+    green: "Implementation and contract fixtures agree cross-platform."
+    checks:
+      - "go test -tags=contracts ./test/contracts/..."
+      - "go test -tags=architecture ./test/architecture/..."
+  bdd:
+    red: "A user workflow or acceptance scenario fails."
+    green: "The scenario passes through the expected behavior path."
+    checks:
+      - "go test -tags=bdd ./test/bdd/..."
+      - "go test -tags=compliance ./test/compliance/..."
+      - "go test -tags=security ./test/security/..."
+  edd:
+    red: "An operational/runtime executable, lint, or build check fails."
+    green: "Executable artifact and repeatable environment checks pass."
+    checks:
+      - "go vet ./..."
+      - "cargo clippy --workspace -- -D warnings"
+      - "npm ci && npm run lint && npm run build"
+      - "python -m pytest tests/ -v"

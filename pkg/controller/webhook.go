@@ -14,7 +14,7 @@ import (
 // ValidationResult represents the outcome of validating a fleet CRD.
 type ValidationResult struct {
 	Valid   bool     `json:"valid"`
-	Reason  string  `json:"reason,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
 	Details []string `json:"details,omitempty"`
 }
 
@@ -157,9 +157,9 @@ func ValidatePlacementPolicy(spec v1alpha1.PlacementPolicySpec) ValidationResult
 
 // admissionReview is a minimal representation of a Kubernetes AdmissionReview.
 type admissionReview struct {
-	APIVersion string            `json:"apiVersion"`
-	Kind       string            `json:"kind"`
-	Request    *admissionRequest `json:"request,omitempty"`
+	APIVersion string             `json:"apiVersion"`
+	Kind       string             `json:"kind"`
+	Request    *admissionRequest  `json:"request,omitempty"`
 	Response   *admissionResponse `json:"response,omitempty"`
 }
 
@@ -176,13 +176,25 @@ type admissionKind struct {
 }
 
 type admissionResponse struct {
-	UID     string          `json:"uid"`
-	Allowed bool            `json:"allowed"`
+	UID     string           `json:"uid"`
+	Allowed bool             `json:"allowed"`
 	Status  *admissionStatus `json:"status,omitempty"`
 }
 
 type admissionStatus struct {
 	Message string `json:"message"`
+}
+
+type specEnvelope struct {
+	Spec json.RawMessage `json:"spec"`
+}
+
+func unmarshalAdmissionSpec(raw json.RawMessage, target interface{}) error {
+	var envelope specEnvelope
+	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Spec) > 0 {
+		return json.Unmarshal(envelope.Spec, target)
+	}
+	return json.Unmarshal(raw, target)
 }
 
 // WebhookHandler returns an HTTP handler for validation webhook requests.
@@ -210,7 +222,7 @@ func WebhookHandler() http.HandlerFunc {
 		switch review.Request.Kind.Kind {
 		case "FleetInferencePool":
 			var spec v1alpha1.FleetInferencePoolSpec
-			if err := json.Unmarshal(review.Request.Object, &spec); err != nil {
+			if err := unmarshalAdmissionSpec(review.Request.Object, &spec); err != nil {
 				result = ValidationResult{
 					Valid:  false,
 					Reason: "failed to unmarshal FleetInferencePoolSpec: " + err.Error(),
@@ -220,7 +232,7 @@ func WebhookHandler() http.HandlerFunc {
 			}
 		case "TenantProfile":
 			var spec v1alpha1.TenantProfileSpec
-			if err := json.Unmarshal(review.Request.Object, &spec); err != nil {
+			if err := unmarshalAdmissionSpec(review.Request.Object, &spec); err != nil {
 				result = ValidationResult{
 					Valid:  false,
 					Reason: "failed to unmarshal TenantProfileSpec: " + err.Error(),
@@ -230,7 +242,7 @@ func WebhookHandler() http.HandlerFunc {
 			}
 		case "PlacementPolicy":
 			var spec v1alpha1.PlacementPolicySpec
-			if err := json.Unmarshal(review.Request.Object, &spec); err != nil {
+			if err := unmarshalAdmissionSpec(review.Request.Object, &spec); err != nil {
 				result = ValidationResult{
 					Valid:  false,
 					Reason: "failed to unmarshal PlacementPolicySpec: " + err.Error(),

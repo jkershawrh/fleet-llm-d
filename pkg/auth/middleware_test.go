@@ -174,3 +174,46 @@ func TestMiddleware_ExpiredToken(t *testing.T) {
 		t.Errorf("expected error 'unauthorized', got %q", resp["error"])
 	}
 }
+
+func TestAuthorizationMiddleware_DeniesViewerDelete(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := AuthorizationMiddleware(nil, inner)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/cluster-1", nil)
+	claims := &Claims{Subject: "viewer-1", Role: RoleViewer}
+	req = req.WithContext(WithClaims(req.Context(), claims))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for viewer DELETE, got %d", rr.Code)
+	}
+}
+
+func TestAuthorizationMiddleware_TenantUsageScope(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := AuthorizationMiddleware(nil, inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/usage", nil)
+	req = req.WithContext(WithClaims(req.Context(), &Claims{Subject: "globex", Role: RoleTenant}))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for cross-tenant usage read, got %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/usage", nil)
+	req = req.WithContext(WithClaims(req.Context(), &Claims{Subject: "acme", Role: RoleTenant}))
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for matching tenant usage read, got %d", rr.Code)
+	}
+}

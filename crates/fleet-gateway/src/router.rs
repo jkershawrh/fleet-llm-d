@@ -78,9 +78,9 @@ impl FleetRouter {
     pub async fn route(&self, request: &InferenceRequest) -> anyhow::Result<RouteDecision> {
         let policies = self.policies.read().await;
 
-        let policy = policies.get(&request.model_id).ok_or_else(|| {
-            anyhow::anyhow!("no routing policy for model {}", request.model_id)
-        })?;
+        let policy = policies
+            .get(&request.model_id)
+            .ok_or_else(|| anyhow::anyhow!("no routing policy for model {}", request.model_id))?;
 
         // Determine weights (tenant override or default).
         let weights = if let Some(tenant_id) = &request.tenant_id {
@@ -97,20 +97,29 @@ impl FleetRouter {
         let (target_cluster, _weight) = weights
             .iter()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .ok_or_else(|| anyhow::anyhow!("no clusters available for model {}", request.model_id))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("no clusters available for model {}", request.model_id)
+            })?;
 
         let mut headers = HashMap::new();
-        headers.insert(
-            "x-fleet-source".to_string(),
-            "fleet-gateway".to_string(),
-        );
+        headers.insert("x-fleet-source".to_string(), "fleet-gateway".to_string());
         if let Some(tenant) = &request.tenant_id {
             headers.insert("x-llm-d-tenant-id".to_string(), tenant.to_string());
         }
+        if let Some(region) = &request.preferred_region {
+            headers.insert("x-fleet-preferred-region".to_string(), region.clone());
+        }
+        headers.insert(
+            "x-fleet-body-size-bytes".to_string(),
+            request.body_size_bytes.to_string(),
+        );
 
         Ok(RouteDecision {
             target_cluster: target_cluster.clone(),
-            target_url: format!("http://{}.cluster.local:8000/v1/completions", target_cluster),
+            target_url: format!(
+                "http://{}.cluster.local:8000/v1/completions",
+                target_cluster
+            ),
             headers_to_inject: headers,
         })
     }
