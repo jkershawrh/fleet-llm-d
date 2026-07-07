@@ -660,10 +660,19 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 }
 
 func defaultExemptPaths(configured []string) []string {
-	if len(configured) == 0 {
-		return []string{"/healthz", "/readyz", "/metrics"}
+	required := []string{"/healthz", "/readyz", "/metrics"}
+	seen := make(map[string]bool)
+	for _, p := range required {
+		seen[p] = true
 	}
-	return configured
+	merged := append([]string{}, required...)
+	for _, p := range configured {
+		if !seen[p] {
+			merged = append(merged, p)
+			seen[p] = true
+		}
+	}
+	return merged
 }
 
 func splitCSV(value string) []string {
