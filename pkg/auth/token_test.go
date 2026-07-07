@@ -143,3 +143,19 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 		t.Errorf("expected 'signature' in error, got: %v", err)
 	}
 }
+
+func BenchmarkGenerateToken(b *testing.B) {
+	claims := Claims{Subject: "bench", Role: RoleAdmin, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+	for i := 0; i < b.N; i++ {
+		GenerateToken("benchmark-secret-key-2026", claims)
+	}
+}
+
+func BenchmarkValidateToken(b *testing.B) {
+	claims := Claims{Subject: "bench", Role: RoleAdmin, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+	token, _ := GenerateToken("benchmark-secret-key-2026", claims)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ValidateToken("benchmark-secret-key-2026", token)
+	}
+}
