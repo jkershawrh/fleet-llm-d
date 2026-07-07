@@ -1,12 +1,16 @@
 package routing
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestRegisterBackend(t *testing.T) {
@@ -264,5 +268,243 @@ func TestServeHTTP_NoBackendReturns502(t *testing.T) {
 
 	if recorder.Code != http.StatusBadGateway {
 		t.Errorf("expected status 502 for no backend, got %d", recorder.Code)
+	}
+}
+
+// TestProxyRequest_StreamingSSE verifies that when the backend responds with
+// Content-Type text/event-stream, the proxy streams SSE events to the client
+// with per-chunk flushing.
+func TestProxyRequest_StreamingSSE(t *testing.T) {
+	// SSE events the mock backend will send.
+	sseEvents := []string{
+		`data: {"id":"1","choices":[{"delta":{"content":"Hello"}}]}`,
+		`data: {"id":"2","choices":[{"delta":{"content":" world"}}]}`,
+		`data: [DONE]`,
+	}
+
+	mockBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("mock backend ResponseWriter does not support Flusher")
+			return
+		}
+
+		for _, event := range sseEvents {
+			fmt.Fprintf(w, "%s\n\n", event)
+			flusher.Flush()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}))
+	defer mockBackend.Close()
+
+	p := NewInferenceProxy()
+	backend := &Backend{
+		Name:    "stream-backend",
+		URL:     mockBackend.URL,
+		Runtime: "vllm",
+		Healthy: true,
+	}
+
+	reqBody := `{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ProxyRequest(recorder, req, backend)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	// Verify Content-Type was forwarded.
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Errorf("expected Content-Type text/event-stream, got %q", ct)
+	}
+
+	// Verify X-Fleet-Routed-To was set.
+	routedTo := resp.Header.Get("X-Fleet-Routed-To")
+	if routedTo != "stream-backend" {
+		t.Errorf("expected X-Fleet-Routed-To=stream-backend, got %q", routedTo)
+	}
+
+	// Parse the SSE events from the response body.
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	// Verify all SSE events are present in order.
+	for _, expected := range sseEvents {
+		if !strings.Contains(string(body), expected) {
+			t.Errorf("response body missing SSE event: %s", expected)
+		}
+	}
+}
+
+// TestProxyRequest_NonStreamingUnchanged verifies that non-streaming responses
+// are proxied as before without SSE-specific handling.
+func TestProxyRequest_NonStreamingUnchanged(t *testing.T) {
+	expectedResp := map[string]interface{}{
+		"id":      "chatcmpl-123",
+		"choices": []interface{}{map[string]interface{}{"message": map[string]interface{}{"content": "Hello!"}}},
+	}
+
+	mockBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(expectedResp)
+	}))
+	defer mockBackend.Close()
+
+	p := NewInferenceProxy()
+	backend := &Backend{
+		Name:    "non-stream-backend",
+		URL:     mockBackend.URL,
+		Runtime: "vllm",
+		Healthy: true,
+	}
+
+	reqBody := `{"model":"test","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ProxyRequest(recorder, req, backend)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+
+	var respBody map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if respBody["id"] != "chatcmpl-123" {
+		t.Errorf("expected id chatcmpl-123, got %v", respBody["id"])
+	}
+}
+
+// TestServeHTTP_StreamFlagSetsHeader verifies that when the request body
+// contains "stream": true, the X-Fleet-Stream-Requested header is set.
+func TestServeHTTP_StreamFlagSetsHeader(t *testing.T) {
+	mockBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer mockBackend.Close()
+
+	p := NewInferenceProxy()
+	p.RegisterBackend("stream-model", Backend{
+		Name: "stream-be", URL: mockBackend.URL, Runtime: "vllm", Healthy: true,
+	})
+
+	reqBody := `{"model":"stream-model","messages":[{"role":"user","content":"hello"}],"stream":true}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ServeHTTP(recorder, req)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	streamHeader := resp.Header.Get("X-Fleet-Stream-Requested")
+	if streamHeader != "true" {
+		t.Errorf("expected X-Fleet-Stream-Requested=true, got %q", streamHeader)
+	}
+
+	// Verify SSE data came through.
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "data: [DONE]") {
+		t.Errorf("expected SSE data in response body, got: %s", string(body))
+	}
+}
+
+// TestProxyRequest_StreamingSSE_LiveFlush uses a live HTTP server (not
+// httptest.ResponseRecorder) to confirm per-chunk flushing works end-to-end.
+func TestProxyRequest_StreamingSSE_LiveFlush(t *testing.T) {
+	sseLines := []string{
+		"data: {\"token\":\"A\"}\n\n",
+		"data: {\"token\":\"B\"}\n\n",
+		"data: [DONE]\n\n",
+	}
+
+	mockBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		for _, line := range sseLines {
+			w.Write([]byte(line))
+			flusher.Flush()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	defer mockBackend.Close()
+
+	proxy := NewInferenceProxy()
+	proxy.RegisterBackend("flush-model", Backend{
+		Name: "flush-be", URL: mockBackend.URL, Runtime: "vllm", Healthy: true,
+	})
+
+	// Wrap the proxy in a live HTTP server.
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	}))
+	defer proxyServer.Close()
+
+	// Send the request to the proxy.
+	reqBody := `{"model":"flush-model","stream":true,"messages":[{"role":"user","content":"go"}]}`
+	resp, err := http.Post(proxyServer.URL+"/v1/chat/completions", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Read SSE events from the live response.
+	scanner := bufio.NewScanner(resp.Body)
+	var events []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			events = append(events, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanner: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 SSE data lines, got %d: %v", len(events), events)
+	}
+	if events[2] != "data: [DONE]" {
+		t.Errorf("expected last event to be data: [DONE], got %q", events[2])
 	}
 }
