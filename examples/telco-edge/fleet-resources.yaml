@@ -1,14 +1,14 @@
 # =============================================================================
-# Telco Provider A AI Grid Pattern -- fleet-llm-d Edge Deployment
+# Telco Edge Provider AI Grid Pattern -- fleet-llm-d Edge Deployment
 # =============================================================================
 #
 # Pattern:  30+ edge sites with geographic routing and tenant self-service
-# Customer: Telco Provider A (Telco Edge AI)
+# Customer: Telco Edge Provider (Telco Edge AI)
 # Use Case: Voice AI inference at the network edge for real-time call
 #           processing, IVR, transcription, and conversational agents.
 #
 # Architecture overview:
-#   - 30+ edge sites co-located at Telco Provider A cell towers and regional data
+#   - 30+ edge sites co-located at Telco Edge Provider cell towers and regional data
 #     centers, each running a small GPU cluster (L40 or H100 nodes).
 #   - A "hub and spoke" topology: edge sites handle real-time traffic with
 #     sub-50ms latency guarantees, while regional hub clusters absorb batch
@@ -21,10 +21,10 @@
 #     at 10% traffic and promote only after SLO gates pass.
 #
 # Resources defined in this file:
-#   1. PlacementPolicy    "verizon-edge-policy"        -- where models can run
-#   2. FleetRoutingPolicy "verizon-voice-ai-routing"   -- how traffic is routed
-#   3. TenantProfile      "verizon-voice-ai"           -- governance & quotas
-#   4. FleetInferencePool "verizon-voice-ai-pool"      -- the model deployment
+#   1. PlacementPolicy    "telco-edge-policy"        -- where models can run
+#   2. FleetRoutingPolicy "telco-edge-voice-ai-routing"   -- how traffic is routed
+#   3. TenantProfile      "telco-edge-voice-ai"           -- governance & quotas
+#   4. FleetInferencePool "telco-edge-voice-ai-pool"      -- the model deployment
 #
 # Apply with:
 #   kubectl apply -f fleet-resources.yaml
@@ -43,16 +43,16 @@
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: PlacementPolicy
 metadata:
-  name: verizon-edge-policy
+  name: telco-edge-policy
   labels:
-    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/customer: telco-edge
     fleet.llm-d.ai/pattern: edge-grid
 spec:
   # ---------------------------------------------------------------------------
   # constraints: hard requirements that MUST be satisfied
   # ---------------------------------------------------------------------------
   # Any cluster that fails a constraint is excluded from placement entirely.
-  # For Telco Provider A's voice-AI workload we need specific GPU hardware to meet the
+  # For Telco Edge Provider's voice-AI workload we need specific GPU hardware to meet the
   # model's memory and throughput requirements.
   # ---------------------------------------------------------------------------
   constraints:
@@ -80,7 +80,7 @@ spec:
       # Weight 0.6 -- data locality is the strongest preference.
       # For voice AI, the audio stream data originates at the edge site.
       # Keeping inference co-located with data avoids backhaul latency and
-      # reduces bandwidth costs on Telco Provider A's transport network.
+      # reduces bandwidth costs on Telco Edge Provider's transport network.
       weight: 0.6
 
     - type: costEfficiency
@@ -97,11 +97,11 @@ spec:
   # outage (fiber cut, power event) does not take down all voice-AI capacity.
   # ---------------------------------------------------------------------------
   spreading:
-    # maxSkew 3 allows moderate imbalance: some regions have more Telco Provider A
+    # maxSkew 3 allows moderate imbalance: some regions have more Telco Edge Provider
     # subscribers and need more replicas, but no region should have more than
     # 3 extra replicas compared to the least-served region.
     maxSkew: 3
-    # topologyKey "region" spreads across Telco Provider A's geographic regions
+    # topologyKey "region" spreads across Telco Edge Provider's geographic regions
     # (e.g. northeast, southeast, midwest, west). This aligns with their
     # network topology and failure domains.
     topologyKey: region
@@ -121,9 +121,9 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: FleetRoutingPolicy
 metadata:
-  name: verizon-voice-ai-routing
+  name: telco-edge-voice-ai-routing
   labels:
-    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/customer: telco-edge
     fleet.llm-d.ai/pattern: edge-grid
 spec:
   # Strategy "weighted" allows fine-grained traffic distribution and
@@ -174,7 +174,7 @@ spec:
     # Matches requests tagged with the "batch" inference objective.
     # Post-call transcription, sentiment analysis, and analytics workloads
     # are latency-tolerant and should run on the cheapest available cluster
-    # to optimize Telco Provider A's infrastructure spend.
+    # to optimize Telco Edge Provider's infrastructure spend.
     # -------------------------------------------------------------------------
     - name: batch-processing
       match:
@@ -194,18 +194,18 @@ spec:
 # -----------------------------------------------------------------------------
 # 3. TenantProfile -- governance, quotas, and cost controls
 # -----------------------------------------------------------------------------
-# Each Telco Provider A business unit or application team gets a TenantProfile that
+# Each Telco Edge Provider business unit or application team gets a TenantProfile that
 # caps resource usage, enforces rate limits, and tracks costs. The
-# "verizon-voice-ai" tenant represents the Voice AI platform team.
+# "telco-edge-voice-ai" tenant represents the Voice AI platform team.
 # These controls prevent any single tenant from monopolizing the shared
 # edge GPU fleet and enable chargeback to business units.
 # -----------------------------------------------------------------------------
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: TenantProfile
 metadata:
-  name: verizon-voice-ai
+  name: telco-edge-voice-ai
   labels:
-    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/customer: telco-edge
     fleet.llm-d.ai/pattern: edge-grid
     fleet.llm-d.ai/team: voice-ai-platform
 spec:
@@ -234,7 +234,7 @@ spec:
       # Sized for the 120B model: each replica needs ~4 GPUs (tensor
       # parallel across 4x L40 or 2x H100), and 64 GPUs allows up to
       # 16 replicas spread across the edge grid. This balances coverage
-      # with cost -- Telco Provider A pays per-GPU-hour.
+      # with cost -- Telco Edge Provider pays per-GPU-hour.
       maxGPUs: 64
       # gpuTypes: restrict to L40 and H100 only.
       # Matches the placement policy constraints. Even if other GPU types
@@ -296,9 +296,9 @@ spec:
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: FleetInferencePool
 metadata:
-  name: verizon-voice-ai-pool
+  name: telco-edge-voice-ai-pool
   labels:
-    fleet.llm-d.ai/customer: verizon
+    fleet.llm-d.ai/customer: telco-edge
     fleet.llm-d.ai/pattern: edge-grid
     fleet.llm-d.ai/team: voice-ai-platform
 spec:
@@ -310,23 +310,23 @@ spec:
     # multi-turn conversations.
     name: "openai/gpt-oss-120b"
     # source: where to pull model artifacts from.
-    # Hugging Face is used as the model registry. In production, Telco Provider A
+    # Hugging Face is used as the model registry. In production, Telco Edge Provider
     # may mirror this to an internal S3 bucket for air-gapped edge sites,
     # but the fleet controller resolves the source at deployment time.
     source: "huggingface"
 
   placement:
     # policyRef: link to the PlacementPolicy defined above.
-    # This tells the fleet controller to use "verizon-edge-policy" for
+    # This tells the fleet controller to use "telco-edge-policy" for
     # cluster selection, applying the L40/H100 constraint and the
     # data-locality / cost-efficiency affinities.
     policyRef:
-      name: verizon-edge-policy
+      name: telco-edge-policy
     # minClusters: minimum 3 clusters for redundancy.
     # With 30+ edge sites available, placing on at least 3 ensures the
     # model survives the loss of any single site or even a regional
     # failure. Three clusters provide geographic coverage across at
-    # least two Telco Provider A regions.
+    # least two Telco Edge Provider regions.
     minClusters: 3
     # maxClusters: cap at 10 clusters to control cost.
     # The fleet controller can scale out to 10 clusters during peak load,
@@ -336,10 +336,10 @@ spec:
 
   routing:
     # policyRef: link to the FleetRoutingPolicy defined above.
-    # Connects this pool to the "verizon-voice-ai-routing" policy, which
+    # Connects this pool to the "telco-edge-voice-ai-routing" policy, which
     # implements real-time vs. batch routing rules with failover.
     policyRef:
-      name: verizon-voice-ai-routing
+      name: telco-edge-voice-ai-routing
 
   serving:
     # inferencePoolTemplate: defines how each per-cluster InferencePool

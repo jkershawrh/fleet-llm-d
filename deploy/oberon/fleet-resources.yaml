@@ -1,7 +1,7 @@
 apiVersion: fleet.llm-d.ai/v1alpha1
 kind: PlacementPolicy
 metadata:
-  name: dev-cluster-1-cpu-policy
+  name: demo-cluster-cpu-policy
   namespace: fleet-llm-d
 spec:
   constraints:
@@ -67,7 +67,7 @@ spec:
     source: huggingface
   placement:
     policyRef:
-      name: dev-cluster-1-cpu-policy
+      name: demo-cluster-cpu-policy
     minClusters: 1
   routing:
     policyRef:

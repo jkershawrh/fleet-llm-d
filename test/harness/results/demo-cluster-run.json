@@ -1,6 +1,6 @@
 {
   "timestamp": "2026-07-07T06:15:20Z",
-  "target": "https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com",
+  "target": "https://fleet-controller-fleet-llm-d.apps.cluster.example.com",
   "total_passed": 7,
   "total_failed": 40,
   "total_skipped": 1,
@@ -16,27 +16,27 @@
         {
           "name": "health:/healthz",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "health:/readyz",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/readyz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/readyz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "auth:no-token-rejected",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "auth:valid-token-accepted",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "crud:create-cluster",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "metrics:reachable",
@@ -46,82 +46,82 @@
         {
           "name": "reach:GET:/healthz",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/readyz",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/readyz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/readyz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/clusters",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:POST:/api/v1/clusters",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/pools",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/pools\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/pools\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/tenants",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/tenants\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/tenants\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/metrics/fleet",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/metrics/fleet\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/metrics/fleet\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/rollouts",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/rollouts\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/rollouts\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:POST:/api/v1/rollouts",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/rollouts\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/rollouts\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/verify/chains",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/verify/chains\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/verify/chains\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:POST:/v1/chat/completions",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/v1/chat/completions\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/v1/chat/completions\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:POST:/v1/completions",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/v1/completions\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/v1/completions\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:POST:/api/v1/webhook/fleetinferencepool",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/webhook/fleetinferencepool\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/webhook/fleetinferencepool\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:POST:/api/v1/webhook/validate",
           "passed": false,
-          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/webhook/validate\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/webhook/validate\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/tenants/test-tenant/usage",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/tenants/test-tenant/usage\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/tenants/test-tenant/usage\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "reach:GET:/api/v1/metrics/model/test-model",
           "passed": false,
-          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/metrics/model/test-model\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "request error: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/metrics/model/test-model\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         }
       ]
     },
@@ -233,17 +233,17 @@
         {
           "name": "chaos:1mb-body",
           "passed": true,
-          "detail": "connection rejected (expected): do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "connection rejected (expected): do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "chaos:invalid-json",
           "passed": true,
-          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "chaos:unicode-emoji",
           "passed": true,
-          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "chaos:burst-1000",
@@ -253,22 +253,22 @@
         {
           "name": "chaos:null-bytes",
           "passed": true,
-          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "chaos:empty-post-body",
           "passed": true,
-          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "chaos:long-field-values",
           "passed": true,
-          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "connection error: do request: Post \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/api/v1/clusters\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         },
         {
           "name": "chaos:post-chaos-health",
           "passed": false,
-          "detail": "server unreachable after chaos: do request: Get \"https://fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.dev-cluster-1.example-domain.com: no such host"
+          "detail": "server unreachable after chaos: do request: Get \"https://fleet-controller-fleet-llm-d.apps.cluster.example.com/healthz\": dial tcp: lookup fleet-controller-fleet-llm-d.apps.cluster.example.com: no such host"
         }
       ]
     },

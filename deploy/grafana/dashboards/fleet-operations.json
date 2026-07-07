@@ -206,7 +206,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "demo-cluster-prometheus" },
       "fieldConfig": { "defaults": { "unit": "percentunit" } },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
       "id": 13,
@@ -216,7 +216,7 @@
       "targets": [{ "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))", "legendFormat": "CPU %", "refId": "A" }]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "demo-cluster-prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
       "id": 14,
@@ -226,7 +226,7 @@
       "targets": [{ "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "Used", "refId": "A" }]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "demo-cluster-prometheus" },
       "fieldConfig": { "defaults": { "unit": "short" } },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
       "id": 15,
@@ -243,7 +243,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "demo-cluster-prometheus" },
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
       "id": 16,
@@ -253,7 +253,7 @@
       "targets": [{ "expr": "container_memory_working_set_bytes{namespace=\"fleet-llm-d\",container=\"fleet-controller\"}", "legendFormat": "working set", "refId": "A" }]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "dev-cluster-1-prometheus" },
+      "datasource": { "type": "prometheus", "uid": "demo-cluster-prometheus" },
       "fieldConfig": { "defaults": { "unit": "percentunit" } },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
       "id": 17,

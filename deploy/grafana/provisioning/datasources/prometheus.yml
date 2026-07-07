@@ -30,11 +30,11 @@ datasources:
     jsonData:
       timeInterval: "15s"
 
-  - name: dev-cluster-1 Prometheus
-    uid: dev-cluster-1-prometheus
+  - name: Demo Cluster Prometheus
+    uid: demo-cluster-prometheus
     type: prometheus
     access: proxy
-    url: ${OBERON_PROMETHEUS_URL:-https://prometheus-k8s-openshift-monitoring.apps.dev-cluster-1.example-domain.com/api}
+    url: ${DEMO_CLUSTER_PROMETHEUS_URL:-https://prometheus-k8s-openshift-monitoring.apps.cluster.example.com/api}
     editable: true
     jsonData:
       timeInterval: "30s"
