@@ -56,3 +56,31 @@ subjects:
   - kind: ServiceAccount
     name: fleet-controller
     namespace: fleet-llm-d
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-viewer
+  labels:
+    app.kubernetes.io/part-of: fleet-llm-d
+rules:
+  - apiGroups: ["fleet.llm-d.ai"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-tenant-admin
+  labels:
+    app.kubernetes.io/part-of: fleet-llm-d
+rules:
+  - apiGroups: ["fleet.llm-d.ai"]
+    resources: ["tenantprofiles"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["fleet.llm-d.ai"]
+    resources: ["fleetinferencepools", "fleetroutingpolicies"]
+    verbs: ["get", "list", "watch"]

@@ -29,10 +29,22 @@ spec:
         app.kubernetes.io/component: agent
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534
       serviceAccountName: fleet-agent
       containers:
         - name: fleet-agent
           image: ghcr.io/llm-d/fleet-agent:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: FLEET_CONTROL_PLANE_URL
               value: http://fleet-controller.fleet-llm-d.svc.cluster.local:8080
