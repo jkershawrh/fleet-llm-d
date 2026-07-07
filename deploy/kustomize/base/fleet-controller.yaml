@@ -30,10 +30,22 @@ spec:
         app.kubernetes.io/component: controller
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534
       serviceAccountName: fleet-controller
       containers:
         - name: fleet-controller
           image: ghcr.io/llm-d/fleet-controller:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: api
               containerPort: 8080

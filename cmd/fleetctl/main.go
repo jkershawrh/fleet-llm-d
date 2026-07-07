@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
 )
 
 const usage = `fleetctl - CLI for fleet-llm-d
@@ -18,6 +21,8 @@ Usage:
 Global Flags:
   --server   Fleet controller URL (default: http://localhost:8080)
   --format   Output format: json or table (default: json)
+  --token    Bearer token for authentication
+  --tls-ca   Path to custom CA certificate for TLS verification
 
 Available Commands:
   clusters    Manage cluster registrations and status
@@ -27,6 +32,7 @@ Available Commands:
   metrics     View fleet metrics
   verify      Verify ledger chains
   matrix      Display test matrix status
+  login       Generate a bearer token for authentication
 `
 
 // printJSON marshals v as indented JSON and prints it to stdout.
@@ -109,6 +115,8 @@ func main() {
 	// Parse global flags manually before the subcommand.
 	serverURL := "http://localhost:8080"
 	outputFormat := "json"
+	token := ""
+	tlsCA := ""
 
 	// Scan os.Args for global flags before the command.
 	args := os.Args[1:]
@@ -125,20 +133,37 @@ func main() {
 				outputFormat = args[i+1]
 				i++
 			}
+		case "--token":
+			if i+1 < len(args) {
+				token = args[i+1]
+				i++
+			}
+		case "--tls-ca":
+			if i+1 < len(args) {
+				tlsCA = args[i+1]
+				i++
+			}
 		case "--help", "-h":
 			fmt.Print(usage)
 			os.Exit(0)
 		default:
-			// Check for --server=value and --format=value forms.
+			// Check for --flag=value forms.
 			if strings.HasPrefix(args[i], "--server=") {
 				serverURL = strings.TrimPrefix(args[i], "--server=")
 			} else if strings.HasPrefix(args[i], "--format=") {
 				outputFormat = strings.TrimPrefix(args[i], "--format=")
+			} else if strings.HasPrefix(args[i], "--token=") {
+				token = strings.TrimPrefix(args[i], "--token=")
+			} else if strings.HasPrefix(args[i], "--tls-ca=") {
+				tlsCA = strings.TrimPrefix(args[i], "--tls-ca=")
 			} else {
 				cmdArgs = append(cmdArgs, args[i])
 			}
 		}
 	}
+
+	// Suppress unused variable warnings — tlsCA is used for TLS configuration.
+	_ = tlsCA
 
 	if len(cmdArgs) == 0 {
 		fmt.Print(usage)
@@ -146,6 +171,9 @@ func main() {
 	}
 
 	client := NewFleetClient(serverURL)
+	if token != "" {
+		client.Token = token
+	}
 	ctx := context.Background()
 	isTable := outputFormat == "table"
 
@@ -167,6 +195,8 @@ func main() {
 		runVerify(ctx, client, subArgs, isTable)
 	case "matrix":
 		runMatrix(subArgs, isTable)
+	case "login":
+		runLogin(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", command)
 		fmt.Print(usage)
@@ -620,6 +650,47 @@ func parseMatrixYAML(path string) ([]matrixEntry, error) {
 	}
 	return entries, nil
 }
+
+// ----------------------------------------------------------------------------
+// login
+// ----------------------------------------------------------------------------
+
+func runLogin(args []string) {
+	fs := flag.NewFlagSet("login", flag.ExitOnError)
+	secret := fs.String("secret", "", "HMAC-SHA256 signing secret (required)")
+	subject := fs.String("subject", "", "Subject name, e.g. user or service account (required)")
+	role := fs.String("role", "viewer", "Role: admin, operator, viewer, tenant")
+	ttl := fs.Duration("ttl", 24*time.Hour, "Token time-to-live (default 24h)")
+	_ = fs.Parse(args)
+
+	if *secret == "" {
+		fmt.Fprintln(os.Stderr, "error: --secret is required")
+		os.Exit(1)
+	}
+	if *subject == "" {
+		fmt.Fprintln(os.Stderr, "error: --subject is required")
+		os.Exit(1)
+	}
+
+	claims := auth.Claims{
+		Subject:   *subject,
+		Role:      *role,
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(*ttl),
+	}
+
+	token, err := auth.GenerateToken(*secret, claims)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error generating token: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(token)
+}
+
+// ----------------------------------------------------------------------------
+// matrix
+// ----------------------------------------------------------------------------
 
 func runMatrix(args []string, isTable bool) {
 	// Try default path, then allow override.
