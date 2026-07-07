@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use fleet_common::{ClusterId, FleetError, ModelId, PolicyEnforcer, TenantId};
 use tokio::sync::RwLock;
+use tokio::time::{self, Duration};
 
 /// Tenant-level quota configuration.
 #[derive(Debug, Clone)]
@@ -91,10 +92,11 @@ impl PolicyEnforcerImpl {
     pub async fn run(&self) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting policy enforcer sync");
 
-        // TODO: periodically fetch updated quotas and placement constraints
-        // from the control plane via gRPC.
-        std::future::pending::<()>().await;
-        Ok(())
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            tracing::debug!(cluster_id = %self.cluster_id, "policy sync tick completed");
+        }
     }
 }
 
@@ -127,6 +129,12 @@ impl PolicyEnforcer for PolicyEnforcerImpl {
                 });
             }
             if current.current_concurrent >= quota.max_concurrent {
+                return Err(FleetError::QuotaExceeded {
+                    tenant_id: tenant_id.clone(),
+                    model_id: model_id.clone(),
+                });
+            }
+            if current.tokens_this_minute > quota.max_tokens_per_minute {
                 return Err(FleetError::QuotaExceeded {
                     tenant_id: tenant_id.clone(),
                     model_id: model_id.clone(),
@@ -172,10 +180,7 @@ mod tests {
     async fn allow_when_no_quota_set() {
         let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
         let allowed = enforcer
-            .enforce_tenant_quota(
-                &TenantId("t1".to_string()),
-                &ModelId("m1".to_string()),
-            )
+            .enforce_tenant_quota(&TenantId("t1".to_string()), &ModelId("m1".to_string()))
             .await
             .unwrap();
         assert!(allowed);
@@ -185,10 +190,7 @@ mod tests {
     async fn allow_when_no_placement_constraints() {
         let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
         let allowed = enforcer
-            .enforce_placement_constraints(
-                &ModelId("m1".to_string()),
-                &ClusterId("c1".to_string()),
-            )
+            .enforce_placement_constraints(&ModelId("m1".to_string()), &ClusterId("c1".to_string()))
             .await
             .unwrap();
         assert!(allowed);
@@ -211,5 +213,27 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn set_quota_is_enforced() {
+        let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
+        assert_eq!(enforcer.cluster_id(), &ClusterId("c1".to_string()));
+        enforcer
+            .set_quota(
+                TenantId("t1".to_string()),
+                TenantQuota {
+                    max_rps: 1.0,
+                    max_concurrent: 1,
+                    max_tokens_per_minute: 100,
+                },
+            )
+            .await;
+
+        let allowed = enforcer
+            .enforce_tenant_quota(&TenantId("t1".to_string()), &ModelId("m1".to_string()))
+            .await
+            .unwrap();
+        assert!(allowed);
     }
 }

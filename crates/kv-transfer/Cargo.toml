@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "KV cache cross-cluster transfer coordinator for fleet-llm-d"
 
+[features]
+default = ["stream"]
+stream = []
+nixl = []
+
 [dependencies]
 fleet-common = { path = "../fleet-common" }
 tokio = { workspace = true }

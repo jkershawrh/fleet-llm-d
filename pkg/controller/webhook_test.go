@@ -265,6 +265,57 @@ func TestWebhookHandler_ValidFleetInferencePool(t *testing.T) {
 	}
 }
 
+func TestWebhookHandler_ValidFullKubernetesFleetInferencePoolObject(t *testing.T) {
+	obj := map[string]interface{}{
+		"apiVersion": "fleet.llm-d.ai/v1alpha1",
+		"kind":       "FleetInferencePool",
+		"metadata": map[string]interface{}{
+			"name":      "granite",
+			"namespace": "default",
+		},
+		"spec": v1alpha1.FleetInferencePoolSpec{
+			Model: v1alpha1.ModelSpec{Name: "granite-3.3-2b", Source: "huggingface"},
+			Serving: v1alpha1.ServingSpec{
+				InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
+					Spec: v1alpha1.InferencePoolTemplateSpec{
+						TargetPorts: []int{8000},
+					},
+				},
+			},
+		},
+	}
+	objBytes, _ := json.Marshal(obj)
+
+	review := map[string]interface{}{
+		"apiVersion": "admission.k8s.io/v1",
+		"kind":       "AdmissionReview",
+		"request": map[string]interface{}{
+			"uid":    "full-object-uid",
+			"kind":   map[string]string{"group": "fleet.llm-d.ai", "version": "v1alpha1", "kind": "FleetInferencePool"},
+			"object": json.RawMessage(objBytes),
+		},
+	}
+	body, _ := json.Marshal(review)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhook/validate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	WebhookHandler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp admissionReview
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Response == nil || !resp.Response.Allowed {
+		t.Fatalf("expected full Kubernetes object to be allowed, got %+v", resp.Response)
+	}
+}
+
 func TestWebhookHandler_RejectsInvalidCRD(t *testing.T) {
 	// Empty model name should cause rejection.
 	spec := v1alpha1.FleetInferencePoolSpec{

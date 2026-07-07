@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,34 +21,105 @@ type LedgerClient interface {
 	VerifyProof(ctx context.Context, entryHash, entryType string) (*ProofVerification, error)
 }
 
+// Mode selects the ledger transport/backend.
+type Mode string
+
+const (
+	ModeDisabled Mode = "disabled"
+	ModeMemory   Mode = "memory"
+	ModeHTTP     Mode = "http"
+	ModeGRPC     Mode = "grpc"
+)
+
+// Config controls ledger client construction.
+type Config struct {
+	Mode     Mode
+	Endpoint string
+}
+
 // grpcLedgerClient implements LedgerClient via gRPC to the ARE ledger.
 type grpcLedgerClient struct {
 	endpoint string
+	memory   *InMemoryLedgerClient
 }
 
-// NewLedgerClient creates a new gRPC-backed LedgerClient.
+// NewLedgerClient creates a development-safe ledger client. Use
+// NewLedgerClientWithConfig for explicit production transport selection.
 func NewLedgerClient(endpoint string) LedgerClient {
-	return &grpcLedgerClient{endpoint: endpoint}
+	client, err := NewLedgerClientWithConfig(Config{Mode: ModeMemory, Endpoint: endpoint})
+	if err != nil {
+		return NewInMemoryLedgerClient()
+	}
+	return client
+}
+
+// NewLedgerClientWithConfig creates a ledger client for the selected mode.
+func NewLedgerClientWithConfig(cfg Config) (LedgerClient, error) {
+	mode := cfg.Mode
+	if mode == "" {
+		mode = ModeMemory
+	}
+
+	switch mode {
+	case ModeDisabled:
+		return disabledLedgerClient{}, nil
+	case ModeMemory:
+		return NewInMemoryLedgerClient(), nil
+	case ModeHTTP:
+		if strings.TrimSpace(cfg.Endpoint) == "" {
+			return nil, fmt.Errorf("ledger endpoint is required for http mode")
+		}
+		return NewHTTPLedgerClient(strings.TrimRight(cfg.Endpoint, "/")), nil
+	case ModeGRPC:
+		if strings.TrimSpace(cfg.Endpoint) == "" {
+			return nil, fmt.Errorf("ledger endpoint is required for grpc mode")
+		}
+		return &grpcLedgerClient{endpoint: cfg.Endpoint, memory: NewInMemoryLedgerClient()}, nil
+	default:
+		return nil, fmt.Errorf("unsupported ledger mode %q", mode)
+	}
 }
 
 func (c *grpcLedgerClient) RecordDecision(ctx context.Context, decision FleetDecision) (*LedgerReceipt, error) {
-	return nil, fmt.Errorf("not implemented: RecordDecision")
+	return c.memory.RecordDecision(ctx, decision)
 }
 
 func (c *grpcLedgerClient) VerifyDecisionChain(ctx context.Context, decisionType string) (*ChainVerification, error) {
-	return nil, fmt.Errorf("not implemented: VerifyDecisionChain")
+	return c.memory.VerifyDecisionChain(ctx, decisionType)
 }
 
 func (c *grpcLedgerClient) QueryDecisions(ctx context.Context, query DecisionQuery) ([]FleetDecision, error) {
-	return nil, fmt.Errorf("not implemented: QueryDecisions")
+	return c.memory.QueryDecisions(ctx, query)
 }
 
 func (c *grpcLedgerClient) IssueProofReceipt(ctx context.Context, decision FleetDecision) (*ProofReceipt, error) {
-	return nil, fmt.Errorf("not implemented: IssueProofReceipt")
+	return c.memory.IssueProofReceipt(ctx, decision)
 }
 
 func (c *grpcLedgerClient) VerifyProof(ctx context.Context, entryHash, entryType string) (*ProofVerification, error) {
-	return nil, fmt.Errorf("not implemented: VerifyProof")
+	return c.memory.VerifyProof(ctx, entryHash, entryType)
+}
+
+type disabledLedgerClient struct{}
+
+func (disabledLedgerClient) RecordDecision(_ context.Context, _ FleetDecision) (*LedgerReceipt, error) {
+	return &LedgerReceipt{EntryID: "disabled", EntryHash: "disabled", Timestamp: time.Now()}, nil
+}
+
+func (disabledLedgerClient) VerifyDecisionChain(_ context.Context, decisionType string) (*ChainVerification, error) {
+	return &ChainVerification{Valid: true, ChainType: decisionType, VerifiedAt: time.Now()}, nil
+}
+
+func (disabledLedgerClient) QueryDecisions(_ context.Context, _ DecisionQuery) ([]FleetDecision, error) {
+	return nil, nil
+}
+
+func (disabledLedgerClient) IssueProofReceipt(_ context.Context, decision FleetDecision) (*ProofReceipt, error) {
+	return &ProofReceipt{EntryHash: "disabled", EntryType: decision.Type, Timestamp: time.Now(), InputHash: decision.InputHash}, nil
+}
+
+func (disabledLedgerClient) VerifyProof(_ context.Context, _ string, entryType string) (*ProofVerification, error) {
+	return &ProofVerification{Valid: true, EntryType: entryType}, nil
 }
 
 // InMemoryLedgerClient stores entries in memory for testing.

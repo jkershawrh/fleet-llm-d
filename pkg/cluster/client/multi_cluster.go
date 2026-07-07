@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
@@ -45,12 +46,49 @@ func NewMultiClusterClient() MultiClusterClient {
 	return &defaultMultiClusterClient{}
 }
 
+// NormalizeClusterRegistration fills derived fields and validates the minimum
+// required identity for a cluster registration.
+func NormalizeClusterRegistration(cluster ClusterRegistration) (ClusterRegistration, error) {
+	if strings.TrimSpace(cluster.Name) == "" {
+		return cluster, fmt.Errorf("cluster name must not be empty")
+	}
+	if strings.TrimSpace(cluster.ID) == "" {
+		cluster.ID = stableClusterID(cluster.Name)
+	}
+	if cluster.ID == "" {
+		return cluster, fmt.Errorf("cluster ID must not be empty")
+	}
+	return cluster, nil
+}
+
+func stableClusterID(name string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 // RegisterCluster stores a ClusterRegistration in the shared registry.
 func (c *defaultMultiClusterClient) RegisterCluster(ctx context.Context, cluster ClusterRegistration) error {
+	normalized, err := NormalizeClusterRegistration(cluster)
+	if err != nil {
+		return err
+	}
+
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
-	registry[cluster.ID] = cluster
+	registry[normalized.ID] = normalized
 	return nil
 }
 

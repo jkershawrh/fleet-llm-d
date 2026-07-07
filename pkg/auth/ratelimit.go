@@ -91,7 +91,22 @@ func extractRateLimitKey(r *http.Request) string {
 // X-Forwarded-For or RemoteAddr for per-IP rate limiting.
 // Returns 429 Too Many Requests with a JSON body when the rate is exceeded.
 func RateLimitMiddleware(limiter *RateLimiter, next http.Handler) http.Handler {
+	return RateLimitMiddlewareWithExemptions(limiter, nil, next)
+}
+
+// RateLimitMiddlewareWithExemptions wraps an HTTP handler with rate limiting,
+// bypassing exact-match exempt paths such as liveness/readiness probes.
+func RateLimitMiddlewareWithExemptions(limiter *RateLimiter, exempt []string, next http.Handler) http.Handler {
+	exemptSet := make(map[string]bool, len(exempt))
+	for _, p := range exempt {
+		exemptSet[p] = true
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if exemptSet[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
 		key := extractRateLimitKey(r)
 		if !limiter.Allow(key) {
 			w.Header().Set("Content-Type", "application/json")

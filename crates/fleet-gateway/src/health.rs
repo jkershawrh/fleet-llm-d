@@ -83,19 +83,21 @@ impl HealthChecker {
             .read()
             .await
             .get(cluster_id)
-            .map_or(false, |h| h.healthy)
+            .is_some_and(|h| h.healthy)
     }
 
     /// Register a cluster endpoint to monitor.
     pub async fn register_cluster(&self, cluster_id: ClusterId) {
         let mut state = self.state.write().await;
-        state.entry(cluster_id.clone()).or_insert_with(|| ClusterHealth {
-            cluster_id,
-            healthy: true,
-            latency_ms: 0.0,
-            last_check: Utc::now(),
-            consecutive_failures: 0,
-        });
+        state
+            .entry(cluster_id.clone())
+            .or_insert_with(|| ClusterHealth {
+                cluster_id,
+                healthy: true,
+                latency_ms: 0.0,
+                last_check: Utc::now(),
+                consecutive_failures: 0,
+            });
     }
 
     /// Remove a cluster from monitoring.
@@ -108,6 +110,7 @@ impl HealthChecker {
         tracing::info!(
             interval_ms = self.interval.as_millis() as u64,
             failure_threshold = self.policy.failure_threshold,
+            probe_timeout_ms = self.policy.probe_timeout.as_millis() as u64,
             "starting health checker"
         );
 
@@ -115,9 +118,7 @@ impl HealthChecker {
         loop {
             ticker.tick().await;
 
-            let cluster_ids: Vec<ClusterId> = {
-                self.state.read().await.keys().cloned().collect()
-            };
+            let cluster_ids: Vec<ClusterId> = { self.state.read().await.keys().cloned().collect() };
 
             for cluster_id in &cluster_ids {
                 // TODO: perform actual HTTP/gRPC probe against the cluster
@@ -152,12 +153,8 @@ mod tests {
     #[tokio::test]
     async fn snapshot_returns_all_clusters() {
         let checker = HealthChecker::new(Duration::from_secs(10));
-        checker
-            .register_cluster(ClusterId("c1".to_string()))
-            .await;
-        checker
-            .register_cluster(ClusterId("c2".to_string()))
-            .await;
+        checker.register_cluster(ClusterId("c1".to_string())).await;
+        checker.register_cluster(ClusterId("c2".to_string())).await;
         let snap = checker.snapshot().await;
         assert_eq!(snap.len(), 2);
     }
@@ -182,5 +179,14 @@ mod tests {
         };
         let json = serde_json::to_string(&h).unwrap();
         assert!(json.contains("c1"));
+    }
+
+    #[test]
+    fn with_policy_updates_probe_timeout() {
+        let checker = HealthChecker::new(Duration::from_secs(10)).with_policy(HealthPolicy {
+            failure_threshold: 2,
+            probe_timeout: Duration::from_secs(1),
+        });
+        assert_eq!(checker.policy.probe_timeout, Duration::from_secs(1));
     }
 }
