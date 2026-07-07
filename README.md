@@ -130,9 +130,9 @@ fleetctl status
 
 | Mode | Description | Details |
 |------|-------------|---------|
-| **Hub** | RHACM-style hub with 3-replica HA control plane managing spoke clusters. | See `deploy/overlays/hub/` |
-| **Standalone** | Single-node deployment for development, CI, or small-scale production. | See `deploy/overlays/standalone/` |
-| **Federated** | Peer-to-peer mesh where multiple fleet-controllers coordinate as equals. | See `deploy/overlays/federated/` |
+| **Hub** | RHACM-style hub with 3-replica HA control plane managing spoke clusters. | See [`deploy/kustomize/overlays/hub/`](deploy/kustomize/overlays/hub/) |
+| **Standalone** | Single-node deployment for development, CI, or small-scale production. | See [`deploy/kustomize/overlays/standalone/`](deploy/kustomize/overlays/standalone/) |
+| **Federated** | Peer-to-peer mesh where multiple fleet-controllers coordinate as equals. | See [`deploy/kustomize/overlays/federated/`](deploy/kustomize/overlays/federated/) |
 
 ## Dashboard
 
@@ -190,15 +190,15 @@ Model rollouts follow a five-stage gate progression:
 | 4 | **Blue** | Canary traffic validated in staging clusters. |
 | 5 | **Gold** | Full production approval, all compliance checks cleared. |
 
-See `docs/test-matrix.md` for the complete test matrix and gate criteria.
+See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) for the complete test matrix and [`test/matrix/rubric.yaml`](test/matrix/rubric.yaml) for gate criteria.
 
 ## Customer Deployment Patterns
 
 | Pattern | Example Customers | Profile | Reference |
 |---------|-------------------|---------|-----------|
-| **Telco** | Telco Provider A, Mobile Network Provider | 30+ edge sites, latency-sensitive placement, distributed GPU pools. | `docs/patterns/telco.md` |
-| **Financial** | Financial Services Provider A, Financial Services Provider B | Multi-region regulatory constraints, strict tenant isolation, audit trails. | `docs/patterns/financial.md` |
-| **Sovereign** | OSAC partners | Air-gapped deployment, data residency enforcement, ARE Ledger integration. | `docs/patterns/sovereign.md` |
+| **Telco** | Telco Provider A, Mobile Network Provider | 30+ edge sites, latency-sensitive placement, distributed GPU pools. | [`docs/customer-patterns/telco-ai-grid.md`](docs/customer-patterns/telco-ai-grid.md) |
+| **Financial** | Financial Services Provider A, Financial Services Provider B | Multi-region regulatory constraints, strict tenant isolation, audit trails. | [`docs/customer-patterns/financial-services.md`](docs/customer-patterns/financial-services.md) |
+| **Sovereign** | OSAC partners | Air-gapped deployment, data residency enforcement, ARE Ledger integration. | [`docs/customer-patterns/sovereign-cloud.md`](docs/customer-patterns/sovereign-cloud.md) |
 
 ## Project Structure
 
@@ -228,9 +228,9 @@ fleet-llm-d/
 │   ├── fleet-common/            # Shared Rust types
 │   ├── fleet-ledger/            # Rust ledger integration
 │   └── kv-transfer/             # KV cache transfer engine
-├── dashboard/                   # Next.js (TypeScript) UI
+├── web/                         # Next.js (TypeScript) UI
 ├── deploy/
-│   └── overlays/                # hub, standalone, federated
+│   └── kustomize/overlays/      # hub, standalone, federated
 ├── docker-compose.yml           # Local dev infrastructure
 ├── docs/                        # Documentation
 └── test/                        # BDD, contract, e2e tests
@@ -238,7 +238,7 @@ fleet-llm-d/
 
 ## REST API
 
-The fleet controller exposes 15 REST endpoints. See `docs/api-reference.md` for the complete API specification.
+The fleet controller exposes 15 REST endpoints. See [`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete OpenAPI 3.1 specification.
 
 ## Infrastructure
 

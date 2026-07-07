@@ -28,7 +28,7 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| RBAC enforcement for all 7 CRDs | Not Started | Map each CRD (InferencePool, InferenceModel, ModelPack, TenantProfile, FleetCluster, RoutingPolicy, KVTransferPolicy) to required Kubernetes RBAC roles. Verify least-privilege for each controller. |
+| RBAC enforcement for all 7 CRDs | Not Started | Map each CRD (FleetInferencePool, PlacementPolicy, FleetRoutingPolicy, TenantProfile, FleetScalingPolicy, ModelLifecycle, KVCacheTransferPolicy) to required Kubernetes RBAC roles. Verify least-privilege for each controller. |
 | Tenant isolation enforcement via TenantProfile | Not Started | Confirm that TenantProfile CRDs enforce hard boundaries on compute quota, model access, and cost limits. Verify no cross-tenant data leakage in shared PostgreSQL tables. |
 | Multi-cluster access control scoping | Not Started | Validate that users/service accounts can only access clusters explicitly granted by their role bindings. Test cross-cluster escalation paths in Federated mode. |
 | API endpoint authorization matrix | Not Started | Document and verify the authorization policy for each of the 15 REST endpoints. Confirm role-based access (admin, operator, viewer) is enforced server-side, not just in UI. |
