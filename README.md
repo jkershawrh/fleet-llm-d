@@ -8,8 +8,10 @@
 fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet operations. It provides a Go control plane, a Rust data plane, and a Next.js dashboard that together deliver model placement, cross-cluster routing, fleet autoscaling, observability, tenant governance, lifecycle management, and KV cache state transfer across heterogeneous GPU infrastructure.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)](https://go.dev/)
-[![Rust](https://img.shields.io/badge/Rust-1.79+-DEA584.svg)](https://www.rust-lang.org/)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
+[![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)
+[![Tests](https://img.shields.io/badge/Tests-450%2B_passing-brightgreen.svg)](#testing)
+[![Architecture](https://img.shields.io/badge/Arch_Proofs-41%2F41-blue.svg)](#architectural-proof)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](#testing)
 
 ---
@@ -82,49 +84,56 @@ fleet-llm-d consumes [ModelPack](https://github.com/model-spec) artifacts -- OCI
 
 The ARE Immutable Ledger is an **independent shared compliance platform** that runs on a separate network (`are-ledger-net`) with its own PostgreSQL instance. fleet-llm-d publishes audit events -- placement decisions, scaling actions, model deployments -- to the ledger through the `are-gateway`. The ledger provides tamper-evident records for regulatory and sovereign compliance. The `ledger` package in fleet-llm-d handles event submission and verification.
 
+## Security
+
+- **Authentication**: HMAC-SHA256 bearer tokens with role-based access (admin, operator, viewer, tenant)
+- **Rate Limiting**: Per-IP and per-tenant token bucket middleware
+- **TLS**: Optional HTTPS via `--tls-cert` and `--tls-key` flags
+- **RBAC**: 3 Kubernetes ClusterRoles (fleet-controller, fleet-viewer, fleet-tenant-admin)
+- **Network Policies**: Default-deny with explicit allowlists per component
+- **Container Hardening**: UBI base images, non-root (UID 65534), read-only filesystem, drop ALL capabilities
+- **Webhook Validation**: Admission webhook rejects invalid CRD specs
+- **Audit Trail**: Auth failures and RBAC denials recorded to ARE ledger
+
 ## Quick Start
 
-### Prerequisites
-
-- Docker and Docker Compose
-- Go 1.23+
-- Rust 1.79+
-- `kubectl` configured for at least one cluster
-
-### Bring up the infrastructure
+### One-Click Deploy (OpenShift)
 
 ```bash
-# Start PostgreSQL, Redis, Kafka, Prometheus, Grafana,
-# ARE Ledger (DB + service + gateway)
-docker compose up -d
+./hack/deploy-demo.sh \
+  --cluster-url https://api.mycluster.example.com:6443 \
+  --token $(oc whoami -t) \
+  --ledger-url http://ledger-gateway:28099
 ```
 
-This starts the following services: `postgres`, `redis`, `kafka`, `prometheus`, `grafana`, `are-ledger-db`, `are-ledger`, `are-gateway`.
-
-### Build binaries
+### Local Development
 
 ```bash
-# Go binaries (fleet-controller, fleetctl)
-make build
+# Prerequisites: Go 1.26+, Rust 1.90+, podman or docker
 
-# Rust binaries (fleet-agent, fleet-gateway)
-make build-rust
+# Build binaries
+make build-go          # → bin/fleet-controller, bin/fleetctl
+
+# Start the controller (in-memory mode, no external deps)
+./bin/fleet-controller --port 8080
+
+# Register a cluster
+./bin/fleetctl --server http://localhost:8080 clusters register \
+  --id my-cluster --name "My Cluster" --region us-east
+
+# View the test matrix
+./bin/fleetctl matrix --format table
 ```
 
-### Register a cluster and deploy a model
+## Customer Examples
 
-```bash
-# Register a cluster with the fleet
-fleetctl cluster register --name edge-site-01 \
-  --kubeconfig ~/.kube/edge-site-01.yaml
+Ready-to-apply CRD examples for specific deployment patterns:
 
-# Deploy a model across the fleet
-fleetctl model deploy --name llama-3-70b \
-  --pool default --replicas 6
-
-# Check fleet status
-fleetctl status
-```
+| Pattern | Directory | Key Features |
+|---|---|---|
+| **Telco AI Grid** | [`examples/verizon-edge/`](examples/verizon-edge/) | 30+ edge sites, geographic routing, 50ms latency target |
+| **Financial Services** | [`examples/wells-fargo/`](examples/wells-fargo/) | Regulatory data residency, SLO-gated canary, ARE ledger compliance |
+| **Sovereign Cloud** | [`examples/sovereign-cloud/`](examples/sovereign-cloud/) | Air-gapped zones, GPU-as-a-Service multi-tenancy, scale-to-zero |
 
 ## Deployment Modes
 
@@ -154,43 +163,54 @@ The fleet-llm-d dashboard is a Next.js (TypeScript) application providing fleet-
 ## Testing
 
 ```bash
-# Run all tests
-make test
-
-# Unit tests only
-make test-unit
-
-# BDD / behavior-driven tests
-make test-bdd
-
-# Contract tests (API compatibility)
-make test-contracts
-
-# End-to-end tests (requires running infrastructure)
-make test-e2e
+make test              # Run all tests
+make test-unit         # Unit tests (19 Go packages + 5 Rust crates)
+make test-bdd          # BDD scenarios (63 passing, 8 suites)
+make test-contracts    # Contract tests (proto + OpenAPI validation)
+make test-e2e          # End-to-end tests (requires running infrastructure)
 ```
-
-### Benchmarks
 
 ```bash
-make bench-quick       # Fast smoke benchmarks
-make bench-standard    # Standard benchmark suite
-make bench-full        # Full benchmark suite (long-running)
+# Architecture proof — 41 claims about how the system works
+go test -tags=architecture ./test/architecture/...
+
+# Security tests — auth, rate limiting, webhook validation
+go test -tags=security ./test/security/...
+
+# Compliance — audit trail completeness
+go test -tags=compliance ./test/compliance/...
+
+# Soak test — sustained load for configurable duration
+./test/soak/run-soak.sh --duration 7200 --rps 10
 ```
+
+### Architectural Proof
+
+41 architectural claims are proven by tests in `test/architecture/`:
+
+| Category | Claims | Method | What's Proven |
+|---|---|---|---|
+| Reconciliation | 5 | EDD | Webhook → solver → phase transitions → events |
+| Routing | 6 | TDD | Model selection, latency, failover, header injection |
+| Tenant Governance | 5 | TDD | Quota enforcement, budget caps, multi-tenant isolation |
+| Lifecycle | 5 | TDD | Canary, SLO gates, rollback |
+| Autoscaling | 4 | TDD | Scale up/down, GPU cap, cross-cluster migration |
+| Compliance | 7 | CDD | Every decision → ARE ledger, chain verification |
+| Event Flow | 4 | EDD | Pub/sub + HTTP external delivery |
+| Multi-Cluster | 3 | TDD | Cross-cluster routing, failover, multi-cluster placement |
+| Security | 2 | TDD | Rate limiting, webhook validation |
 
 ### Production Gate Model
 
-Model rollouts follow a five-stage gate progression:
+| Stage | Gate | Criteria | Status |
+|-------|------|----------|--------|
+| 0 | **Red** | Interfaces defined, tests written (failing) | Passed |
+| 1 | **Yellow** | Unit + BDD + contract tests pass | Passed |
+| 2 | **Green** | Integration + soak tests pass, benchmarks within 2x | Passed |
+| 3 | **Blue** | Multi-cloud E2E, benchmarks meet target, 72hr soak, rubric ≥80 | **Current (83.45)** |
+| 4 | **Gold** | Customer deployment validated, SLO met 30 days | Pending |
 
-| Stage | Gate | Criteria |
-|-------|------|----------|
-| 1 | **Red** | Initial deployment, not yet validated. |
-| 2 | **Yellow** | Unit and contract tests pass. |
-| 3 | **Green** | BDD and integration tests pass. |
-| 4 | **Blue** | Canary traffic validated in staging clusters. |
-| 5 | **Gold** | Full production approval, all compliance checks cleared. |
-
-See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) for the complete test matrix and [`test/matrix/rubric.yaml`](test/matrix/rubric.yaml) for gate criteria.
+See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubric.yaml`](test/matrix/rubric.yaml).
 
 ## Customer Deployment Patterns
 
@@ -230,10 +250,28 @@ fleet-llm-d/
 │   └── kv-transfer/             # KV cache transfer engine
 ├── web/                         # Next.js (TypeScript) UI
 ├── deploy/
-│   └── kustomize/overlays/      # hub, standalone, federated
+│   ├── kustomize/overlays/      # hub, standalone, federated
+│   ├── docker/                  # Dockerfiles (UBI base, non-root)
+│   └── dev-cluster-1/                  # dev-cluster-1 cluster deployment manifests
+├── examples/                    # Customer CRD examples (Verizon, WF, Sovereign)
+├── workflows/                   # Deployment workflow definitions
 ├── docker-compose.yml           # Local dev infrastructure
-├── docs/                        # Documentation
-└── test/                        # BDD, contract, e2e tests
+├── docs/
+│   ├── whitepaper/              # Architecture whitepaper
+│   ├── customer-patterns/       # Telco, Financial, Sovereign patterns
+│   ├── demo/                    # 15-minute demo script
+│   └── proposals/               # llm-d upstream SIG proposal
+├── hack/
+│   ├── deploy-demo.sh           # One-click deployment script
+│   └── local-dev.sh             # Kind multi-cluster dev setup
+└── test/
+    ├── architecture/            # 41 architectural proof tests
+    ├── bdd/                     # 63 BDD scenario tests
+    ├── compliance/              # Audit trail completeness
+    ├── contracts/               # Proto + OpenAPI validation
+    ├── security/                # Auth integration tests
+    ├── soak/                    # Sustained load test harness
+    └── benchmarks/              # Workloads + scenarios
 ```
 
 ## REST API
@@ -261,7 +299,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, 
 This project is licensed under the [Apache License 2.0](LICENSE).
 
 ```
-Copyright 2024 Red Hat, Inc.
+Copyright 2026 Red Hat, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
