@@ -88,6 +88,9 @@ func (c *defaultMultiClusterClient) RegisterCluster(ctx context.Context, cluster
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
+	if _, exists := registry[normalized.ID]; exists {
+		return fmt.Errorf("cluster %q already exists", normalized.ID)
+	}
 	registry[normalized.ID] = normalized
 	return nil
 }
