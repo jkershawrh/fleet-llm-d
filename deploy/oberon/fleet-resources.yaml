@@ -1,0 +1,83 @@
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: oberon-cpu-policy
+  namespace: fleet-llm-d
+spec:
+  constraints:
+    - type: hardware
+      rule: "cpu in ['intel-amx']"
+  affinity:
+    - type: costEfficiency
+      weight: 0.5
+    - type: dataLocality
+      weight: 0.5
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetRoutingPolicy
+metadata:
+  name: latency-first
+  namespace: fleet-llm-d
+spec:
+  strategy: weighted
+  rules:
+    - match:
+        headers:
+          x-llm-d-inference-objective: "realtime"
+      action:
+        preferLocal: true
+        maxLatencyMs: 500
+    - match:
+        headers:
+          x-llm-d-inference-objective: "batch"
+      action:
+        preferCheapest: true
+  healthCheck:
+    interval: "10s"
+    unhealthyThreshold: 3
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: e2e-validation
+  namespace: fleet-llm-d
+spec:
+  quotas:
+    maxTokensPerMinute: 100000
+    maxConcurrentRequests: 10
+    maxModels: 5
+    gpuBudget:
+      maxGPUs: 0
+  rateLimit:
+    requestsPerSecond: 10
+    burstSize: 20
+  priority: 100
+  costControl:
+    monthlyBudget: "1000.00"
+    alertThreshold: 0.8
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetInferencePool
+metadata:
+  name: granite-fleet
+  namespace: fleet-llm-d
+spec:
+  model:
+    name: ibm-granite/granite-3.3-2b-instruct
+    source: huggingface
+  placement:
+    policyRef:
+      name: oberon-cpu-policy
+    minClusters: 1
+  routing:
+    policyRef:
+      name: latency-first
+  serving:
+    inferencePoolTemplate:
+      spec:
+        targetPorts:
+          - 8000
+        endpointPickerRef:
+          name: fleet-controller
+  lifecycle:
+    rolloutStrategy: Rolling

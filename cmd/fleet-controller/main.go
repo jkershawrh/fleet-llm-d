@@ -24,6 +24,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/observability/metrics"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/scorer"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
+	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/balancer"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
@@ -64,6 +65,9 @@ type FleetController struct {
 	// Ledger integration
 	FleetRecorder *ledger.FleetRecorder
 
+	// Inference proxy
+	InferenceProxy *routing.InferenceProxy
+
 	// Repositories for CRUD operations
 	PoolRepo    postgres.FleetPoolRepository
 	TenantRepo  postgres.TenantRepository
@@ -74,9 +78,27 @@ type FleetController struct {
 }
 
 // NewFleetController creates a new FleetController with all components
-// initialized using their default constructors.
-func NewFleetController(ledgerEndpoint string) *FleetController {
+// initialized using their default constructors. The backendVLLM and backendOVMS
+// parameters specify the base URLs for the default inference backends.
+func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS string) *FleetController {
 	ledgerClient := ledger.NewLedgerClient(ledgerEndpoint)
+
+	proxy := routing.NewInferenceProxy()
+	proxy.RegisterBackend("granite-3.3-2b", routing.Backend{
+		Name:      "vllm-cpu",
+		URL:       backendVLLM,
+		Runtime:   "vllm",
+		Healthy:   true,
+		LatencyMs: 500,
+	})
+	proxy.RegisterBackend("granite-sovereign", routing.Backend{
+		Name:      "ovms-granite",
+		URL:       backendOVMS,
+		Runtime:   "ovms",
+		Healthy:   true,
+		LatencyMs: 200,
+	})
+
 	return &FleetController{
 		Solver: solver.NewConstraintSolver(),
 		Scorer: scorer.NewCompositeScorer([]scorer.WeightedScorer{
@@ -97,6 +119,7 @@ func NewFleetController(ledgerEndpoint string) *FleetController {
 		ClusterClient:        client.NewMultiClusterClient(),
 		EventPublisher:       events.NewEventPublisher(),
 		FleetRecorder:        ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d"),
+		InferenceProxy:       proxy,
 		PoolRepo:             postgres.NewInMemoryFleetPoolRepository(),
 		TenantRepo:           postgres.NewInMemoryTenantRepository(),
 		RolloutRepo:          postgres.NewInMemoryRolloutRepository(),
@@ -423,6 +446,10 @@ func (fc *FleetController) setupAPIServer() *http.ServeMux {
 	// Ledger verification
 	mux.HandleFunc("GET /api/v1/verify/chains", fc.handleVerifyChains)
 
+	// Inference proxy routes
+	mux.Handle("POST /v1/chat/completions", fc.InferenceProxy)
+	mux.Handle("POST /v1/completions", fc.InferenceProxy)
+
 	return mux
 }
 
@@ -519,6 +546,8 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
 	authSecret := flag.String("auth-secret", "", "HMAC-SHA256 auth secret (alternative to FLEET_AUTH_SECRET env var)")
+	backendVLLM := flag.String("backend-vllm", "http://vllm-cpu.fleet-llm-d.svc:8000", "Base URL for the vLLM inference backend")
+	backendOVMS := flag.String("backend-ovms", "http://ovms-granite-external.fleet-llm-d.svc:8080", "Base URL for the OVMS inference backend")
 	flag.Parse()
 
 	log.Printf("fleet-controller starting (log-level=%s, ledger=%s)", *logLevel, *ledgerEndpoint)
@@ -532,7 +561,7 @@ func main() {
 
 	log.Printf("auth enabled=%v, TLS enabled=%v", authCfg.Enabled, *tlsCert != "" && *tlsKey != "")
 
-	fc := NewFleetController(*ledgerEndpoint)
+	fc := NewFleetController(*ledgerEndpoint, *backendVLLM, *backendOVMS)
 	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey); err != nil {
 		log.Fatal(err)
 	}

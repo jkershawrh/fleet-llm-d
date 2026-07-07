@@ -1,0 +1,268 @@
+package routing
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestRegisterBackend(t *testing.T) {
+	p := NewInferenceProxy()
+
+	p.RegisterBackend("test-model", Backend{
+		Name: "backend-a", URL: "http://a:8000", Runtime: "vllm", Healthy: true, LatencyMs: 100,
+	})
+	p.RegisterBackend("test-model", Backend{
+		Name: "backend-b", URL: "http://b:8000", Runtime: "ovms", Healthy: true, LatencyMs: 200,
+	})
+	p.RegisterBackend("other-model", Backend{
+		Name: "backend-c", URL: "http://c:8000", Runtime: "vllm", Healthy: true, LatencyMs: 150,
+	})
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if len(p.backends["test-model"]) != 2 {
+		t.Fatalf("expected 2 backends for test-model, got %d", len(p.backends["test-model"]))
+	}
+	if len(p.backends["other-model"]) != 1 {
+		t.Fatalf("expected 1 backend for other-model, got %d", len(p.backends["other-model"]))
+	}
+	if p.backends["test-model"][0].Name != "backend-a" {
+		t.Errorf("expected first backend name to be backend-a, got %s", p.backends["test-model"][0].Name)
+	}
+}
+
+func TestSelectBackend_RealtimePicksLowestLatency(t *testing.T) {
+	p := NewInferenceProxy()
+	p.RegisterBackend("model-a", Backend{
+		Name: "slow", URL: "http://slow:8000", Runtime: "vllm", Healthy: true, LatencyMs: 500,
+	})
+	p.RegisterBackend("model-a", Backend{
+		Name: "fast", URL: "http://fast:8000", Runtime: "vllm", Healthy: true, LatencyMs: 100,
+	})
+	p.RegisterBackend("model-a", Backend{
+		Name: "medium", URL: "http://medium:8000", Runtime: "vllm", Healthy: true, LatencyMs: 300,
+	})
+
+	headers := http.Header{}
+	headers.Set("x-llm-d-inference-objective", "realtime")
+
+	backend, reason, err := p.SelectBackend("model-a", headers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if backend.Name != "fast" {
+		t.Errorf("expected backend 'fast' (lowest latency), got %q", backend.Name)
+	}
+	if reason != "realtime: lowest latency" {
+		t.Errorf("unexpected reason: %s", reason)
+	}
+}
+
+func TestSelectBackend_BatchPicksAny(t *testing.T) {
+	p := NewInferenceProxy()
+	p.RegisterBackend("model-b", Backend{
+		Name: "cheap", URL: "http://cheap:8000", Runtime: "vllm", Healthy: true, LatencyMs: 800,
+	})
+	p.RegisterBackend("model-b", Backend{
+		Name: "expensive", URL: "http://expensive:8000", Runtime: "vllm", Healthy: true, LatencyMs: 100,
+	})
+
+	headers := http.Header{}
+	headers.Set("x-llm-d-inference-objective", "batch")
+
+	backend, reason, err := p.SelectBackend("model-b", headers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Batch prefers the first healthy backend (cheapest by convention).
+	if backend.Name != "cheap" {
+		t.Errorf("expected backend 'cheap' for batch, got %q", backend.Name)
+	}
+	if reason != "batch: cost-optimized" {
+		t.Errorf("unexpected reason: %s", reason)
+	}
+}
+
+func TestSelectBackend_NoHealthyBackend(t *testing.T) {
+	p := NewInferenceProxy()
+	p.RegisterBackend("model-c", Backend{
+		Name: "down-a", URL: "http://a:8000", Runtime: "vllm", Healthy: false, LatencyMs: 100,
+	})
+	p.RegisterBackend("model-c", Backend{
+		Name: "down-b", URL: "http://b:8000", Runtime: "vllm", Healthy: false, LatencyMs: 200,
+	})
+
+	headers := http.Header{}
+	_, _, err := p.SelectBackend("model-c", headers)
+	if err == nil {
+		t.Fatal("expected error for no healthy backends, got nil")
+	}
+
+	// Also test with a model that has no backends at all.
+	_, _, err = p.SelectBackend("nonexistent-model", headers)
+	if err == nil {
+		t.Fatal("expected error for nonexistent model, got nil")
+	}
+}
+
+func TestSelectBackend_DefaultRoundRobin(t *testing.T) {
+	p := NewInferenceProxy()
+	p.RegisterBackend("model-rr", Backend{
+		Name: "rr-a", URL: "http://a:8000", Runtime: "vllm", Healthy: true, LatencyMs: 100,
+	})
+	p.RegisterBackend("model-rr", Backend{
+		Name: "rr-b", URL: "http://b:8000", Runtime: "vllm", Healthy: true, LatencyMs: 200,
+	})
+
+	headers := http.Header{}
+
+	// Call multiple times and verify round-robin distribution.
+	seen := map[string]int{}
+	for i := 0; i < 10; i++ {
+		backend, reason, err := p.SelectBackend("model-rr", headers)
+		if err != nil {
+			t.Fatalf("unexpected error on iteration %d: %v", i, err)
+		}
+		seen[backend.Name]++
+		if reason != "default: round-robin" {
+			t.Errorf("expected reason 'default: round-robin', got %q", reason)
+		}
+	}
+
+	if seen["rr-a"] != 5 || seen["rr-b"] != 5 {
+		t.Errorf("expected even round-robin distribution, got rr-a=%d rr-b=%d", seen["rr-a"], seen["rr-b"])
+	}
+}
+
+func TestProxyRequest(t *testing.T) {
+	// Create a mock backend server.
+	mockBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify the request was forwarded correctly.
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("mock backend failed to read body: %v", err)
+			return
+		}
+
+		// Echo back a response with request details.
+		resp := map[string]interface{}{
+			"received_path": r.URL.Path,
+			"received_body": string(body),
+			"choices": []map[string]interface{}{
+				{"message": map[string]string{"content": "Hello from mock backend"}},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockBackend.Close()
+
+	p := NewInferenceProxy()
+	backend := &Backend{
+		Name:    "mock-backend",
+		URL:     mockBackend.URL,
+		Runtime: "vllm",
+		Healthy: true,
+	}
+
+	// Create the proxy request.
+	reqBody := `{"model":"test","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ProxyRequest(recorder, req, backend)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	// Check that the routing header was injected.
+	routedTo := resp.Header.Get("X-Fleet-Routed-To")
+	if routedTo != "mock-backend" {
+		t.Errorf("expected X-Fleet-Routed-To header to be 'mock-backend', got %q", routedTo)
+	}
+
+	// Parse and verify the response body.
+	var respBody map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if respBody["received_path"] != "/v1/chat/completions" {
+		t.Errorf("expected path /v1/chat/completions, got %v", respBody["received_path"])
+	}
+}
+
+func TestServeHTTP_RoutesToCorrectBackend(t *testing.T) {
+	// Create mock backend servers.
+	backendA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"backend": "a"})
+	}))
+	defer backendA.Close()
+
+	p := NewInferenceProxy()
+	p.RegisterBackend("test-model", Backend{
+		Name: "backend-a", URL: backendA.URL, Runtime: "vllm", Healthy: true, LatencyMs: 100,
+	})
+
+	reqBody := `{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ServeHTTP(recorder, req)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	routingReason := resp.Header.Get("X-Fleet-Routing-Reason")
+	if routingReason == "" {
+		t.Error("expected X-Fleet-Routing-Reason header to be set")
+	}
+}
+
+func TestServeHTTP_NoModel(t *testing.T) {
+	p := NewInferenceProxy()
+
+	reqBody := `{"messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for missing model, got %d", recorder.Code)
+	}
+}
+
+func TestServeHTTP_NoBackendReturns502(t *testing.T) {
+	p := NewInferenceProxy()
+
+	reqBody := `{"model":"unknown-model","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	p.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Errorf("expected status 502 for no backend, got %d", recorder.Code)
+	}
+}

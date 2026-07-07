@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-cpu-granite2b
+  namespace: fleet-llm-d
+  labels:
+    app: vllm-cpu
+    app.kubernetes.io/part-of: fleet-llm-d
+    fleet.llm-d.ai/model: granite-3.3-2b
+    fleet.llm-d.ai/runtime: vllm
+    fleet.llm-d.ai/hardware: cpu-intel-amx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-cpu
+  template:
+    metadata:
+      labels:
+        app: vllm-cpu
+        fleet.llm-d.ai/model: granite-3.3-2b
+        fleet.llm-d.ai/runtime: vllm
+    spec:
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:latest
+        args:
+        - "--model=ibm-granite/granite-3.3-2b-instruct"
+        - "--device=cpu"
+        - "--dtype=float32"
+        - "--max-model-len=2048"
+        - "--port=8000"
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "6"
+            memory: "12Gi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 180
+          periodSeconds: 15
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 300
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-cpu
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/part-of: fleet-llm-d
+    fleet.llm-d.ai/runtime: vllm
+spec:
+  selector:
+    app: vllm-cpu
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+---
+apiVersion: inference.networking.k8s.io/v1
+kind: InferencePool
+metadata:
+  name: granite-vllm-pool
+  namespace: fleet-llm-d
+  labels:
+    fleet.llm-d.ai/model: granite-3.3-2b
+    fleet.llm-d.ai/runtime: vllm
+    fleet.llm-d.ai/hardware: cpu-intel-amx
+spec:
+  targetPorts:
+    - number: 8000
+  selector:
+    matchLabels:
+      app: vllm-cpu
+  endpointPickerRef:
+    name: fleet-controller
+    kind: Service
+    port:
+      number: 8080
