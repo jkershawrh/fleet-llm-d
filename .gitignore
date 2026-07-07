@@ -13,7 +13,7 @@ vendor/
 /target/
 crates/*/target/
 **/*.rs.bk
-Cargo.lock
+# Don't ignore Cargo.lock — needed for reproducible Docker builds
 
 # Node/TypeScript
 node_modules/
