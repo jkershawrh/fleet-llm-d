@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,7 +99,9 @@ func (p *InferenceProxy) SelectBackend(model string, headers http.Header) (*Back
 }
 
 // ProxyRequest forwards an inference request to the selected backend.
-// It copies the request body, sends it to the backend, and streams the response back.
+// If the backend responds with Content-Type text/event-stream (SSE), the
+// response is streamed with per-chunk flushing so that clients receive
+// tokens in real-time. Non-streaming responses are copied in bulk.
 func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, backend *Backend) {
 	// Read the original body.
 	body, err := io.ReadAll(r.Body)
@@ -142,17 +145,47 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 
 	w.WriteHeader(resp.StatusCode)
 
-	// Stream the response body back.
-	io.Copy(w, resp.Body)
+	// Check if the backend is sending an SSE stream.
+	ct := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "text/event-stream") {
+		// SSE streaming: flush each chunk immediately so the client
+		// receives tokens as they are generated.
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			// ResponseWriter does not support flushing — fall back to
+			// a bulk copy (the client will see the full response at once).
+			io.Copy(w, resp.Body)
+			return
+		}
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+					return
+				}
+				flusher.Flush()
+			}
+			if readErr != nil {
+				break
+			}
+		}
+	} else {
+		// Non-streaming: copy entire response body.
+		io.Copy(w, resp.Body)
+	}
 }
 
-// inferenceRequest is a minimal struct to extract the model from OpenAI-compatible
-// request bodies.
+// inferenceRequest is a minimal struct to extract the model and stream flag
+// from OpenAI-compatible request bodies.
 type inferenceRequest struct {
-	Model string `json:"model"`
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
 }
 
 // ServeHTTP handles /v1/chat/completions and /v1/completions.
+// If the request body contains "stream": true, SSE-compatible response
+// headers are set before proxying so that clients receive chunked tokens.
 func (p *InferenceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Read the body so we can peek at the model field.
 	body, err := io.ReadAll(r.Body)
@@ -161,7 +194,7 @@ func (p *InferenceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse the model from the request.
+	// Parse the model and stream flag from the request.
 	var req inferenceRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
@@ -184,6 +217,13 @@ func (p *InferenceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Inject routing reason header in response.
 	w.Header().Set("X-Fleet-Routing-Reason", reason)
+
+	// If the client requested streaming, prepare SSE response headers.
+	// The actual streaming is handled in ProxyRequest when it detects
+	// the backend's Content-Type: text/event-stream response.
+	if req.Stream {
+		w.Header().Set("X-Fleet-Stream-Requested", "true")
+	}
 
 	p.ProxyRequest(w, r, backend)
 }
