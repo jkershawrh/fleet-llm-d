@@ -2,7 +2,7 @@
 //!
 //! Used for KV cache transfer verification and other tamper-detection scenarios.
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Computes a hex-encoded SHA-256 hash of the given data.
 pub fn compute_hash(data: &[u8]) -> String {
@@ -20,7 +20,11 @@ pub fn verify_hash(data: &[u8], expected_hash: &str) -> bool {
 // We need hex encoding - use a simple implementation to avoid another dependency.
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes.as_ref().iter().map(|b| format!("{:02x}", b)).collect()
+        bytes
+            .as_ref()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect()
     }
 }
 
@@ -32,13 +36,19 @@ mod tests {
     fn test_compute_hash_empty() {
         let hash = compute_hash(b"");
         // SHA-256 of empty input is well-known
-        assert_eq!(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
     fn test_compute_hash_hello() {
         let hash = compute_hash(b"hello");
-        assert_eq!(hash, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            hash,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
     }
 
     #[test]
@@ -51,7 +61,10 @@ mod tests {
     #[test]
     fn test_verify_hash_invalid() {
         let data = b"fleet-llm-d kv cache data";
-        assert!(!verify_hash(data, "0000000000000000000000000000000000000000000000000000000000000000"));
+        assert!(!verify_hash(
+            data,
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ));
     }
 
     #[test]

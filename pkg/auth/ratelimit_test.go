@@ -117,3 +117,25 @@ func TestRateLimitMiddleware_Returns429(t *testing.T) {
 		t.Fatalf("unexpected error: %q", body["error"])
 	}
 }
+
+func TestRateLimitMiddlewareWithExemptions_BypassesHealthReadinessAndMetrics(t *testing.T) {
+	rl := NewRateLimiter(1, 1)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := RateLimitMiddlewareWithExemptions(rl, []string{"/healthz", "/readyz", "/metrics"}, inner)
+
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		t.Run(path, func(t *testing.T) {
+			for i := 0; i < 3; i++ {
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req.RemoteAddr = "10.0.0.50:12345"
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("request %d: expected exempt path to bypass limiter, got %d", i+1, rec.Code)
+				}
+			}
+		})
+	}
+}

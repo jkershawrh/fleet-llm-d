@@ -2,31 +2,163 @@ package modelpack
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
+	"time"
 )
+
+const modelConfigMediaType = "application/vnd.cncf.model.config.v1+json"
 
 // ModelResolver resolves model metadata from OCI-compatible registries.
 type ModelResolver interface {
 	Resolve(ctx context.Context, ociRef string) (*ModelPackConfig, error)
 }
 
-// RegistryModelResolver is a stub implementation of ModelResolver that will
-// eventually pull ModelPack configs from OCI registries. Currently returns
-// "not implemented" (TDD red phase).
-type RegistryModelResolver struct{}
+// RegistryModelResolver pulls ModelPack configs from OCI-compatible registry
+// manifests and config blobs.
+type RegistryModelResolver struct {
+	scheme string
+	http   *http.Client
+}
+
+// RegistryResolverOption customizes RegistryModelResolver.
+type RegistryResolverOption func(*RegistryModelResolver)
+
+// WithRegistryScheme overrides the registry URL scheme. It is mainly useful
+// for tests with httptest registries.
+func WithRegistryScheme(scheme string) RegistryResolverOption {
+	return func(r *RegistryModelResolver) {
+		r.scheme = scheme
+	}
+}
+
+type ociDescriptor struct {
+	MediaType string `json:"mediaType"`
+	Digest    string `json:"digest"`
+	Size      int64  `json:"size"`
+}
+
+type ociManifest struct {
+	SchemaVersion int             `json:"schemaVersion,omitempty"`
+	MediaType     string          `json:"mediaType,omitempty"`
+	Config        ociDescriptor   `json:"config"`
+	Layers        []ociDescriptor `json:"layers,omitempty"`
+}
 
 // NewRegistryModelResolver creates a new RegistryModelResolver.
-func NewRegistryModelResolver() *RegistryModelResolver {
-	return &RegistryModelResolver{}
+func NewRegistryModelResolver(opts ...RegistryResolverOption) *RegistryModelResolver {
+	resolver := &RegistryModelResolver{
+		scheme: "https",
+		http:   &http.Client{Timeout: 10 * time.Second},
+	}
+	for _, opt := range opts {
+		opt(resolver)
+	}
+	return resolver
 }
 
 // Resolve fetches and parses a ModelPack config from the given OCI reference.
 func (r *RegistryModelResolver) Resolve(ctx context.Context, ociRef string) (*ModelPackConfig, error) {
-	if err := validateOCIRef(ociRef); err != nil {
+	parsed, err := parseOCIRef(ociRef)
+	if err != nil {
 		return nil, fmt.Errorf("invalid OCI reference %q: %w", ociRef, err)
 	}
-	return nil, fmt.Errorf("not implemented: registry resolution for %q", ociRef)
+
+	manifestURL := r.registryURL(parsed.host, "/v2/"+parsed.repository+"/manifests/"+parsed.reference)
+	manifestBytes, err := r.doGet(ctx, manifestURL, "application/vnd.oci.image.manifest.v1+json")
+	if err != nil {
+		return nil, fmt.Errorf("registry manifest fetch failed for %q: %w", ociRef, err)
+	}
+
+	var manifest ociManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return nil, fmt.Errorf("parse OCI manifest for %q: %w", ociRef, err)
+	}
+	if manifest.Config.Digest == "" {
+		return nil, fmt.Errorf("OCI manifest for %q did not include a config digest", ociRef)
+	}
+
+	configURL := r.registryURL(parsed.host, "/v2/"+parsed.repository+"/blobs/"+manifest.Config.Digest)
+	configBytes, err := r.doGet(ctx, configURL, modelConfigMediaType)
+	if err != nil {
+		return nil, fmt.Errorf("registry config fetch failed for %q: %w", ociRef, err)
+	}
+
+	var config ModelPackConfig
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		return nil, fmt.Errorf("parse ModelPack config for %q: %w", ociRef, err)
+	}
+	config.OciRef = ociRef
+	if config.Descriptor.Name == "" {
+		config.Descriptor.Name = parsed.repository
+	}
+	return &config, nil
+}
+
+type parsedOCIRef struct {
+	host       string
+	repository string
+	reference  string
+}
+
+func parseOCIRef(ref string) (parsedOCIRef, error) {
+	if err := validateOCIRef(ref); err != nil {
+		return parsedOCIRef{}, err
+	}
+
+	slash := strings.Index(ref, "/")
+	host := ref[:slash]
+	remainder := ref[slash+1:]
+	repository := remainder
+	reference := "latest"
+
+	if at := strings.LastIndex(remainder, "@"); at >= 0 {
+		repository = remainder[:at]
+		reference = remainder[at+1:]
+	} else if colon := strings.LastIndex(remainder, ":"); colon >= 0 && colon > strings.LastIndex(remainder, "/") {
+		repository = remainder[:colon]
+		reference = remainder[colon+1:]
+	}
+
+	if repository == "" {
+		return parsedOCIRef{}, fmt.Errorf("missing repository path")
+	}
+	if reference == "" {
+		return parsedOCIRef{}, fmt.Errorf("missing tag or digest")
+	}
+	return parsedOCIRef{host: host, repository: repository, reference: reference}, nil
+}
+
+func (r *RegistryModelResolver) registryURL(host, path string) string {
+	return (&url.URL{Scheme: r.scheme, Host: host, Path: path}).String()
+}
+
+func (r *RegistryModelResolver) doGet(ctx context.Context, rawURL, accept string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("registry returned %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
 }
 
 // validateOCIRef performs basic validation of an OCI image reference.

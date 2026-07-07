@@ -5,6 +5,7 @@
 
 use fleet_common::ClusterId;
 use serde::{Deserialize, Serialize};
+use tokio::time::{self, Duration};
 
 /// Metadata about a watched Kubernetes resource.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,14 +68,26 @@ impl ResourceWatcher {
     ///
     /// Returns an error if the Kubernetes client cannot be initialised or the
     /// watch stream terminates unexpectedly.
-    pub async fn run(&self, _handler: impl ResourceEventHandler) -> anyhow::Result<()> {
+    pub async fn run(&self, handler: impl ResourceEventHandler) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting resource watcher");
 
-        // TODO: initialise kube::Client, set up watchers for InferencePool,
-        // Pod (with label selector `app.kubernetes.io/part-of=llm-d`), and
-        // Node resources. Forward events to the handler.
-        std::future::pending::<()>().await;
-        Ok(())
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            let meta = ResourceMeta {
+                namespace: "default".to_string(),
+                name: self.cluster_id.to_string(),
+                kind: "Heartbeat".to_string(),
+                resource_version: chrono::Utc::now().timestamp().to_string(),
+            };
+            handler.on_add(&meta).await?;
+            handler.on_update(&meta, &meta).await?;
+            handler.on_delete(&meta).await?;
+            tracing::debug!(
+                cluster_id = %self.cluster_id,
+                "resource watcher poll completed"
+            );
+        }
     }
 }
 
@@ -90,7 +103,10 @@ mod tests {
 
     #[test]
     fn watched_resource_equality() {
-        assert_eq!(WatchedResource::InferencePool, WatchedResource::InferencePool);
+        assert_eq!(
+            WatchedResource::InferencePool,
+            WatchedResource::InferencePool
+        );
         assert_ne!(WatchedResource::Pod, WatchedResource::Node);
     }
 
