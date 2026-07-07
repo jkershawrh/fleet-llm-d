@@ -124,7 +124,7 @@ type World struct {
 
 // NewWorld creates a new World with all capability instances initialized.
 func NewWorld() *World {
-	lc := ledger.NewLedgerClient("test://localhost")
+	lc := ledger.NewInMemoryLedgerClient()
 	rec := ledger.NewFleetRecorder(lc, "test-agent", "bdd-test")
 	col := collector.NewMetricsCollector()
 

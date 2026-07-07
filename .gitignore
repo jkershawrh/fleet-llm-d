@@ -56,3 +56,6 @@ pkg/apis/fleet/v1alpha1/zz_generated.*
 api/proto/**/*.pb.go
 api/proto/**/*.pb.ts
 web/src/lib/api-client.generated.ts
+upstream-are-ledger/
+upstream-llm-d/
+upstream-model-spec/
