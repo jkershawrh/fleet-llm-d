@@ -2,7 +2,7 @@
 
 ## Architecture, Benchmarks, and Production Validation with llm-d
 
-**Authors:** James Kershaw, Red Hat AI Engineering
+**Authors:** Jonathan Kershaw, Red Hat AI Engineering
 **Date:** July 2026
 **Version:** Draft 0.1
 
