@@ -1,0 +1,143 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: placementpolicies.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: PlacementPolicy
+    listKind: PlacementPolicyList
+    plural: placementpolicies
+    singular: placementpolicy
+    shortNames:
+      - pp
+      - pps
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Constraints
+          type: integer
+          jsonPath: .status.constraintCount
+          description: Number of placement constraints
+          priority: 1
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            PlacementPolicy defines where models can and should run across
+            the fleet. It expresses constraints (hard requirements) and
+            affinities (soft preferences) that the placement controller
+            evaluates when selecting clusters for model deployments.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired placement policy configuration.
+              properties:
+                constraints:
+                  type: array
+                  description: >-
+                    Hard constraints that must be satisfied for a cluster to be
+                    eligible for model placement. If any constraint is not met
+                    the cluster is excluded.
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - rule
+                    properties:
+                      type:
+                        type: string
+                        description: Category of the constraint.
+                        enum:
+                          - regulatory
+                          - hardware
+                          - cost
+                          - capacity
+                      rule:
+                        type: string
+                        description: >-
+                          CEL expression or human-readable rule string that
+                          defines the constraint (e.g. "cluster.region in
+                          ['us-east-1', 'eu-west-1']",
+                          "cluster.gpu.type == 'nvidia-h100'").
+                      description:
+                        type: string
+                        description: >-
+                          Human-readable description of why this constraint
+                          exists.
+                affinity:
+                  type: array
+                  description: >-
+                    Soft affinities that influence cluster scoring during
+                    placement. Clusters that satisfy more affinities with
+                    higher weights are preferred.
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - weight
+                    properties:
+                      type:
+                        type: string
+                        description: Category of the affinity preference.
+                        enum:
+                          - dataLocality
+                          - kvCacheAffinity
+                          - costEfficiency
+                          - gpuUtilization
+                          - networkProximity
+                      weight:
+                        type: number
+                        format: double
+                        minimum: 0
+                        maximum: 1
+                        description: >-
+                          Weight of this affinity in the scoring function
+                          (0.0-1.0). Higher weights make this affinity more
+                          influential in cluster selection.
+                      parameters:
+                        type: object
+                        description: >-
+                          Optional parameters for the affinity evaluation.
+                        x-kubernetes-preserve-unknown-fields: true
+                spreading:
+                  type: object
+                  description: >-
+                    Topology spreading configuration to control how model
+                    replicas are distributed across failure domains.
+                  properties:
+                    maxSkew:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: >-
+                        Maximum difference in the number of model replicas
+                        between any two topology domains. A lower value
+                        produces more even distribution.
+                      default: 1
+                    topologyKey:
+                      type: string
+                      description: >-
+                        Label key used to define topology domains for
+                        spreading (e.g. "topology.kubernetes.io/zone",
+                        "topology.kubernetes.io/region",
+                        "fleet.llm-d.ai/cluster").
+                      default: "topology.kubernetes.io/region"

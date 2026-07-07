@@ -1,0 +1,113 @@
+name: Benchmarks
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "pkg/**"
+      - "crates/**"
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  run-benchmarks:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-bench-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            rust-bench-${{ runner.os }}-
+
+      - name: Run standard benchmarks
+        run: make bench-standard
+
+      - name: Generate benchmark report
+        run: |
+          mkdir -p benchmark-results
+          echo "# Benchmark Report" > benchmark-results/report.md
+          echo "" >> benchmark-results/report.md
+          echo "**Run:** ${{ github.run_id }}" >> benchmark-results/report.md
+          echo "**Ref:** ${{ github.ref }}" >> benchmark-results/report.md
+          echo "**SHA:** ${{ github.sha }}" >> benchmark-results/report.md
+          echo "**Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> benchmark-results/report.md
+          echo "" >> benchmark-results/report.md
+
+          echo "## Go Benchmarks" >> benchmark-results/report.md
+          echo '```' >> benchmark-results/report.md
+          go test -bench=. -benchtime=10s -benchmem ./pkg/... 2>&1 | tee benchmark-results/go-bench.txt \
+            | grep -E '^(Benchmark|ok|FAIL)' >> benchmark-results/report.md || true
+          echo '```' >> benchmark-results/report.md
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmark-results/
+          retention-days: 90
+
+      - name: Comment on PR with benchmark results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('benchmark-results/report.md', 'utf8');
+
+            const body = `## Benchmark Results\n\n${report}\n\n` +
+              `<details><summary>Full Go benchmark output</summary>\n\n` +
+              '```\n' +
+              fs.readFileSync('benchmark-results/go-bench.txt', 'utf8') +
+              '\n```\n</details>';
+
+            // Find existing benchmark comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## Benchmark Results')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }

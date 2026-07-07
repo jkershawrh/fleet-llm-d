@@ -1,0 +1,658 @@
+apiVersion: fleet-llm-d.io/v1alpha1
+kind: Workflow
+metadata:
+  name: tenant-onboard
+  description: >
+    Onboards a new tenant into the fleet-llm-d multi-tenant inference platform.
+    Creates a tenant profile, configures resource quotas and rate limits,
+    deploys access policies, validates tenant isolation, and enables API access.
+  version: "1.0.0"
+  labels:
+    category: onboarding
+    criticality: high
+
+spec:
+  timeout: 1800s
+  concurrency:
+    maxParallel: 5
+    policy: queue
+
+  parameters:
+    - name: tenantName
+      type: string
+      required: true
+      description: Unique tenant identifier
+    - name: tenantDisplayName
+      type: string
+      required: true
+      description: Human-readable tenant name
+    - name: tier
+      type: string
+      required: true
+      enum: [free, standard, premium, enterprise]
+      description: Service tier determining quotas and SLOs
+    - name: contactEmail
+      type: string
+      required: true
+      description: Primary contact email for the tenant
+    - name: allowedModels
+      type: list
+      required: true
+      description: List of model IDs the tenant is authorized to use
+    - name: regions
+      type: list
+      default: [us-east-1]
+      description: Regions where the tenant can send inference requests
+    - name: customQuotas
+      type: object
+      required: false
+      description: Custom quota overrides (if not using tier defaults)
+    - name: ssoProvider
+      type: string
+      required: false
+      enum: [okta, azure-ad, google, github, saml-generic]
+      description: SSO provider for API key management
+
+  tierDefaults:
+    free:
+      requestsPerMinute: 20
+      requestsPerDay: 1000
+      tokensPerMinute: 10000
+      tokensPerDay: 500000
+      maxConcurrentRequests: 2
+      maxInputTokens: 4096
+      maxOutputTokens: 2048
+      maxBatchSize: 1
+      priorityClass: low
+      gpuQuota: 0
+      dedicatedCapacity: false
+      slaTarget: 0.95
+    standard:
+      requestsPerMinute: 100
+      requestsPerDay: 50000
+      tokensPerMinute: 100000
+      tokensPerDay: 5000000
+      maxConcurrentRequests: 16
+      maxInputTokens: 16384
+      maxOutputTokens: 8192
+      maxBatchSize: 10
+      priorityClass: normal
+      gpuQuota: 0
+      dedicatedCapacity: false
+      slaTarget: 0.99
+    premium:
+      requestsPerMinute: 500
+      requestsPerDay: 250000
+      tokensPerMinute: 500000
+      tokensPerDay: 25000000
+      maxConcurrentRequests: 64
+      maxInputTokens: 32768
+      maxOutputTokens: 16384
+      maxBatchSize: 50
+      priorityClass: high
+      gpuQuota: 8
+      dedicatedCapacity: false
+      slaTarget: 0.995
+    enterprise:
+      requestsPerMinute: 2000
+      requestsPerDay: 1000000
+      tokensPerMinute: 2000000
+      tokensPerDay: 100000000
+      maxConcurrentRequests: 256
+      maxInputTokens: 131072
+      maxOutputTokens: 32768
+      maxBatchSize: 100
+      priorityClass: critical
+      gpuQuota: 64
+      dedicatedCapacity: true
+      slaTarget: 0.999
+
+  stages:
+    - name: create-profile
+      description: >
+        Create the tenant profile in the control plane, validate uniqueness,
+        and initialize the tenant record with tier-appropriate defaults.
+      timeout: 120s
+      steps:
+        - name: validate-tenant-uniqueness
+          action: tenant.validateUniqueness
+          params:
+            tenantName: "{{ parameters.tenantName }}"
+            contactEmail: "{{ parameters.contactEmail }}"
+          successCriteria:
+            - expr: "result.nameAvailable == true"
+            - expr: "result.emailNotBlocked == true"
+
+        - name: create-tenant-record
+          action: tenant.create
+          params:
+            tenantName: "{{ parameters.tenantName }}"
+            displayName: "{{ parameters.tenantDisplayName }}"
+            tier: "{{ parameters.tier }}"
+            contactEmail: "{{ parameters.contactEmail }}"
+            regions: "{{ parameters.regions }}"
+            allowedModels: "{{ parameters.allowedModels }}"
+            metadata:
+              createdAt: "{{ now() }}"
+              createdBy: "{{ workflow.triggeredBy }}"
+              status: provisioning
+          successCriteria:
+            - expr: "result.tenantId != ''"
+            - expr: "result.created == true"
+
+        - name: create-tenant-namespace
+          action: tenant.createNamespace
+          params:
+            tenantId: "{{ steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            labels:
+              fleet.llm-d.io/tenant: "{{ parameters.tenantName }}"
+              fleet.llm-d.io/tier: "{{ parameters.tier }}"
+              pod-security.kubernetes.io/enforce: restricted
+          successCriteria:
+            - expr: "result.namespaceCreated == true"
+
+      on_failure:
+        action: workflow.abort
+        params:
+          reason: "Tenant profile creation failed"
+          cleanup:
+            - action: tenant.delete
+              params:
+                tenantName: "{{ parameters.tenantName }}"
+                force: true
+          notify:
+            - channel: slack
+              target: "#fleet-llm-platform"
+
+    - name: configure-quotas
+      description: >
+        Apply resource quotas and rate limits based on the tenant tier.
+        Supports custom overrides for enterprise tenants.
+      timeout: 300s
+      steps:
+        - name: resolve-quota-values
+          action: tenant.resolveQuotas
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tier: "{{ parameters.tier }}"
+            tierDefaults: "{{ spec.tierDefaults[parameters.tier] }}"
+            customOverrides: "{{ parameters.customQuotas }}"
+          successCriteria:
+            - expr: "result.quotasResolved == true"
+
+        - name: apply-rate-limits
+          action: ratelimit.configure
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            limits:
+              - name: requests-per-minute
+                value: "{{ steps.resolve-quota-values.result.requestsPerMinute }}"
+                window: 60s
+                strategy: sliding-window
+                burstMultiplier: 1.5
+              - name: requests-per-day
+                value: "{{ steps.resolve-quota-values.result.requestsPerDay }}"
+                window: 86400s
+                strategy: fixed-window
+                resetAt: "00:00 UTC"
+              - name: tokens-per-minute
+                value: "{{ steps.resolve-quota-values.result.tokensPerMinute }}"
+                window: 60s
+                strategy: sliding-window
+                burstMultiplier: 2.0
+              - name: tokens-per-day
+                value: "{{ steps.resolve-quota-values.result.tokensPerDay }}"
+                window: 86400s
+                strategy: fixed-window
+                resetAt: "00:00 UTC"
+              - name: concurrent-requests
+                value: "{{ steps.resolve-quota-values.result.maxConcurrentRequests }}"
+                strategy: semaphore
+            enforcement: hard
+            responseOnLimit:
+              statusCode: 429
+              retryAfterHeader: true
+              body:
+                error: rate_limit_exceeded
+                message: "Rate limit exceeded for tenant {{ parameters.tenantName }}"
+          successCriteria:
+            - expr: "result.allLimitsApplied == true"
+
+        - name: apply-resource-quotas
+          action: quota.applyResourceQuota
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            quotas:
+              maxInputTokens: "{{ steps.resolve-quota-values.result.maxInputTokens }}"
+              maxOutputTokens: "{{ steps.resolve-quota-values.result.maxOutputTokens }}"
+              maxBatchSize: "{{ steps.resolve-quota-values.result.maxBatchSize }}"
+              gpuQuota: "{{ steps.resolve-quota-values.result.gpuQuota }}"
+              dedicatedCapacity: "{{ steps.resolve-quota-values.result.dedicatedCapacity }}"
+              priorityClass: "{{ steps.resolve-quota-values.result.priorityClass }}"
+          successCriteria:
+            - expr: "result.quotasApplied == true"
+
+        - name: configure-priority-queuing
+          action: queuing.configureTenant
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            priorityClass: "{{ steps.resolve-quota-values.result.priorityClass }}"
+            queueConfig:
+              maxQueueDepth: "{{ steps.resolve-quota-values.result.maxConcurrentRequests * 4 }}"
+              queueTimeoutSeconds: 30
+              fairShareWeight: "{{ steps.resolve-quota-values.result.priorityClass }}"
+              preemptionPolicy: never-preempt-higher-tier
+          successCriteria:
+            - expr: "result.queuingConfigured == true"
+
+        - name: setup-metering-ledger
+          action: ledger.initializeTenantChain
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            entryType: "fleet.tenant.onboarded"
+            content:
+              tier: "{{ parameters.tier }}"
+              quotas: "{{ steps.resolve-quota-values.result }}"
+              regions: "{{ parameters.regions }}"
+              allowedModels: "{{ parameters.allowedModels }}"
+              onboardedAt: "{{ now() }}"
+            chainTo: genesis
+          description: >
+            Initialize the tenant's metering chain in the ARE immutable ledger.
+            This creates the genesis entry for the tenant's usage records,
+            enabling tamper-proof usage metering and billing audit trails.
+          successCriteria:
+            - expr: "result.chainInitialized == true"
+            - expr: "result.genesisEntryId != ''"
+
+      on_failure:
+        action: workflow.retry
+        params:
+          maxRetries: 2
+          backoff: exponential
+          initialDelay: 10s
+          notify:
+            - channel: slack
+              target: "#fleet-llm-platform"
+
+    - name: deploy-policies
+      description: >
+        Deploy access control policies, network policies, and model access
+        rules for the tenant.
+      timeout: 300s
+      steps:
+        - name: deploy-access-policies
+          action: policy.deployAccessControl
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            policies:
+              - name: model-access
+                type: model-authorization
+                rules:
+                  - effect: allow
+                    models: "{{ parameters.allowedModels }}"
+                    actions: [inference, list]
+                  - effect: deny
+                    models: ["*"]
+                    actions: [inference, list]
+                    priority: -1
+              - name: region-access
+                type: region-authorization
+                rules:
+                  - effect: allow
+                    regions: "{{ parameters.regions }}"
+                  - effect: deny
+                    regions: ["*"]
+                    priority: -1
+              - name: api-access
+                type: api-authorization
+                rules:
+                  - effect: allow
+                    endpoints:
+                      - /v1/chat/completions
+                      - /v1/completions
+                      - /v1/embeddings
+                      - /v1/models
+                    methods: [POST, GET]
+                  - effect: deny
+                    endpoints: [/v1/admin/*]
+                    methods: ["*"]
+          successCriteria:
+            - expr: "result.allPoliciesDeployed == true"
+
+        - name: deploy-network-policies
+          action: policy.deployNetworkPolicies
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            namespace: "tenant-{{ parameters.tenantName }}"
+            rules:
+              ingress:
+                - from: gateway
+                  ports: [8080]
+                  protocol: TCP
+              egress:
+                - to: model-registry
+                  ports: [443]
+                  protocol: TCP
+                - to: dns
+                  ports: [53]
+                  protocol: [TCP, UDP]
+              defaultDeny: true
+          successCriteria:
+            - expr: "result.networkPoliciesApplied == true"
+
+        - name: configure-content-filtering
+          action: policy.configureContentFilter
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            filters:
+              - name: input-safety
+                type: input
+                enabled: true
+                config:
+                  blockPII: true
+                  blockMalicious: true
+                  customBlocklist: []
+              - name: output-safety
+                type: output
+                enabled: true
+                config:
+                  blockHarmful: true
+                  blockPII: true
+              - name: usage-logging
+                type: audit
+                enabled: true
+                config:
+                  logPrompts: false
+                  logCompletions: false
+                  logMetadata: true
+                  retentionDays: 90
+          successCriteria:
+            - expr: "result.filtersConfigured == true"
+
+      on_failure:
+        action: workflow.retry
+        params:
+          maxRetries: 2
+          backoff: fixed
+          initialDelay: 15s
+          notify:
+            - channel: slack
+              target: "#fleet-llm-platform"
+
+    - name: validate-isolation
+      description: >
+        Validate that tenant isolation is properly enforced across network,
+        compute, data, and API layers.
+      timeout: 600s
+      steps:
+        - name: validate-network-isolation
+          action: testing.validateNetworkIsolation
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            tests:
+              - name: cross-tenant-blocked
+                type: connectivity
+                source: "tenant-{{ parameters.tenantName }}"
+                targets: all-other-tenants
+                expectedResult: blocked
+              - name: gateway-accessible
+                type: connectivity
+                source: "tenant-{{ parameters.tenantName }}"
+                target: fleet-llm-gateway
+                expectedResult: allowed
+              - name: control-plane-blocked
+                type: connectivity
+                source: "tenant-{{ parameters.tenantName }}"
+                target: fleet-llm-system
+                expectedResult: blocked
+          successCriteria:
+            - expr: "result.allTestsPassed == true"
+            - expr: "result.isolationViolations == 0"
+
+        - name: validate-api-isolation
+          action: testing.validateApiIsolation
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            tests:
+              - name: unauthorized-model-access
+                type: authorization
+                action: inference
+                targetModels: unauthorized-models
+                expectedResult: denied
+              - name: authorized-model-access
+                type: authorization
+                action: inference
+                targetModels: "{{ parameters.allowedModels }}"
+                expectedResult: allowed
+              - name: cross-tenant-data
+                type: data-isolation
+                action: list-requests
+                expectedResult: own-requests-only
+              - name: admin-endpoint-blocked
+                type: authorization
+                action: admin-api
+                expectedResult: denied
+          successCriteria:
+            - expr: "result.allTestsPassed == true"
+            - expr: "result.authorizationViolations == 0"
+
+        - name: validate-rate-limit-enforcement
+          action: testing.validateRateLimits
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            tests:
+              - name: rpm-limit
+                type: rate-limit
+                metric: requests-per-minute
+                exceedBy: 1.5
+                expectedStatusCode: 429
+              - name: concurrent-limit
+                type: concurrency-limit
+                metric: concurrent-requests
+                exceedBy: 2.0
+                expectedStatusCode: 429
+              - name: token-limit
+                type: rate-limit
+                metric: tokens-per-minute
+                exceedBy: 1.2
+                expectedStatusCode: 429
+          successCriteria:
+            - expr: "result.allLimitsEnforced == true"
+            - expr: "result.rateLimitBypassDetected == false"
+
+        - name: validate-quota-enforcement
+          action: testing.validateQuotas
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            tests:
+              - name: max-input-tokens
+                type: input-limit
+                inputTokens: "{{ stages.configure-quotas.steps.resolve-quota-values.result.maxInputTokens + 100 }}"
+                expectedResult: rejected
+              - name: max-output-tokens
+                type: output-limit
+                maxTokens: "{{ stages.configure-quotas.steps.resolve-quota-values.result.maxOutputTokens + 100 }}"
+                expectedResult: rejected
+              - name: within-limits
+                type: normal-request
+                inputTokens: 100
+                maxTokens: 100
+                expectedResult: accepted
+          successCriteria:
+            - expr: "result.allQuotasEnforced == true"
+
+        - name: verify-audit-trail
+          action: ledger.verifyChain
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            expectedEntries:
+              - type: "fleet.tenant.onboarded"
+            verifyHashChain: true
+            verifySignatures: true
+          description: >
+            Verify the tenant's audit trail in the ARE immutable ledger is
+            intact and properly chained. Confirms the onboarding record exists
+            and the metering chain genesis is valid before enabling access.
+          successCriteria:
+            - expr: "result.chainValid == true"
+            - expr: "result.allEntriesPresent == true"
+            - expr: "result.signaturesValid == true"
+
+      on_failure:
+        action: workflow.abort
+        params:
+          reason: "Tenant isolation validation failed -- security risk"
+          cleanup:
+            - action: tenant.disable
+              params:
+                tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+                reason: "Isolation validation failure"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-security"
+            - channel: pagerduty
+              severity: critical
+              message: "SECURITY: Tenant isolation validation failed for {{ parameters.tenantName }}"
+
+    - name: enable-access
+      description: >
+        Generate API credentials, configure SSO integration if requested,
+        activate the tenant, and send onboarding information.
+      timeout: 300s
+      steps:
+        - name: generate-api-keys
+          action: auth.generateApiKeys
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            keys:
+              - name: primary
+                type: api-key
+                permissions: [inference, list-models]
+                expiresInDays: 365
+              - name: secondary
+                type: api-key
+                permissions: [inference, list-models]
+                expiresInDays: 365
+            storage:
+              backend: vault
+              path: "secret/fleet-llm/tenants/{{ parameters.tenantName }}/api-keys"
+          successCriteria:
+            - expr: "result.keysGenerated == 2"
+            - expr: "result.keysStoredSecurely == true"
+
+        - name: configure-sso
+          action: auth.configureSso
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            provider: "{{ parameters.ssoProvider }}"
+            config:
+              callbackUrl: "https://api.fleet-llm-d.io/auth/callback/{{ parameters.tenantName }}"
+              allowedDomains: []
+              autoProvision: true
+              defaultRole: inference-user
+          conditions:
+            pre:
+              - expr: "parameters.ssoProvider != null"
+                message: "SSO configuration skipped when no provider specified"
+          successCriteria:
+            - expr: "result.ssoConfigured == true || parameters.ssoProvider == null"
+
+        - name: activate-tenant
+          action: tenant.activate
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            status: active
+            activatedAt: "{{ now() }}"
+            endpoints:
+              inference: "https://api.fleet-llm-d.io/v1"
+              dashboard: "https://console.fleet-llm-d.io/{{ parameters.tenantName }}"
+          successCriteria:
+            - expr: "result.tenantActive == true"
+            - expr: "result.endpointsReachable == true"
+
+        - name: configure-tenant-monitoring
+          action: monitoring.configureTenantDashboard
+          params:
+            tenantId: "{{ stages.create-profile.steps.create-tenant-record.result.tenantId }}"
+            tenantName: "{{ parameters.tenantName }}"
+            tier: "{{ parameters.tier }}"
+            dashboards:
+              - name: usage-overview
+                metrics:
+                  - total_requests
+                  - total_tokens
+                  - average_latency
+                  - error_rate
+                  - quota_utilization
+              - name: model-breakdown
+                metrics:
+                  - requests_by_model
+                  - tokens_by_model
+                  - latency_by_model
+            alerts:
+              - name: quota-approaching
+                condition: "daily_quota_utilization > 0.8"
+                severity: info
+                notifyTenant: true
+              - name: quota-exceeded
+                condition: "daily_quota_utilization >= 1.0"
+                severity: warning
+                notifyTenant: true
+              - name: high-error-rate
+                condition: "tenant_error_rate > 0.05"
+                severity: warning
+                notifyTenant: true
+                notifyPlatform: true
+              - name: sla-breach-risk
+                condition: "tenant_availability < spec.tierDefaults[parameters.tier].slaTarget + 0.005"
+                severity: critical
+                notifyPlatform: true
+          successCriteria:
+            - expr: "result.dashboardsCreated == true"
+            - expr: "result.alertsConfigured == true"
+
+        - name: send-onboarding-notification
+          action: notification.sendOnboarding
+          params:
+            tenantName: "{{ parameters.tenantName }}"
+            contactEmail: "{{ parameters.contactEmail }}"
+            content:
+              apiEndpoint: "https://api.fleet-llm-d.io/v1"
+              dashboardUrl: "https://console.fleet-llm-d.io/{{ parameters.tenantName }}"
+              docsUrl: "https://docs.fleet-llm-d.io"
+              tier: "{{ parameters.tier }}"
+              allowedModels: "{{ parameters.allowedModels }}"
+              rateLimits:
+                requestsPerMinute: "{{ stages.configure-quotas.steps.resolve-quota-values.result.requestsPerMinute }}"
+                tokensPerMinute: "{{ stages.configure-quotas.steps.resolve-quota-values.result.tokensPerMinute }}"
+              keyRetrievalInstructions: >
+                API keys have been securely stored. Retrieve them from the
+                tenant console or contact your administrator.
+          successCriteria:
+            - expr: "result.notificationSent == true"
+
+      on_failure:
+        action: workflow.retry
+        params:
+          maxRetries: 2
+          backoff: exponential
+          initialDelay: 15s
+          notify:
+            - channel: slack
+              target: "#fleet-llm-platform"

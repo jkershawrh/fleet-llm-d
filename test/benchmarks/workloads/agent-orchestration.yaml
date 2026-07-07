@@ -1,0 +1,145 @@
+# Agentic multi-model orchestration workload for fleet-llm-d benchmarks.
+# Characteristics: chained model calls, tool/function calling, variable
+# latency per hop, mixed model sizes.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: agent-orchestration
+  labels:
+    workload-type: agentic
+    latency-class: variable
+spec:
+  description: >-
+    Simulates an agentic workflow where a planner model decomposes a task,
+    dispatches sub-tasks to specialist models, aggregates tool call
+    results, and produces a final answer. The model chain involves 3-8
+    sequential LLM calls per top-level request. Tool calls introduce
+    variable external latency. The planner uses a large model; workers
+    use smaller, faster models.
+
+  # Primary orchestrator / planner model.
+  model:
+    name: meta-llama/Llama-3.1-70B-Instruct
+    source: huggingface
+    gpuType: nvidia-h100
+
+  # Chain of models invoked per request.
+  model_chain:
+    - role: planner
+      model: meta-llama/Llama-3.1-70B-Instruct
+      input_tokens:
+        min: 512
+        max: 4096
+        mean: 2048
+      output_tokens:
+        min: 128
+        max: 1024
+        mean: 384
+      calls_per_request:
+        min: 1
+        max: 3
+        mean: 2
+
+    - role: code-executor
+      model: Qwen/Qwen2.5-Coder-7B
+      input_tokens:
+        min: 256
+        max: 2048
+        mean: 768
+      output_tokens:
+        min: 64
+        max: 512
+        mean: 192
+      calls_per_request:
+        min: 0
+        max: 4
+        mean: 1
+
+    - role: retriever-reranker
+      model: meta-llama/Llama-3.1-8B-Instruct
+      input_tokens:
+        min: 1024
+        max: 8192
+        mean: 3072
+      output_tokens:
+        min: 32
+        max: 256
+        mean: 96
+      calls_per_request:
+        min: 0
+        max: 3
+        mean: 1
+
+    - role: summarizer
+      model: meta-llama/Llama-3.1-70B-Instruct
+      input_tokens:
+        min: 1024
+        max: 8192
+        mean: 4096
+      output_tokens:
+        min: 256
+        max: 2048
+        mean: 768
+      calls_per_request:
+        min: 1
+        max: 1
+        mean: 1
+
+  tool_calling:
+    enabled: true
+    tools:
+      - name: web_search
+        simulated_latency_ms:
+          min: 100
+          max: 2000
+          mean: 500
+      - name: code_interpreter
+        simulated_latency_ms:
+          min: 200
+          max: 5000
+          mean: 1200
+      - name: database_query
+        simulated_latency_ms:
+          min: 50
+          max: 800
+          mean: 200
+    max_tool_calls_per_request: 8
+
+  conversation_turns:
+    min: 1
+    max: 1
+    mean: 1
+    distribution: constant
+
+  expected_prefix_reuse_ratio: 0.40
+
+  traffic:
+    target_qps: 10
+    concurrency: 100
+    arrival_pattern: poisson
+    duration: 900s
+    warmup: 45s
+
+  slo:
+    # End-to-end SLO for the full agent pipeline.
+    ttft_p50_ms: 200
+    ttft_p99_ms: 800
+    tpot_p50_ms: 18
+    tpot_p99_ms: 50
+    e2e_p99_ms: 30000
+    success_rate: 0.995
+
+  # Per-hop SLOs for individual model calls.
+  per_hop_slo:
+    planner:
+      ttft_p99_ms: 400
+      tpot_p99_ms: 40
+    code-executor:
+      ttft_p99_ms: 100
+      tpot_p99_ms: 20
+    retriever-reranker:
+      ttft_p99_ms: 150
+      tpot_p99_ms: 25
+    summarizer:
+      ttft_p99_ms: 400
+      tpot_p99_ms: 40

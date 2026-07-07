@@ -1,0 +1,61 @@
+# Code completion workload definition for fleet-llm-d benchmarks.
+# Characteristics: short context, very short output, extremely tight
+# latency requirements (inline editor autocomplete).
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: code-completion
+  labels:
+    workload-type: interactive
+    latency-class: ultra-low
+spec:
+  description: >-
+    Simulates inline code completion in an IDE. Prompts are short
+    (current file context + cursor position), outputs are 1-3 lines of
+    code. Latency must be imperceptible to the developer; TTFT under
+    100ms at p99 is mandatory. High request rate with bursty arrival
+    pattern (keystroke-driven).
+
+  model:
+    name: Qwen/Qwen2.5-Coder-7B
+    source: huggingface
+    gpuType: nvidia-a100
+
+  prompt_template:
+    system_message: >-
+      Complete the following code. Output only the completion, no explanation.
+    input_tokens:
+      min: 64
+      max: 2048
+      mean: 512
+      distribution: log-normal
+    output_tokens:
+      min: 4
+      max: 128
+      mean: 32
+      distribution: exponential
+
+  # No multi-turn; each request is independent.
+  conversation_turns:
+    min: 1
+    max: 1
+    mean: 1
+    distribution: constant
+
+  expected_prefix_reuse_ratio: 0.30
+
+  traffic:
+    target_qps: 200
+    concurrency: 500
+    arrival_pattern: bursty
+    burst_factor: 3.0
+    duration: 300s
+    warmup: 15s
+
+  slo:
+    ttft_p50_ms: 30
+    ttft_p99_ms: 100
+    tpot_p50_ms: 8
+    tpot_p99_ms: 25
+    e2e_p99_ms: 500
+    success_rate: 0.9995

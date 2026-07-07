@@ -1,0 +1,120 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["*"]
+  schedule:
+    - cron: "0 8 * * 1" # Every Monday at 08:00 UTC
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  go-security:
+    name: Go Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec
+        run: gosec -fmt json -out gosec-results.json ./... || true
+
+      - name: Upload gosec results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gosec-results
+          path: gosec-results.json
+          retention-days: 30
+
+  rust-security:
+    name: Rust Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
+
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: fleet-controller
+            dockerfile: deploy/docker/Dockerfile.controller
+          - name: fleet-agent
+            dockerfile: deploy/docker/Dockerfile.agent
+          - name: fleet-gateway
+            dockerfile: deploy/docker/Dockerfile.gateway
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+
+      - name: Run Trivy scan on ${{ matrix.image.name }}
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image.name }}:scan
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

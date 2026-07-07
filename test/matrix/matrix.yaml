@@ -1,0 +1,344 @@
+# fleet-llm-d Test Matrix
+# Tracks test coverage across all capabilities and test types.
+# Status values: red (not passing), amber (partial), green (all passing).
+
+metadata:
+  generated_at: "2026-07-06T00:00:00Z"
+  version: "0.1.0"
+  project: fleet-llm-d
+  description: >
+    Test matrix with unit tests passing for all 10 capabilities. BDD,
+    contract, integration, e2e, and benchmark suites remain red pending
+    execution. Update status, counts, and coverage as additional suites
+    are authored and begin passing.
+
+capabilities:
+
+  placement:
+    unit:
+      status: green
+      tests: 24
+      passing: 24
+      coverage: 82
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  routing:
+    unit:
+      status: green
+      tests: 18
+      passing: 18
+      coverage: 78
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  autoscaling:
+    unit:
+      status: green
+      tests: 16
+      passing: 16
+      coverage: 75
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  lifecycle:
+    unit:
+      status: green
+      tests: 12
+      passing: 12
+      coverage: 71
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  tenant-management:
+    unit:
+      status: green
+      tests: 20
+      passing: 20
+      coverage: 80
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  observability:
+    unit:
+      status: green
+      tests: 10
+      passing: 10
+      coverage: 68
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  kv-transfer:
+    unit:
+      status: green
+      tests: 14
+      passing: 14
+      coverage: 73
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  modelpack:
+    unit:
+      status: green
+      tests: 28
+      passing: 28
+      coverage: 85
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  ledger:
+    unit:
+      status: green
+      tests: 16
+      passing: 16
+      coverage: 77
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+  compliance:
+    unit:
+      status: green
+      tests: 8
+      passing: 8
+      coverage: 65
+    bdd:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    contract:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    integration:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    e2e:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+    benchmark:
+      status: red
+      tests: 0
+      passing: 0
+      coverage: 0
+
+summary:
+  total_cells: 60          # 10 capabilities x 6 test types
+  red: 50                  # 10 capabilities x 5 non-unit test types
+  amber: 0
+  green: 10                # 10 capabilities x 1 unit test type
+  total_tests: 166
+  total_passing: 166
+  overall_coverage: 75

@@ -1,0 +1,79 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+rule_files:
+  - "recording-rules.yaml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # fleet-llm-d control plane API
+  - job_name: "fleet-api"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fleet-api:8080"]
+        labels:
+          service: "fleet-api"
+
+  # fleet-llm-d scheduler
+  - job_name: "fleet-scheduler"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fleet-scheduler:8081"]
+        labels:
+          service: "fleet-scheduler"
+
+  # fleet-llm-d router
+  - job_name: "fleet-router"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fleet-router:8082"]
+        labels:
+          service: "fleet-router"
+
+  # fleet-llm-d control plane controller
+  - job_name: "fleet-controller"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fleet-controller:9090"]
+        labels:
+          service: "fleet-controller"
+
+  # fleet-llm-d gateway (cross-cluster request routing)
+  - job_name: "fleet-gateway"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fleet-gateway:9090"]
+        labels:
+          service: "fleet-gateway"
+
+  # fleet-llm-d agent (per-cluster agent)
+  - job_name: "fleet-agent"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fleet-agent:9090"]
+        labels:
+          service: "fleet-agent"
+
+  # ARE Ledger (immutable audit trail)
+  - job_name: "are-ledger"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["are-ledger:8083"]
+        labels:
+          service: "are-ledger"
+
+  # PostgreSQL exporter (if deployed)
+  - job_name: "postgres-exporter"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # Redis exporter (if deployed)
+  - job_name: "redis-exporter"
+    static_configs:
+      - targets: ["redis-exporter:9121"]

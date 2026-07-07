@@ -1,0 +1,195 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.routing.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/routing/v1;routingv1";
+
+import "google/protobuf/timestamp.proto";
+
+// RoutingService manages cross-cluster request routing for the fleet gateway.
+// It computes routing decisions based on model availability, tenant policies,
+// cluster health, and geographic proximity.
+service RoutingService {
+  // GetRoute computes a routing decision for an incoming inference request.
+  rpc GetRoute(RouteRequest) returns (RouteResponse);
+
+  // UpdateRouteWeights adjusts the traffic distribution weights for a model
+  // across clusters.
+  rpc UpdateRouteWeights(UpdateRouteWeightsRequest) returns (UpdateRouteWeightsResponse);
+
+  // ListRoutes returns all active routing rules for the fleet.
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
+
+  // GetRouteHealth returns the health status of routing targets for a model.
+  rpc GetRouteHealth(GetRouteHealthRequest) returns (GetRouteHealthResponse);
+}
+
+// RouteRequest describes an incoming inference request that needs routing.
+message RouteRequest {
+  // The model being requested (e.g., "meta-llama/Llama-3.1-70B-Instruct").
+  string model = 1;
+
+  // Tenant ID making the request, for policy enforcement.
+  string tenant_id = 2;
+
+  // Request headers that may influence routing (e.g., priority, session affinity).
+  map<string, string> headers = 3;
+
+  // Region where the request originated.
+  string source_region = 4;
+
+  // Estimated input token count, for capacity-aware routing.
+  int64 estimated_tokens = 5;
+
+  // If true, require the response to be streamed.
+  bool streaming = 6;
+}
+
+// RouteDecision represents a single routing target with its weight.
+message RouteDecision {
+  // Target cluster ID for this routing decision.
+  string target_cluster = 1;
+
+  // Traffic weight for this target (0.0-1.0). Weights across all decisions
+  // for a request should sum to 1.0.
+  double weight = 2;
+
+  // Human-readable explanation for why this target was chosen.
+  string reason = 3;
+
+  // Endpoint URL for the target cluster's inference gateway.
+  string endpoint = 4;
+
+  // Priority of this route (lower values are higher priority).
+  int32 priority = 5;
+}
+
+// RouteHealth describes the health and capacity of a routing target.
+message RouteHealth {
+  // Cluster identifier.
+  string cluster = 1;
+
+  // Whether this cluster is currently healthy for routing.
+  bool healthy = 2;
+
+  // Current observed latency in milliseconds (p50).
+  double latency_ms = 3;
+
+  // Remaining capacity as a fraction (0.0-1.0).
+  double capacity_remaining = 4;
+
+  // Number of active requests being processed.
+  int64 active_requests = 5;
+
+  // When this health check was last performed.
+  google.protobuf.Timestamp last_check = 6;
+
+  // If unhealthy, the reason code.
+  string unhealthy_reason = 7;
+}
+
+// Route defines a routing rule for a model across the fleet.
+message Route {
+  // Unique identifier for this route.
+  string id = 1;
+
+  // Model this route applies to.
+  string model = 2;
+
+  // Ordered list of routing decisions (targets with weights).
+  repeated RouteDecision decisions = 3;
+
+  // When this route was last updated.
+  google.protobuf.Timestamp updated_at = 4;
+
+  // Who or what last updated this route.
+  string updated_by = 5;
+
+  // Whether this route is actively handling traffic.
+  bool active = 6;
+}
+
+// RouteWeightUpdate specifies a new weight for a single cluster target.
+message RouteWeightUpdate {
+  // Target cluster ID.
+  string cluster_id = 1;
+
+  // New weight for this cluster (0.0-1.0).
+  double weight = 2;
+}
+
+// RouteResponse returns the routing decision for an inference request.
+message RouteResponse {
+  // Ordered list of routing decisions. The client should try targets in order,
+  // using weights for load distribution.
+  repeated RouteDecision decisions = 1;
+
+  // Unique ID for this routing decision, for tracing.
+  string request_id = 2;
+}
+
+// UpdateRouteWeightsRequest adjusts traffic distribution for a model.
+message UpdateRouteWeightsRequest {
+  // Model whose route weights should be updated.
+  string model = 1;
+
+  // New weight assignments. Weights must sum to 1.0.
+  repeated RouteWeightUpdate weights = 2;
+
+  // Reason for the weight change (for audit logging).
+  string reason = 3;
+}
+
+// UpdateRouteWeightsResponse confirms the weight update.
+message UpdateRouteWeightsResponse {
+  // The updated route.
+  Route route = 1;
+}
+
+// ListRoutesRequest queries active routes with optional filters.
+message ListRoutesRequest {
+  // Filter by model name. Empty means all models.
+  string model = 1;
+
+  // Filter by target cluster. Empty means all clusters.
+  string cluster_id = 2;
+
+  // If true, include inactive routes.
+  bool include_inactive = 3;
+
+  // Maximum number of results to return.
+  int32 page_size = 4;
+
+  // Pagination token from a previous response.
+  string page_token = 5;
+}
+
+// ListRoutesResponse returns matching routes.
+message ListRoutesResponse {
+  // The matching routes.
+  repeated Route routes = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of routes matching the filter.
+  int32 total_count = 3;
+}
+
+// GetRouteHealthRequest queries the health of routing targets for a model.
+message GetRouteHealthRequest {
+  // Model to check routing health for. Empty means all models.
+  string model = 1;
+
+  // If set, only check health for this specific cluster.
+  string cluster_id = 2;
+}
+
+// GetRouteHealthResponse returns the health of routing targets.
+message GetRouteHealthResponse {
+  // Health status of each routing target.
+  repeated RouteHealth targets = 1;
+}

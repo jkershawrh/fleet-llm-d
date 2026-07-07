@@ -1,0 +1,316 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.lifecycle.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/lifecycle/v1;lifecyclev1";
+
+import "google/protobuf/timestamp.proto";
+
+// LifecycleService manages the rollout and lifecycle of model deployments
+// across the fleet. It supports canary, blue-green, and rolling update
+// strategies with automated promotion and rollback capabilities.
+service LifecycleService {
+  // CreateRollout initiates a new model rollout across targeted clusters.
+  rpc CreateRollout(CreateRolloutRequest) returns (CreateRolloutResponse);
+
+  // GetRollout retrieves a rollout by ID.
+  rpc GetRollout(GetRolloutRequest) returns (GetRolloutResponse);
+
+  // PromoteCanary advances a canary rollout to the next weight tier
+  // or to full promotion.
+  rpc PromoteCanary(PromoteCanaryRequest) returns (PromoteCanaryResponse);
+
+  // RollbackRollout reverts a rollout to the previous stable version.
+  rpc RollbackRollout(RollbackRolloutRequest) returns (RollbackRolloutResponse);
+
+  // ListRollouts returns all rollouts matching the given filters.
+  rpc ListRollouts(ListRolloutsRequest) returns (ListRolloutsResponse);
+}
+
+// RolloutStrategyType defines the available rollout strategies.
+enum RolloutStrategyType {
+  // Default value; strategy is not specified.
+  ROLLOUT_STRATEGY_TYPE_UNSPECIFIED = 0;
+
+  // Canary rollout: gradually shift traffic from the old version to the new.
+  ROLLOUT_STRATEGY_TYPE_CANARY = 1;
+
+  // Blue-green deployment: switch all traffic at once after validation.
+  ROLLOUT_STRATEGY_TYPE_BLUE_GREEN = 2;
+
+  // Rolling update: incrementally replace replicas across clusters.
+  ROLLOUT_STRATEGY_TYPE_ROLLING = 3;
+}
+
+// CanaryConfig defines parameters for a canary rollout strategy.
+message CanaryConfig {
+  // Initial traffic weight for the canary (0.0-1.0).
+  double initial_weight = 1;
+
+  // Weight increment for each promotion step.
+  double weight_increment = 2;
+
+  // Maximum weight before automatic full promotion.
+  double max_weight = 3;
+
+  // Minimum time between promotion steps.
+  int32 step_interval_seconds = 4;
+
+  // Metrics thresholds that must be satisfied before promotion.
+  repeated MetricsThreshold promotion_criteria = 5;
+
+  // If true, automatically promote when criteria are met.
+  bool auto_promote = 6;
+
+  // If true, automatically rollback when criteria are violated.
+  bool auto_rollback = 7;
+}
+
+// MetricsThreshold defines a threshold condition for rollout decisions.
+message MetricsThreshold {
+  // Metric name (e.g., "error_rate", "latency_p99", "throughput").
+  string metric = 1;
+
+  // Threshold value.
+  double threshold = 2;
+
+  // Comparison operator.
+  ThresholdOperator operator = 3;
+}
+
+// ThresholdOperator defines how a metric value is compared to a threshold.
+enum ThresholdOperator {
+  // Default value; operator is not specified.
+  THRESHOLD_OPERATOR_UNSPECIFIED = 0;
+
+  // Metric must be less than the threshold.
+  THRESHOLD_OPERATOR_LESS_THAN = 1;
+
+  // Metric must be less than or equal to the threshold.
+  THRESHOLD_OPERATOR_LESS_THAN_OR_EQUAL = 2;
+
+  // Metric must be greater than the threshold.
+  THRESHOLD_OPERATOR_GREATER_THAN = 3;
+
+  // Metric must be greater than or equal to the threshold.
+  THRESHOLD_OPERATOR_GREATER_THAN_OR_EQUAL = 4;
+}
+
+// RolloutStrategy defines how a model rollout should be executed.
+message RolloutStrategy {
+  // The strategy type to use.
+  RolloutStrategyType type = 1;
+
+  // Canary-specific configuration. Only used when type is CANARY.
+  CanaryConfig canary = 2;
+
+  // Maximum number of clusters to update concurrently.
+  int32 max_concurrent = 3;
+
+  // Maximum number of clusters that can be unavailable during rollout.
+  int32 max_unavailable = 4;
+}
+
+// RolloutPhase tracks the lifecycle phase of a rollout.
+enum RolloutPhase {
+  // Default value; phase is unknown.
+  ROLLOUT_PHASE_UNSPECIFIED = 0;
+
+  // Rollout has been created but not yet started.
+  ROLLOUT_PHASE_PENDING = 1;
+
+  // Rollout is actively progressing.
+  ROLLOUT_PHASE_PROGRESSING = 2;
+
+  // Rollout is paused, awaiting manual promotion or intervention.
+  ROLLOUT_PHASE_PAUSED = 3;
+
+  // Rollout completed successfully on all target clusters.
+  ROLLOUT_PHASE_COMPLETED = 4;
+
+  // Rollout is being rolled back.
+  ROLLOUT_PHASE_ROLLING_BACK = 5;
+
+  // Rollout has been rolled back.
+  ROLLOUT_PHASE_ROLLED_BACK = 6;
+
+  // Rollout failed and cannot proceed.
+  ROLLOUT_PHASE_FAILED = 7;
+}
+
+// RolloutStatus provides the current state of a rollout.
+message RolloutStatus {
+  // Current phase of the rollout.
+  RolloutPhase phase = 1;
+
+  // Current canary traffic weight (0.0-1.0). Only relevant for canary strategy.
+  double current_weight = 2;
+
+  // When the rollout was started.
+  google.protobuf.Timestamp start_time = 3;
+
+  // When the rollout completed, was rolled back, or failed.
+  google.protobuf.Timestamp completion_time = 4;
+
+  // Human-readable message about the current status.
+  string message = 5;
+}
+
+// ClusterRolloutStatus tracks the rollout status on a specific cluster.
+message ClusterRolloutStatus {
+  // Cluster ID.
+  string cluster_id = 1;
+
+  // Phase on this specific cluster.
+  RolloutPhase phase = 2;
+
+  // Number of replicas updated on this cluster.
+  int32 updated_replicas = 3;
+
+  // Number of replicas ready on this cluster.
+  int32 ready_replicas = 4;
+
+  // Total desired replicas on this cluster.
+  int32 desired_replicas = 5;
+
+  // Error message if the rollout failed on this cluster.
+  string error = 6;
+
+  // When this cluster's status was last updated.
+  google.protobuf.Timestamp last_updated = 7;
+}
+
+// Rollout represents a model deployment rollout across the fleet.
+message Rollout {
+  // Unique identifier for this rollout.
+  string id = 1;
+
+  // Model being rolled out (e.g., "meta-llama/Llama-3.1-70B-Instruct").
+  string model = 2;
+
+  // New model version or image being deployed.
+  string target_version = 3;
+
+  // Previous model version being replaced.
+  string previous_version = 4;
+
+  // Rollout strategy configuration.
+  RolloutStrategy strategy = 5;
+
+  // Current rollout status.
+  RolloutStatus status = 6;
+
+  // Per-cluster rollout statuses.
+  repeated ClusterRolloutStatus cluster_statuses = 7;
+
+  // Target clusters for this rollout. Empty means all clusters serving this model.
+  repeated string target_clusters = 8;
+
+  // Who initiated this rollout.
+  string initiated_by = 9;
+
+  // When this rollout was created.
+  google.protobuf.Timestamp created_at = 10;
+
+  // Arbitrary metadata labels.
+  map<string, string> labels = 11;
+}
+
+// CreateRolloutRequest initiates a new rollout.
+message CreateRolloutRequest {
+  // Model to roll out.
+  string model = 1;
+
+  // Target version or image.
+  string target_version = 2;
+
+  // Rollout strategy to use.
+  RolloutStrategy strategy = 3;
+
+  // Target clusters (empty means all clusters serving this model).
+  repeated string target_clusters = 4;
+
+  // Labels for this rollout.
+  map<string, string> labels = 5;
+}
+
+// CreateRolloutResponse confirms rollout creation.
+message CreateRolloutResponse {
+  // The created rollout.
+  Rollout rollout = 1;
+}
+
+// GetRolloutRequest retrieves a rollout by ID.
+message GetRolloutRequest {
+  // ID of the rollout to retrieve.
+  string rollout_id = 1;
+}
+
+// GetRolloutResponse returns the requested rollout.
+message GetRolloutResponse {
+  // The requested rollout.
+  Rollout rollout = 1;
+}
+
+// PromoteCanaryRequest advances a canary rollout.
+message PromoteCanaryRequest {
+  // ID of the rollout to promote.
+  string rollout_id = 1;
+
+  // If set, promote directly to this weight instead of incrementing.
+  double target_weight = 2;
+
+  // If true, promote to 100% (full rollout).
+  bool full_promotion = 3;
+}
+
+// PromoteCanaryResponse confirms the promotion.
+message PromoteCanaryResponse {
+  // The updated rollout.
+  Rollout rollout = 1;
+}
+
+// RollbackRolloutRequest reverts a rollout.
+message RollbackRolloutRequest {
+  // ID of the rollout to roll back.
+  string rollout_id = 1;
+
+  // Reason for the rollback (for audit logging).
+  string reason = 2;
+}
+
+// RollbackRolloutResponse confirms the rollback.
+message RollbackRolloutResponse {
+  // The updated rollout.
+  Rollout rollout = 1;
+}
+
+// ListRolloutsRequest queries rollouts with optional filters.
+message ListRolloutsRequest {
+  // Filter by model name.
+  string model = 1;
+
+  // Filter by rollout phase.
+  RolloutPhase phase = 2;
+
+  // Maximum number of results to return.
+  int32 page_size = 3;
+
+  // Pagination token from a previous response.
+  string page_token = 4;
+}
+
+// ListRolloutsResponse returns matching rollouts.
+message ListRolloutsResponse {
+  // The matching rollouts.
+  repeated Rollout rollouts = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of rollouts matching the filter.
+  int32 total_count = 3;
+}

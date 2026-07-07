@@ -1,0 +1,198 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: fleetscalingpolicies.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: FleetScalingPolicy
+    listKind: FleetScalingPolicyList
+    plural: fleetscalingpolicies
+    singular: fleetscalingpolicy
+    shortNames:
+      - fsp
+      - fsps
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Strategy
+          type: string
+          jsonPath: .spec.strategy
+          description: Scaling strategy
+        - name: Max-GPUs
+          type: integer
+          jsonPath: .spec.constraints.globalMaxGPUs
+          description: Global maximum GPU count
+        - name: Scale-to-Zero
+          type: boolean
+          jsonPath: .spec.scaleToZero.enabled
+          description: Whether scale-to-zero is enabled
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            FleetScalingPolicy defines fleet-wide autoscaling behavior for
+            inference workloads. It specifies scaling objectives, constraints,
+            strategy, cross-cluster migration, and scale-to-zero configuration.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired scaling policy configuration.
+              required:
+                - strategy
+              properties:
+                objectives:
+                  type: array
+                  description: >-
+                    Scaling objectives that the autoscaler attempts to
+                    satisfy. Multiple objectives are balanced according to
+                    the selected strategy.
+                  items:
+                    type: object
+                    required:
+                      - metric
+                      - target
+                    properties:
+                      metric:
+                        type: string
+                        description: >-
+                          Metric to use as the scaling signal.
+                        enum:
+                          - gpu-utilization
+                          - requests-per-second
+                          - queue-depth
+                          - ttft-p99
+                          - tpot-p99
+                          - kv-cache-utilization
+                          - tokens-per-second
+                      target:
+                        type: string
+                        description: >-
+                          Target value for the metric. Format depends on the
+                          metric type (e.g. "80%" for utilization, "500" for
+                          RPS, "200ms" for latency).
+                      tolerancePercent:
+                        type: integer
+                        format: int32
+                        minimum: 0
+                        maximum: 100
+                        description: >-
+                          Percentage tolerance around the target before
+                          scaling action is triggered. Prevents flapping.
+                        default: 10
+                constraints:
+                  type: object
+                  description: >-
+                    Hard constraints on scaling behavior to prevent runaway
+                    resource consumption.
+                  properties:
+                    globalMaxGPUs:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Maximum total GPUs that may be consumed across all
+                        clusters for this scaling policy.
+                    maxScaleUpRate:
+                      type: string
+                      description: >-
+                        Maximum rate at which replicas can be added, expressed
+                        as a count per time window (e.g. "10/5m" meaning at
+                        most 10 replicas added per 5-minute window).
+                    maxScaleDownRate:
+                      type: string
+                      description: >-
+                        Maximum rate at which replicas can be removed,
+                        expressed as a count per time window.
+                    stabilizationWindowSeconds:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Duration in seconds to look back at metrics before
+                        making a scaling decision. Smooths out transient
+                        spikes.
+                      default: 300
+                strategy:
+                  type: string
+                  description: >-
+                    High-level strategy that governs how the autoscaler
+                    balances cost and performance.
+                  enum:
+                    - cost-optimized
+                    - latency-optimized
+                    - balanced
+                crossCluster:
+                  type: object
+                  description: >-
+                    Cross-cluster scaling configuration for migrating load
+                    between clusters.
+                  properties:
+                    enableMigration:
+                      type: boolean
+                      description: >-
+                        Whether the autoscaler may migrate replicas between
+                        clusters to optimize placement.
+                      default: false
+                    migrationThreshold:
+                      type: number
+                      format: double
+                      minimum: 0
+                      maximum: 1
+                      description: >-
+                        Utilization difference threshold (0.0-1.0) between
+                        clusters that triggers migration consideration. A
+                        value of 0.3 means migration is considered when the
+                        utilization gap exceeds 30%.
+                      default: 0.3
+                    migrationCooldownSeconds:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      description: >-
+                        Minimum seconds between migration actions to prevent
+                        thrashing.
+                      default: 600
+                scaleToZero:
+                  type: object
+                  description: >-
+                    Scale-to-zero configuration for idle model deployments.
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: >-
+                        Whether idle model deployments can be scaled to zero
+                        replicas to save resources.
+                      default: false
+                    cooldownPeriod:
+                      type: string
+                      description: >-
+                        Duration of inactivity before a deployment is scaled
+                        to zero (e.g. "30m", "1h").
+                      default: "30m"
+                    scaleUpTrigger:
+                      type: string
+                      description: >-
+                        Event that triggers scale-up from zero.
+                      enum:
+                        - request-arrival
+                        - schedule
+                      default: request-arrival
