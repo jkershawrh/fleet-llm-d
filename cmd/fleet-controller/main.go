@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
@@ -434,14 +435,19 @@ func setupMetricsServer() *http.ServeMux {
 
 // Run starts the fleet controller HTTP servers and blocks until the context
 // is cancelled or a shutdown signal is received.
-func (fc *FleetController) Run(ctx context.Context, port, metricsPort int) error {
+func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey string) error {
 	// Create a context that is cancelled on SIGINT or SIGTERM.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Wrap the API server mux with auth middleware.
+	mux := fc.setupAPIServer()
+	exempt := []string{"/healthz", "/readyz", "/metrics"}
+	var handler http.Handler = auth.AuthMiddleware(authCfg, exempt, mux)
+
 	apiServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
-		Handler:      fc.setupAPIServer(),
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -462,11 +468,18 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int) error
 		}
 	}()
 
-	// Start API server.
+	// Start API server (with TLS if cert and key are provided).
 	go func() {
-		log.Printf("api server listening on :%d", port)
-		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("api server error: %v", err)
+		if tlsCert != "" && tlsKey != "" {
+			log.Printf("api server listening on :%d (TLS enabled)", port)
+			if err := apiServer.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
+				log.Printf("api server error: %v", err)
+			}
+		} else {
+			log.Printf("api server listening on :%d", port)
+			if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("api server error: %v", err)
+			}
 		}
 	}()
 
@@ -503,12 +516,24 @@ func main() {
 	metricsPort := flag.Int("metrics-port", 9090, "Metrics server port")
 	ledgerEndpoint := flag.String("ledger-endpoint", "localhost:9092", "ARE ledger gRPC endpoint")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
+	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
+	authSecret := flag.String("auth-secret", "", "HMAC-SHA256 auth secret (alternative to FLEET_AUTH_SECRET env var)")
 	flag.Parse()
 
 	log.Printf("fleet-controller starting (log-level=%s, ledger=%s)", *logLevel, *ledgerEndpoint)
 
+	// Build auth config: CLI flag takes precedence over env var.
+	authCfg := auth.ConfigFromEnv()
+	if *authSecret != "" {
+		authCfg.Secret = *authSecret
+		authCfg.Enabled = true
+	}
+
+	log.Printf("auth enabled=%v, TLS enabled=%v", authCfg.Enabled, *tlsCert != "" && *tlsKey != "")
+
 	fc := NewFleetController(*ledgerEndpoint)
-	if err := fc.Run(context.Background(), *port, *metricsPort); err != nil {
+	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey); err != nil {
 		log.Fatal(err)
 	}
 }

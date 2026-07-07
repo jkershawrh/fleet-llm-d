@@ -173,6 +173,45 @@ func (r *FleetRecorder) RecordKVCacheTransfer(ctx context.Context, sourceCluster
 	})
 }
 
+// RecordAuthFailure records a failed authentication attempt to the ledger.
+func (r *FleetRecorder) RecordAuthFailure(ctx context.Context, remoteAddr, reason string) (*LedgerReceipt, error) {
+	content, err := json.Marshal(map[string]interface{}{
+		"remote_addr": remoteAddr,
+		"reason":      reason,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal auth failure: %w", err)
+	}
+	return r.client.RecordDecision(ctx, FleetDecision{
+		Type:        "fleet.security.auth.failed",
+		AgentID:     r.agentID,
+		SourceID:    r.sourceID,
+		Content:     content,
+		ContentType: "application/json",
+		InputHash:   computeInputHash(content),
+	})
+}
+
+// RecordRBACDenial records a denied RBAC authorization attempt to the ledger.
+func (r *FleetRecorder) RecordRBACDenial(ctx context.Context, subject, resource, action string) (*LedgerReceipt, error) {
+	content, err := json.Marshal(map[string]interface{}{
+		"subject":  subject,
+		"resource": resource,
+		"action":   action,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal rbac denial: %w", err)
+	}
+	return r.client.RecordDecision(ctx, FleetDecision{
+		Type:        "fleet.security.rbac.denied",
+		AgentID:     r.agentID,
+		SourceID:    r.sourceID,
+		Content:     content,
+		ContentType: "application/json",
+		InputHash:   computeInputHash(content),
+	})
+}
+
 // VerifyAllChains verifies integrity of all fleet decision chains.
 func (r *FleetRecorder) VerifyAllChains(ctx context.Context) (map[string]*ChainVerification, error) {
 	chainTypes := []string{

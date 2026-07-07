@@ -13,6 +13,7 @@ import (
 // FleetClient wraps HTTP calls to the fleet-controller API.
 type FleetClient struct {
 	BaseURL string
+	Token   string // bearer token for authenticated requests
 	HTTP    *http.Client
 }
 
@@ -165,6 +166,9 @@ func (c *FleetClient) doRequest(ctx context.Context, method, path string, body i
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
 	resp, err := c.HTTP.Do(req)

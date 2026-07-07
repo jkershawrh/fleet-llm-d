@@ -30,10 +30,22 @@ spec:
         app.kubernetes.io/component: gateway
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534
       serviceAccountName: fleet-gateway
       containers:
         - name: fleet-gateway
           image: ghcr.io/llm-d/fleet-gateway:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: proxy
               containerPort: 8000
