@@ -11,7 +11,7 @@ fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet o
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
 [![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/Tests-500%2B_passing-brightgreen.svg)](#testing)
-[![Architecture](https://img.shields.io/badge/Arch_Proofs-41%2F41-blue.svg)](#architectural-proof)
+[![Architecture](https://img.shields.io/badge/Arch_Proofs-50%2F50-blue.svg)](#architectural-proof)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](#testing)
 
 ---
@@ -83,6 +83,38 @@ fleet-llm-d consumes [ModelPack](https://github.com/model-spec) artifacts -- OCI
 ### ARE Immutable Ledger
 
 The ARE Immutable Ledger is an **independent shared compliance platform** that runs on a separate network (`are-ledger-net`) with its own PostgreSQL instance. fleet-llm-d publishes audit events -- placement decisions, scaling actions, model deployments -- to the ledger through the `are-gateway`. The ledger provides tamper-evident records for regulatory and sovereign compliance. The `ledger` package in fleet-llm-d handles event submission and verification.
+
+### ModelPlane Integration
+
+fleet-llm-d sits on top of [ModelPlane](https://github.com/modelplane) as the operations layer in a three-layer stack:
+
+```
+  ┌──────────────────────────────────────────┐
+  │            fleet-llm-d                   │  Operations layer
+  │  placement | routing | scaling | cost    │  (this project)
+  │  tenant | lifecycle | observability      │
+  ├──────────────────────────────────────────┤
+  │            ModelPlane                     │  Infrastructure layer
+  │  ModelDeployment | ModelCluster           │  (Crossplane-based)
+  │  cluster lifecycle | resource mgmt       │
+  ├──────────────────────────────────────────┤
+  │            llm-d                         │  Inference layer
+  │  EPP | WVA | KV cache | prefill/decode   │  (within-cluster)
+  └──────────────────────────────────────────┘
+```
+
+The `modelplane` package (`pkg/modelplane/`) provides six integration points: CRD consumption (reading ModelDeployment and ModelCluster resources), policy injection (annotating ModelDeployments with fleet placement decisions), cost integration (feeding GPU pricing into fleet cost projections), compliance bridge (forwarding ModelPlane events to the ARE ledger), routing integration (using ModelCluster health for traffic decisions), and scaling integration (coordinating fleet autoscaling with ModelPlane resource limits). Three API endpoints expose ModelPlane state: `/api/v1/modelplane/clusters`, `/api/v1/modelplane/deployments`, and `/api/v1/modelplane/cost/{deployment}`.
+
+### Cost Model
+
+fleet-llm-d includes a full cost model (`pkg/cost/`) for GPU inference economics:
+
+- **GPU Pricing** -- Pricing table covering 6 GPU types (A100-40GB, A100-80GB, H100-80GB, H200-141GB, B200-192GB, MI300X-192GB) across 3 tiers (on-demand, reserved, spot).
+- **Tokenomics** -- Cost-per-million-tokens calculation per model, factoring GPU type, utilization, and throughput.
+- **Chargeback** -- Per-tenant cost attribution reports for enterprise billing integration.
+- **Budget Alerts** -- Configurable alert thresholds on tenant and fleet-wide GPU spend with projection-based early warning.
+
+Six API endpoints: `/api/v1/cost/pricing`, `/api/v1/cost/tokenomics/{model}`, `/api/v1/cost/chargeback/{tenant}`, `/api/v1/cost/projection`, `/api/v1/cost/savings`, `/api/v1/cost/alerts`.
 
 ## Security
 
@@ -164,14 +196,14 @@ The fleet-llm-d dashboard is a Next.js (TypeScript) application providing fleet-
 
 ```bash
 make test              # Run all tests
-make test-unit         # Unit tests (19 Go packages + 5 Rust crates)
+make test-unit         # Unit tests (22 Go packages + 5 Rust crates)
 make test-bdd          # BDD scenarios (63 passing, 8 suites)
 make test-contracts    # Contract tests (proto + OpenAPI validation)
 make test-e2e          # End-to-end tests (requires running infrastructure)
 ```
 
 ```bash
-# Architecture proof — 41 claims about how the system works
+# Architecture proof — 50 claims about how the system works
 go test -tags=architecture ./test/architecture/...
 
 # Security tests — auth, rate limiting, webhook validation
@@ -186,7 +218,7 @@ go test -tags=compliance ./test/compliance/...
 
 ### Architectural Proof
 
-41 architectural claims are proven by tests in `test/architecture/`:
+50 architectural claims are proven by tests in `test/architecture/`:
 
 | Category | Claims | Method | What's Proven |
 |---|---|---|---|
@@ -199,6 +231,8 @@ go test -tags=compliance ./test/compliance/...
 | Event Flow | 4 | EDD | Pub/sub + HTTP external delivery |
 | Multi-Cluster | 3 | TDD | Cross-cluster routing, failover, multi-cluster placement |
 | Security | 2 | TDD | Rate limiting, webhook validation |
+| Cost Model | 4 | TDD | GPU pricing accuracy, tokenomics calculation, chargeback aggregation, budget alerts |
+| ModelPlane | 5 | TDD | CRD consumption, policy injection, cost integration, compliance bridge, routing integration |
 
 ### Test Harness (Demo Cluster)
 
@@ -259,6 +293,8 @@ fleet-llm-d/
 │   ├── kvcache/                 # transfer
 │   ├── modelpack/               # CNCF model-spec integration
 │   ├── ledger/                  # ARE Ledger client
+│   ├── modelplane/              # ModelPlane integration (adapter, watcher, policy injector)
+│   ├── cost/                    # GPU pricing, tokenomics, chargeback, budget alerts
 │   ├── store/                   # events, postgres
 │   ├── cluster/                 # client
 │   └── apis/                    # generated API types
@@ -285,7 +321,7 @@ fleet-llm-d/
 │   ├── deploy-demo.sh           # One-click deployment script
 │   └── local-dev.sh             # Kind multi-cluster dev setup
 └── test/
-    ├── architecture/            # 41 architectural proof tests
+    ├── architecture/            # 50 architectural proof tests
     ├── bdd/                     # 63 BDD scenario tests
     ├── compliance/              # Audit trail completeness
     ├── contracts/               # Proto + OpenAPI validation
@@ -296,7 +332,7 @@ fleet-llm-d/
 
 ## REST API
 
-The fleet controller exposes 15 REST endpoints. See [`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete OpenAPI 3.1 specification.
+The fleet controller exposes 24 REST endpoints. See [`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete OpenAPI 3.1 specification.
 
 ## Infrastructure
 
