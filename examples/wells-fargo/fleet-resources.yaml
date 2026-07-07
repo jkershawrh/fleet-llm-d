@@ -1,0 +1,765 @@
+# =============================================================================
+# Financial Services Provider A -- Regulated Financial Services LLM Fleet Deployment
+# =============================================================================
+#
+# This configuration demonstrates a production fleet-llm-d deployment for a
+# large regulated bank (Financial Services Provider A). The design addresses several requirements
+# unique to financial services:
+#
+#   1. Data Residency & Regulatory Compliance
+#      OCC (Office of the Comptroller of the Currency) and SOC 2 Type II
+#      controls mandate that all inference data -- prompts, completions,
+#      and KV cache state -- remain within approved US data centers.
+#      Placement constraints enforce this at the fleet level.
+#
+#   2. SLO-Gated Canary Rollouts
+#      Model updates in a fraud-detection pipeline carry real financial risk.
+#      Every rollout is gated on p99 latency, success rate, TTFT, and
+#      throughput SLOs. Violations trigger automatic rollback before customer
+#      impact occurs.
+#
+#   3. Cross-DC Failover with KV Cache Continuity
+#      The bank operates active-passive across two US regions. On failover,
+#      hot KV cache entries are transferred via NIXL so that in-progress
+#      conversations and prefix trees survive the failover without a cold
+#      start penalty.
+#
+#   4. Per-LOB Cost Controls
+#      Each line of business (Consumer Lending, Wealth Management, etc.)
+#      operates under its own GPU budget and monthly spend cap. TenantProfiles
+#      enforce these guardrails and trigger alerts at 70% burn rate.
+#
+# Resources in this file:
+#   - PlacementPolicy        "wf-regulatory-placement"
+#   - FleetRoutingPolicy     "wf-failover-routing"
+#   - TenantProfile          "wf-consumer-lending"
+#   - FleetInferencePool     "wf-fraud-detection-pool"
+#   - ModelLifecycle          "wf-granite-canary-rollout"
+#   - KVCacheTransferPolicy  "wf-cross-dc-failover-cache"
+#
+# =============================================================================
+
+
+# =============================================================================
+# 1. PlacementPolicy -- Regulatory and hardware placement constraints
+# =============================================================================
+#
+# This policy controls WHERE models can run. For a regulated bank, placement
+# is not optional -- it is a compliance requirement. The OCC requires that
+# customer data never leaves approved jurisdictions, and SOC 2 controls
+# require that only audited hardware is used for compliance-sensitive
+# workloads.
+#
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: wf-regulatory-placement
+  namespace: wf-fleet
+  labels:
+    app.kubernetes.io/part-of: wells-fargo-fleet
+    fleet.llm-d.ai/compliance: "occ-soc2"
+spec:
+  # ---------------------------------------------------------------------------
+  # Hard constraints -- clusters that fail ANY constraint are excluded entirely.
+  # ---------------------------------------------------------------------------
+  constraints:
+    # Data residency: OCC/SOC 2 requirement
+    # The Office of the Comptroller of the Currency (OCC) requires that all
+    # customer financial data, including LLM prompts containing PII, account
+    # numbers, and transaction data, must be processed within approved US
+    # jurisdictions. SOC 2 Type II audit controls further require that the
+    # specific data center regions are enumerated and auditable. This
+    # constraint ensures that the fleet controller will NEVER schedule a
+    # model replica outside of us-east or us-west, even during failover
+    # or scale-out events.
+    - type: regulatory
+      rule: "cluster.region in ['us-east', 'us-west']"
+      description: >-
+        OCC and SOC 2 Type II data residency requirement: all inference
+        workloads must run in approved US data center regions (us-east,
+        us-west). Customer PII, financial data, and model outputs must
+        never leave these jurisdictions.
+
+    # GPU hardware: compliance workloads require H100
+    # Fraud detection models run on sensitive financial data and require
+    # hardware that supports full memory encryption (HBM3 on H100). This
+    # also ensures consistent latency characteristics across all clusters,
+    # which is critical for the SLO gates used during canary rollouts --
+    # if different clusters had different GPU types, SLO comparisons during
+    # rollout would be unreliable.
+    - type: hardware
+      rule: "cluster.gpu.type == 'nvidia-h100'"
+      description: >-
+        Compliance workloads require NVIDIA H100 GPUs for HBM3 memory
+        encryption support and consistent latency characteristics across
+        clusters. Mixed GPU types would invalidate SLO gate comparisons
+        during canary rollouts.
+
+  # ---------------------------------------------------------------------------
+  # Soft affinities -- influence cluster scoring but do not exclude clusters.
+  # Weights sum to 1.0 and reflect Financial Services Provider A's priorities:
+  #   - KV cache affinity (0.5): highest weight because fraud detection
+  #     queries are highly conversational and benefit enormously from cache
+  #     hits on prior context (customer history, transaction patterns).
+  #   - Cost efficiency (0.3): the bank operates under strict per-LOB budgets
+  #     and internal chargeback models, so cost-aware placement is important.
+  #   - GPU utilization (0.2): bin-packing helps maximize the return on the
+  #     bank's substantial GPU investment.
+  # ---------------------------------------------------------------------------
+  affinity:
+    # KV cache affinity gets the highest weight because fraud detection
+    # models process long conversation histories with customer transaction
+    # data. Routing to a cluster that already has relevant KV cache entries
+    # avoids recomputing thousands of tokens of context, cutting TTFT by
+    # 50-70% on follow-up queries.
+    - type: kvCacheAffinity
+      weight: 0.5
+
+    # Cost efficiency matters because each LOB is charged back for GPU usage.
+    # Placing replicas on clusters with lower spot pricing or reserved
+    # capacity reduces the internal chargeback to Consumer Lending.
+    - type: costEfficiency
+      weight: 0.3
+
+    # GPU utilization encourages bin-packing onto clusters that already have
+    # GPUs allocated but not fully utilized, rather than lighting up new
+    # capacity (which may trigger procurement lead times).
+    - type: gpuUtilization
+      weight: 0.2
+
+  # ---------------------------------------------------------------------------
+  # Topology spreading -- ensure replicas are evenly distributed across
+  # regions for high availability. maxSkew of 1 means the difference in
+  # replica count between any two regions can be at most 1, providing
+  # near-perfect balance for active-passive failover.
+  # ---------------------------------------------------------------------------
+  spreading:
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/region
+
+---
+
+# =============================================================================
+# 2. FleetRoutingPolicy -- Failover-based cross-DC routing
+# =============================================================================
+#
+# The bank runs an active-passive topology: us-east is the primary region,
+# and us-west is the disaster recovery (DR) region. This routing policy
+# ensures that all traffic goes to us-east under normal conditions and
+# automatically fails over to us-west when us-east becomes unhealthy.
+#
+# Health checks run every 10 seconds with a threshold of 3 failures, giving
+# a maximum detection time of 30 seconds -- well within the bank's RPO/RTO
+# requirements for LLM workloads.
+#
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetRoutingPolicy
+metadata:
+  name: wf-failover-routing
+  namespace: wf-fleet
+  labels:
+    app.kubernetes.io/part-of: wells-fargo-fleet
+    fleet.llm-d.ai/routing-strategy: failover
+spec:
+  # Failover strategy: traffic goes to the primary cluster; if it becomes
+  # unhealthy, traffic automatically shifts to the failover cluster(s) in
+  # the specified order. Unlike "weighted" or "geographic" strategies,
+  # failover provides deterministic behavior that is easier to audit and
+  # reason about -- important for the bank's change management process.
+  strategy: failover
+
+  rules:
+    # -------------------------------------------------------------------------
+    # Rule 1: Default traffic -- primary east, failover to west
+    # -------------------------------------------------------------------------
+    # All inference requests default to dc-east-1 (primary). If dc-east-1
+    # fails health checks, traffic moves to dc-west-1 (DR). The failover
+    # list can include multiple clusters in priority order. We list two
+    # failover targets: dc-west-1 (same-coast DR) and dc-east-2 (secondary
+    # east) to provide defense in depth.
+    - name: primary-east
+      action:
+        # preferLocal is false here because we want deterministic routing to
+        # dc-east-1 regardless of where the request originates. The bank's
+        # API gateway is colocated in us-east, so locality is already optimal.
+        preferLocal: false
+        failover:
+          clusters:
+            - dc-west-1
+            - dc-east-2
+
+    # -------------------------------------------------------------------------
+    # Rule 2: Compliance audit traffic -- latency-sensitive, local preferred
+    # -------------------------------------------------------------------------
+    # When the x-llm-d-inference-objective header is set to "compliance",
+    # the request is coming from the bank's compliance audit pipeline. These
+    # requests are latency-sensitive (regulators expect near-real-time
+    # responses) and must be routed to the closest cluster to minimize
+    # network hops. The 100ms maxLatencyMs gate ensures that if a cluster
+    # cannot meet the latency target, it is excluded from routing entirely.
+    - name: compliance-audit
+      match:
+        # The x-llm-d-inference-objective header is set by the compliance
+        # middleware when routing audit-related queries. This allows the
+        # routing layer to apply special handling without changing the
+        # application code.
+        headers:
+          x-llm-d-inference-objective: "compliance"
+      action:
+        # preferLocal ensures the request is routed to the nearest cluster,
+        # minimizing network latency for time-sensitive compliance queries.
+        preferLocal: true
+        # 100ms maximum latency: compliance audit queries must respond
+        # quickly because they are often part of a synchronous workflow
+        # (e.g., a compliance officer reviewing a flagged transaction in
+        # real time). Clusters that cannot meet this target are excluded.
+        maxLatencyMs: 100
+
+  # ---------------------------------------------------------------------------
+  # Health checks -- aggressive monitoring for rapid failover detection
+  # ---------------------------------------------------------------------------
+  healthCheck:
+    # 10-second interval: frequent enough to detect failures quickly while
+    # not overwhelming the control plane. With unhealthyThreshold of 3,
+    # a cluster is marked unhealthy after 30 seconds of consecutive failures.
+    # This is within the bank's 60-second RTO target for LLM services.
+    interval: "10s"
+    # 3 consecutive failures before marking unhealthy: this prevents a
+    # single transient network blip from triggering a full failover event,
+    # while still being aggressive enough for financial services SLAs.
+    unhealthyThreshold: 3
+
+---
+
+# =============================================================================
+# 3. TenantProfile -- Consumer Lending line of business
+# =============================================================================
+#
+# Each line of business at the bank operates as a separate tenant in the
+# fleet-llm-d deployment. Consumer Lending is a high-revenue LOB that runs
+# fraud detection, loan underwriting, and customer service models. This
+# profile defines the LOB's resource envelope, rate limits, priority, and
+# cost controls.
+#
+# The quotas and budgets were sized based on:
+#   - Peak transaction volume during month-end processing
+#   - Fraud detection SLA requirements (sub-200ms p99)
+#   - FY2026 GPU budget allocation from the CTO office
+#
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: wf-consumer-lending
+  namespace: wf-fleet
+  labels:
+    app.kubernetes.io/part-of: wells-fargo-fleet
+    fleet.llm-d.ai/lob: consumer-lending
+    fleet.llm-d.ai/cost-center: "CC-4420"
+spec:
+  # ---------------------------------------------------------------------------
+  # Quotas -- hard limits on resource consumption
+  # ---------------------------------------------------------------------------
+  quotas:
+    # 2M tokens per minute: sized for peak fraud detection load during
+    # month-end statement processing, when transaction volumes spike 3-4x.
+    # This covers approximately 4,000 concurrent fraud analysis conversations
+    # at an average of 500 tokens per request.
+    maxTokensPerMinute: 2000000
+
+    # 500 concurrent requests: matches the peak parallelism of the fraud
+    # detection pipeline, which processes transactions in batches of 50-100
+    # across 5-10 parallel workers. Headroom above typical load (200-300)
+    # prevents throttling during peak periods.
+    maxConcurrentRequests: 500
+
+    # 10 models: Consumer Lending currently runs 6 models (fraud detection,
+    # loan underwriting, customer intent classification, document
+    # summarization, compliance checking, and customer service). The limit
+    # of 10 provides room for A/B testing and canary deployments without
+    # requiring a quota change request.
+    maxModels: 10
+
+    # GPU budget: 32 H100 GPUs allocated to Consumer Lending for FY2026.
+    # This supports 4 models at 8 GPUs each (tensor parallelism across 8
+    # GPUs for the larger models) or 8 models at 4 GPUs each for smaller
+    # models. Only H100 is permitted per the compliance hardware requirement.
+    gpuBudget:
+      maxGPUs: 32
+      gpuTypes:
+        - "H100"
+
+  # ---------------------------------------------------------------------------
+  # Rate limiting -- protect the fleet from runaway automation
+  # ---------------------------------------------------------------------------
+  rateLimit:
+    # 200 RPS sustained: this is the p95 transaction rate for Consumer
+    # Lending during business hours. Each transaction may generate 1-3
+    # inference requests (fraud check, risk score, explanation generation).
+    requestsPerSecond: 200
+
+    # 500 burst: allows short spikes up to 2.5x the sustained rate.
+    # Month-end batch processing can produce bursts of 400-500 RPS lasting
+    # 5-10 seconds. The burst buffer absorbs these without triggering
+    # rate limit errors that would require application-level retry logic.
+    burstSize: 500
+
+  # ---------------------------------------------------------------------------
+  # Priority -- scheduling weight during resource contention
+  # ---------------------------------------------------------------------------
+  # Priority 200 (on a 0-1000 scale): Consumer Lending is a high-priority
+  # LOB because fraud detection is revenue-protecting (preventing losses)
+  # and has regulatory SLAs. During GPU contention, Consumer Lending
+  # requests are scheduled ahead of lower-priority tenants like internal
+  # analytics (priority ~50) or development/testing (priority ~10).
+  # Only the trading desk (priority ~500) and real-time payments
+  # (priority ~400) rank higher.
+  priority: 200
+
+  # ---------------------------------------------------------------------------
+  # Cost controls -- per-LOB budget enforcement and alerting
+  # ---------------------------------------------------------------------------
+  costControl:
+    # $25,000/month budget: allocated from the FY2026 AI/ML infrastructure
+    # budget. This covers GPU compute, network transfer, and storage for
+    # KV cache. When the budget is exhausted, requests are throttled (not
+    # rejected) to prevent hard outages -- the fraud detection pipeline
+    # must never fully stop.
+    monthlyBudget: "25000.00"
+
+    # Alert at 70% ($17,500): triggers a notification to the LOB cost
+    # center owner and the FinOps team. This gives approximately 9 days
+    # of runway at typical burn rate for the team to investigate whether
+    # the spend is legitimate (e.g., month-end surge) or anomalous
+    # (e.g., a runaway batch job).
+    alertThreshold: 0.7
+
+  # ---------------------------------------------------------------------------
+  # Cluster access -- restrict to approved data centers only
+  # ---------------------------------------------------------------------------
+  clusters:
+    # Consumer Lending is restricted to four specific data center clusters,
+    # all within OCC-approved US regions. This is a defense-in-depth
+    # measure: even if the PlacementPolicy were misconfigured, the tenant
+    # profile would prevent workloads from landing on unapproved clusters.
+    allowed:
+      - dc-east-1
+      - dc-east-2
+      - dc-west-1
+      - dc-west-2
+
+---
+
+# =============================================================================
+# 4. FleetInferencePool -- Fraud detection model deployment
+# =============================================================================
+#
+# This is the core fleet-wide deployment for the fraud detection model.
+# It ties together the placement policy, routing policy, and serving
+# configuration into a single declarative resource. The fleet controller
+# ensures that the model is deployed across the required number of clusters
+# with the specified port configuration and lifecycle management.
+#
+# IBM Granite 3.2 8B Instruct was selected for fraud detection because:
+#   - It performs well on financial reasoning benchmarks
+#   - The 8B parameter size fits on a single H100 with room for large
+#     KV cache allocations (critical for long transaction histories)
+#   - IBM provides enterprise support and model provenance documentation
+#     required by the bank's vendor risk management process
+#
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetInferencePool
+metadata:
+  name: wf-fraud-detection-pool
+  namespace: wf-fleet
+  labels:
+    app.kubernetes.io/part-of: wells-fargo-fleet
+    fleet.llm-d.ai/use-case: fraud-detection
+    fleet.llm-d.ai/model-family: ibm-granite
+spec:
+  # ---------------------------------------------------------------------------
+  # Model specification
+  # ---------------------------------------------------------------------------
+  model:
+    # IBM Granite 3.2 8B Instruct: a mid-size instruction-tuned model
+    # suitable for structured financial reasoning tasks like fraud pattern
+    # detection, transaction anomaly scoring, and explanation generation.
+    name: "ibm-granite/granite-3.2-8b-instruct"
+    # Source from HuggingFace: the bank's model governance process has
+    # approved this specific model version from HuggingFace after security
+    # scanning, bias testing, and license review.
+    source: "huggingface"
+    # Pinned to v3.2.1: version pinning is mandatory for compliance. The
+    # bank's model risk management (MRM) process requires that every model
+    # version in production has been through a formal validation cycle.
+    # Automatic updates are prohibited.
+    version: "v3.2.1"
+
+  # ---------------------------------------------------------------------------
+  # Placement -- references the regulatory placement policy defined above
+  # ---------------------------------------------------------------------------
+  placement:
+    policyRef:
+      # References wf-regulatory-placement which enforces US data residency
+      # and H100 hardware requirements.
+      name: wf-regulatory-placement
+    # Minimum 2 clusters: ensures the model is always running in at least
+    # two clusters for high availability. If one cluster goes down, the
+    # other continues serving without interruption. This is a hard
+    # requirement for the fraud detection SLA.
+    minClusters: 2
+    # Maximum 4 clusters: caps the blast radius and cost. During peak load,
+    # the fleet controller may scale out to up to 4 clusters, but no more.
+    # This prevents a runaway autoscaler from consuming the entire GPU
+    # budget during an anomalous traffic spike.
+    maxClusters: 4
+
+  # ---------------------------------------------------------------------------
+  # Routing -- references the failover routing policy defined above
+  # ---------------------------------------------------------------------------
+  routing:
+    policyRef:
+      # References wf-failover-routing which implements active-passive
+      # failover between us-east (primary) and us-west (DR).
+      name: wf-failover-routing
+
+  # ---------------------------------------------------------------------------
+  # Serving -- per-cluster InferencePool template
+  # ---------------------------------------------------------------------------
+  serving:
+    inferencePoolTemplate:
+      targetPorts:
+        # Port 8000: OpenAI-compatible inference API endpoint. All fraud
+        # detection requests arrive here via the fleet routing layer.
+        serving: 8000
+        # Port 8080: health check endpoint used by both the fleet health
+        # checker (for cross-cluster routing decisions) and the local
+        # Kubernetes liveness/readiness probes.
+        health: 8080
+        # Port 9090: Prometheus metrics endpoint. Exposes per-model metrics
+        # including request latency, token throughput, KV cache hit rate,
+        # and GPU utilization. These metrics feed the SLO gates used during
+        # canary rollouts.
+        metrics: 9090
+
+  # ---------------------------------------------------------------------------
+  # Lifecycle -- SLO-gated canary rollout configuration
+  # ---------------------------------------------------------------------------
+  lifecycle:
+    # Canary strategy: new model versions are rolled out incrementally,
+    # starting with a small percentage of traffic and increasing only
+    # when SLO gates pass. This is the only rollout strategy approved by
+    # the bank's change advisory board (CAB) for production models that
+    # process financial data.
+    rolloutStrategy: Canary
+
+    canary:
+      # Start with 5% of traffic: conservative initial exposure. At the
+      # bank's typical request volume (~100 RPS), this means approximately
+      # 5 RPS hit the new version -- enough to generate statistically
+      # meaningful metrics without risking customer impact.
+      initialWeight: 5
+
+      # Increment by 10%: each promotion step adds 10% more traffic to
+      # the canary. The full rollout (5% -> 15% -> 25% -> ... -> 95% -> 100%)
+      # takes approximately 10 steps, which at 15-minute intervals means
+      # a full rollout completes in about 2.5 hours.
+      weightIncrement: 10
+
+      # 15-minute observation window between steps: long enough to capture
+      # at least one full cycle of the fraud detection pipeline (which
+      # processes transactions in 10-minute batches) and accumulate
+      # statistically significant metrics at each weight level.
+      interval: "15m"
+
+      # SLO gates: all four conditions must be met for the canary to advance.
+      # These thresholds match the fraud detection SLA agreed with the
+      # Consumer Lending business unit.
+      sloGate:
+        # p99 latency <= 200ms: fraud detection results must be returned
+        # within 200ms at p99 to meet the real-time transaction scoring SLA.
+        # If the new model version is slower (e.g., due to a larger
+        # attention window), the rollout halts.
+        maxLatencyP99Ms: 200
+
+        # 99.9% success rate: only 1 in 1,000 requests may fail. For fraud
+        # detection, a failed request means a transaction goes unscored,
+        # which is a compliance risk. The three-nines target reflects the
+        # severity of this failure mode.
+        minSuccessRate: 0.999
+
+        # TTFT <= 150ms: time-to-first-token must stay under 150ms. For
+        # streaming fraud explanations shown to analysts, a slow TTFT
+        # degrades the user experience and slows down the manual review
+        # queue.
+        maxTTFTMs: 150
+
+        # Throughput >= 1000 tokens/sec: ensures the new model version
+        # maintains adequate throughput for batch processing workloads.
+        # A throughput regression could cause the month-end processing
+        # window to overrun.
+        minThroughputTokensPerSec: 1000
+
+      # Automatic rollback: if any SLO gate fails, the canary is
+      # immediately rolled back to the previous version. This is a
+      # non-negotiable requirement for financial services -- there is no
+      # "let's wait and see" option when model quality degrades in
+      # production.
+      rollbackOnFailure: true
+
+---
+
+# =============================================================================
+# 5. ModelLifecycle -- Canary rollout for Granite model update
+# =============================================================================
+#
+# This resource manages a specific model version upgrade: from v3.2.1 to
+# v3.2.2 of IBM Granite 3.2 8B Instruct. It defines the rollout strategy,
+# SLO gates, and cluster ordering for a controlled, auditable deployment.
+#
+# The rollout proceeds cluster-by-cluster in a defined order:
+#   1. dc-east-1 (primary) -- canary starts here under maximum observation
+#   2. dc-west-1 (DR) -- validates cross-region behavior
+#   3. dc-east-2 (secondary east) -- expands east footprint
+#   4. dc-west-2 (secondary west) -- final cluster completes the rollout
+#
+# This ordering ensures that the primary and DR clusters are updated first,
+# so any issues are caught before the secondary clusters are touched.
+#
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: ModelLifecycle
+metadata:
+  name: wf-granite-canary-rollout
+  namespace: wf-fleet
+  labels:
+    app.kubernetes.io/part-of: wells-fargo-fleet
+    fleet.llm-d.ai/rollout-type: canary
+    fleet.llm-d.ai/model-family: ibm-granite
+    fleet.llm-d.ai/change-ticket: "CHG-2026-07-0042"
+spec:
+  # ---------------------------------------------------------------------------
+  # Model -- the target version being rolled out
+  # ---------------------------------------------------------------------------
+  model:
+    name: "ibm-granite/granite-3.2-8b-instruct"
+    # v3.2.2: this version has been approved by the Model Risk Management
+    # (MRM) committee after validation testing in the staging environment.
+    # The change ticket CHG-2026-07-0042 documents the approval chain.
+    version: "v3.2.2"
+
+  # ---------------------------------------------------------------------------
+  # Fleet pool reference -- which FleetInferencePool this rollout targets
+  # ---------------------------------------------------------------------------
+  fleetPoolRef:
+    # Targets the fraud detection pool defined above. The lifecycle
+    # controller will coordinate with the pool to manage traffic weights
+    # and health during the rollout.
+    name: wf-fraud-detection-pool
+
+  # ---------------------------------------------------------------------------
+  # Strategy -- canary with conservative settings for financial services
+  # ---------------------------------------------------------------------------
+  strategy:
+    type: canary
+
+    canary:
+      # Start with 5% of traffic on the new version. This is even more
+      # conservative than typical tech-company canaries (which often start
+      # at 10-20%) because the blast radius of a bad model in fraud
+      # detection is measured in financial losses, not just user experience
+      # degradation.
+      initialWeight: 5
+
+      # Increment by 5% per step: smaller increments than the pool-level
+      # lifecycle (which uses 10%) because this is a version upgrade, not
+      # an initial deployment. Smaller steps give more granular control
+      # and more decision points to halt the rollout if metrics drift.
+      # Full rollout: 5% -> 10% -> 15% -> ... -> 100% = 19 steps.
+      weightIncrement: 5
+
+      # 30-minute observation window: longer than the pool-level lifecycle
+      # (15m) because version upgrades require more observation time. The
+      # 30-minute window ensures that at least 3 full cycles of the fraud
+      # detection batch pipeline complete at each weight level, providing
+      # high-confidence SLO measurements.
+      interval: "30m"
+
+      # SLO gates for the version upgrade: must match the production SLO
+      # thresholds. Any regression from v3.2.1 baseline metrics triggers
+      # a hold or rollback.
+      sloGate:
+        # p99 latency <= 200ms: same as production SLO. The new version
+        # must not introduce any latency regression.
+        maxLatencyP99Ms: 200
+        # 99.9% success rate: same as production SLO. The new version
+        # must not introduce new failure modes or error patterns.
+        minSuccessRate: 0.999
+
+      # Automatic rollback on SLO failure: mandatory for all production
+      # model changes in a regulated environment. The change advisory
+      # board requires documented automatic rollback capability as a
+      # condition of change approval.
+      rollbackOnFailure: true
+
+      # Allow up to 3 consecutive failed SLO checks before triggering
+      # rollback. This provides tolerance for transient metric noise
+      # (e.g., a brief network hiccup causing one check to fail) while
+      # still catching sustained regressions quickly. At 30-minute
+      # intervals, 3 failures = 90 minutes of sustained SLO violation
+      # before rollback -- aggressive enough for financial services.
+      maxFailedChecks: 3
+
+  # ---------------------------------------------------------------------------
+  # Cluster ordering -- sequential rollout across data centers
+  # ---------------------------------------------------------------------------
+  clusters:
+    # The rollout proceeds through clusters in this exact order. Each
+    # cluster must pass SLO gates before the rollout advances to the next.
+    # This ordering was chosen deliberately:
+    #   1. dc-east-1: primary production cluster, highest traffic volume,
+    #      best metrics coverage. Issues are most likely to surface here.
+    #   2. dc-west-1: DR cluster, validates that the model performs
+    #      correctly on west-coast infrastructure (different network
+    #      topology, different storage backend).
+    #   3. dc-east-2: secondary east, lower traffic -- confirms stability
+    #      in a lower-load environment.
+    #   4. dc-west-2: secondary west, last cluster. By this point the
+    #      model has been validated across both regions and both tiers.
+    order:
+      - dc-east-1
+      - dc-west-1
+      - dc-east-2
+      - dc-west-2
+
+---
+
+# =============================================================================
+# 6. KVCacheTransferPolicy -- Cross-DC failover cache continuity
+# =============================================================================
+#
+# When a data center fails over, in-progress fraud detection sessions lose
+# their KV cache context. Without cache transfer, the receiving cluster must
+# recompute all prior context from scratch, causing TTFT spikes of 2-5
+# seconds for long conversations. This policy ensures that hot cache entries
+# and prefix trees are transferred proactively, maintaining sub-200ms
+# response times even during failover events.
+#
+# The bank's DR playbook requires that failover completes within 60 seconds
+# with less than 2x latency degradation. KV cache transfer is the key
+# mechanism that makes this possible for stateful LLM workloads.
+#
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: KVCacheTransferPolicy
+metadata:
+  name: wf-cross-dc-failover-cache
+  namespace: wf-fleet
+  labels:
+    app.kubernetes.io/part-of: wells-fargo-fleet
+    fleet.llm-d.ai/transfer-purpose: failover-continuity
+spec:
+  # ---------------------------------------------------------------------------
+  # Triggers -- events that initiate KV cache transfers
+  # ---------------------------------------------------------------------------
+  triggers:
+    # Trigger 1: Cluster failover -- transfer hot cache entries immediately
+    # When a cluster is marked unhealthy (by the FleetRoutingPolicy health
+    # checks), this trigger fires and begins transferring the hottest cache
+    # entries to the failover cluster. "transferHot" prioritizes entries
+    # with the highest recent hit rate, ensuring that active conversations
+    # and frequently-used prefixes arrive first.
+    - type: clusterFailover
+      action: transferHot
+      description: >-
+        On cluster failover, immediately transfer hot KV cache entries
+        (highest recent hit rate) to the failover cluster. This ensures
+        that active fraud detection sessions maintain context continuity
+        without cold-start latency penalties. Critical for meeting the
+        bank's 60-second RTO target for LLM services.
+
+    # Trigger 2: Load migration -- transfer prefix trees when rebalancing
+    # When the fleet controller migrates load between clusters (e.g.,
+    # during planned maintenance or cost optimization), this trigger
+    # transfers the prefix tree -- the shared prompt prefixes that are
+    # common across many fraud detection queries (system prompts,
+    # regulatory templates, etc.). Prefix trees are smaller than full
+    # cache entries but provide the most reuse benefit.
+    - type: loadMigration
+      action: transferPrefixTree
+      description: >-
+        During load migration, transfer prefix trees (shared prompt
+        prefixes) to the target cluster. Prefix trees capture the
+        system prompts, regulatory templates, and common query patterns
+        used across fraud detection requests, providing high reuse value
+        relative to their transfer cost.
+      conditions:
+        # Only transfer if the cache is at least 2Gi: smaller caches
+        # are not worth the network overhead of cross-DC transfer.
+        # The 2Gi threshold represents approximately 50,000 cached
+        # prompt prefixes -- below this, recomputation is cheaper
+        # than transfer.
+        minCacheSize: "2Gi"
+        # Only transfer if the cache hit rate is at least 60%: a low
+        # hit rate indicates that the cache contains mostly stale or
+        # one-off entries that will not be useful on the target cluster.
+        # The 60% threshold was determined empirically from production
+        # traffic analysis.
+        minHitRate: 0.6
+
+  # ---------------------------------------------------------------------------
+  # Transport -- how KV cache data is transferred between clusters
+  # ---------------------------------------------------------------------------
+  transport:
+    # NIXL protocol: purpose-built for high-performance KV cache transfer
+    # over RDMA-capable networks. NIXL provides zero-copy transfers with
+    # hardware-accelerated checksumming, achieving 5-10x higher throughput
+    # than gRPC for large cache transfers. The bank's inter-DC network
+    # fabric supports RDMA, making NIXL the optimal choice.
+    protocol: nixl
+
+    # 5 Gbps bandwidth cap: limits the network impact of cache transfers
+    # to prevent interference with production inference traffic. The
+    # bank's inter-DC links have 100 Gbps capacity; reserving 5% for
+    # cache transfers ensures that even during a full failover event,
+    # inference latency is not degraded by transfer traffic.
+    maxBandwidthMbps: 5000
+
+    # LZ4 compression: fast compression with moderate ratio (~2:1 for
+    # KV cache data). LZ4 was chosen over zstd because cache transfers
+    # are latency-sensitive during failover -- LZ4 compresses at 500+
+    # MB/s per core versus zstd's 100-200 MB/s, and the bank prioritizes
+    # transfer speed over compression ratio.
+    compression: lz4
+
+    # Encryption required: all data in transit must be encrypted per the
+    # bank's security policy. KV cache entries contain encoded
+    # representations of customer financial data and must be protected
+    # with the same rigor as the original prompts. TLS 1.3 is used for
+    # the NIXL control channel; the data channel uses AES-256-GCM.
+    encryption: true
+
+    # 8 concurrent transfers: allows multiple cache segments to be
+    # transferred in parallel, reducing total failover time. With 5 Gbps
+    # bandwidth and 8 concurrent streams, each stream gets ~625 Mbps --
+    # enough to transfer a 2Gi cache segment in approximately 25 seconds.
+    # The bank's failover SLA requires cache transfer to complete within
+    # 45 seconds.
+    maxConcurrentTransfers: 8
+
+  # ---------------------------------------------------------------------------
+  # Retention -- how long source data is kept after transfer
+  # ---------------------------------------------------------------------------
+  retention:
+    # Keep source data for 2 hours after transfer: provides a rollback
+    # window in case the failover is reversed (e.g., the primary cluster
+    # recovers and traffic is shifted back). Without source retention,
+    # a failback would require the primary cluster to rebuild its cache
+    # from scratch, causing a second round of TTFT spikes. The 2-hour
+    # window covers the bank's typical failover drill duration.
+    sourceRetentionAfterTransfer: "2h"
+
+    # Maximum 50Gi retention: caps the storage used for post-transfer
+    # cache data on the source cluster. This prevents unbounded storage
+    # growth if multiple failover events occur in rapid succession.
+    # 50Gi is approximately 25x the typical cache size for the fraud
+    # detection model, providing ample room for multiple retained
+    # snapshots.
+    maxRetentionSize: "50Gi"
