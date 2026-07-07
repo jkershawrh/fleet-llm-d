@@ -4,6 +4,8 @@
 //! along with the [`TransferType`] enum describing the semantics of a transfer.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// The type of KV cache transfer, which determines the transfer strategy and
 /// urgency.
@@ -61,6 +63,49 @@ pub trait TransferProtocol: Send + Sync {
     async fn close(&self) -> anyhow::Result<()>;
 }
 
+/// Portable in-process streaming transfer backend used as the default backend
+/// for repeatable development and CI. Production deployments can replace this
+/// with a networked gRPC streaming implementation behind the same trait.
+#[derive(Debug, Clone, Default)]
+pub struct StreamingTransferProtocol {
+    remote_endpoint: Arc<RwLock<Option<String>>>,
+    received_blocks: Arc<RwLock<Vec<KvBlock>>>,
+}
+
+impl StreamingTransferProtocol {
+    /// Create a new portable streaming backend.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return the endpoint most recently connected to.
+    pub async fn remote_endpoint(&self) -> Option<String> {
+        self.remote_endpoint.read().await.clone()
+    }
+}
+
+impl TransferProtocol for StreamingTransferProtocol {
+    async fn connect(&self, remote_endpoint: &str) -> anyhow::Result<()> {
+        *self.remote_endpoint.write().await = Some(remote_endpoint.to_string());
+        Ok(())
+    }
+
+    async fn send_blocks(&self, blocks: Vec<KvBlock>) -> anyhow::Result<u64> {
+        let total_bytes = blocks.iter().map(|block| block.data.len() as u64).sum();
+        self.received_blocks.write().await.extend(blocks);
+        Ok(total_bytes)
+    }
+
+    async fn receive_blocks(&self) -> anyhow::Result<Vec<KvBlock>> {
+        Ok(self.received_blocks.read().await.clone())
+    }
+
+    async fn close(&self) -> anyhow::Result<()> {
+        *self.remote_endpoint.write().await = None;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +134,34 @@ mod tests {
         };
         assert_eq!(block.data.len(), 4);
         assert!(!block.is_final);
+    }
+
+    #[tokio::test]
+    async fn streaming_backend_sends_and_receives_blocks() {
+        let backend = StreamingTransferProtocol::new();
+        backend.connect("dst:9000").await.unwrap();
+        assert_eq!(backend.remote_endpoint().await.as_deref(), Some("dst:9000"));
+
+        let bytes = backend
+            .send_blocks(vec![
+                KvBlock {
+                    sequence: 0,
+                    data: vec![1, 2, 3],
+                    is_final: false,
+                },
+                KvBlock {
+                    sequence: 1,
+                    data: vec![4, 5],
+                    is_final: true,
+                },
+            ])
+            .await
+            .unwrap();
+        assert_eq!(bytes, 5);
+
+        let received = backend.receive_blocks().await.unwrap();
+        assert_eq!(received.len(), 2);
+        backend.close().await.unwrap();
+        assert!(backend.remote_endpoint().await.is_none());
     }
 }

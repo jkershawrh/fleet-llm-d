@@ -11,7 +11,31 @@ mod reporter;
 mod watcher;
 
 use clap::Parser;
+use fleet_common::{ClusterId, ModelId, TenantId};
 use tracing::info;
+
+struct LoggingResourceHandler;
+
+impl watcher::ResourceEventHandler for LoggingResourceHandler {
+    async fn on_add(&self, meta: &watcher::ResourceMeta) -> anyhow::Result<()> {
+        tracing::info!(?meta, "resource added");
+        Ok(())
+    }
+
+    async fn on_update(
+        &self,
+        old: &watcher::ResourceMeta,
+        new: &watcher::ResourceMeta,
+    ) -> anyhow::Result<()> {
+        tracing::info!(?old, ?new, "resource updated");
+        Ok(())
+    }
+
+    async fn on_delete(&self, meta: &watcher::ResourceMeta) -> anyhow::Result<()> {
+        tracing::info!(?meta, "resource deleted");
+        Ok(())
+    }
+}
 
 /// Configuration for the fleet-agent, parsed from CLI arguments.
 #[derive(Debug, Clone, Parser)]
@@ -64,48 +88,70 @@ async fn main() -> anyhow::Result<()> {
         "starting fleet-agent"
     );
 
-    let cluster_id = fleet_common::ClusterId(config.cluster_id.clone());
+    let cluster_id = ClusterId(config.cluster_id.clone());
 
     // Build components
-    let _watcher = watcher::ResourceWatcher::new(cluster_id.clone());
-    let _reporter = reporter::MetricsReporter::new(
+    let watcher = watcher::ResourceWatcher::new(cluster_id.clone());
+    let _ = watcher.cluster_id();
+    let _watched_resources = [
+        watcher::WatchedResource::InferencePool,
+        watcher::WatchedResource::Pod,
+        watcher::WatchedResource::Node,
+    ];
+    let reporter = reporter::MetricsReporter::new(
         config.control_plane_url.clone(),
         cluster_id.clone(),
         config.local_prometheus_url.clone(),
-    );
-    let _enforcer = enforcer::PolicyEnforcerImpl::new(cluster_id.clone());
-    let _proxy = proxy::LocalProxy::new(config.proxy_port);
+    )
+    .with_interval(15);
+    let enforcer = enforcer::PolicyEnforcerImpl::new(cluster_id.clone());
+    let _ = enforcer.cluster_id();
+    enforcer
+        .set_quota(
+            TenantId("bootstrap".to_string()),
+            enforcer::TenantQuota {
+                max_rps: 100.0,
+                max_concurrent: 100,
+                max_tokens_per_minute: 1_000_000,
+            },
+        )
+        .await;
+    enforcer
+        .set_placement(enforcer::PlacementConstraint {
+            allowed_models: vec![ModelId("bootstrap-model".to_string())],
+            denied_models: Vec::new(),
+        })
+        .await;
+    let proxy = proxy::LocalProxy::new(config.proxy_port)
+        .with_upstream("http://localhost:8000".to_string());
+    let _ = proxy.listen_port();
 
     // Spawn tasks
     let watcher_handle = tokio::spawn(async move {
         info!("resource watcher task started");
-        // TODO: start kube-rs watchers
-        std::future::pending::<()>().await;
+        watcher.run(LoggingResourceHandler).await
     });
 
     let reporter_handle = tokio::spawn(async move {
         info!("metrics reporter task started");
-        // TODO: periodic metrics collection and reporting
-        std::future::pending::<()>().await;
+        reporter.run().await
     });
 
     let enforcer_handle = tokio::spawn(async move {
         info!("policy enforcer task started");
-        // TODO: policy sync loop
-        std::future::pending::<()>().await;
+        enforcer.run().await
     });
 
     let proxy_handle = tokio::spawn(async move {
         info!("local proxy task started");
-        // TODO: start axum proxy server
-        std::future::pending::<()>().await;
+        proxy.run().await
     });
 
     tokio::select! {
-        _ = watcher_handle => info!("watcher exited"),
-        _ = reporter_handle => info!("reporter exited"),
-        _ = enforcer_handle => info!("enforcer exited"),
-        _ = proxy_handle => info!("proxy exited"),
+        result = watcher_handle => info!(?result, "watcher exited"),
+        result = reporter_handle => info!(?result, "reporter exited"),
+        result = enforcer_handle => info!(?result, "enforcer exited"),
+        result = proxy_handle => info!(?result, "proxy exited"),
     }
 
     Ok(())

@@ -28,6 +28,11 @@ func GetClaims(r *http.Request) *Claims {
 	return claims
 }
 
+// WithClaims stores validated claims in a context.
+func WithClaims(ctx context.Context, claims *Claims) context.Context {
+	return context.WithValue(ctx, ClaimsContextKey, claims)
+}
+
 // AuthMiddleware wraps an http.Handler and requires valid bearer tokens.
 // Exempt paths (e.g. health/readiness/metrics) bypass authentication.
 // When auth is disabled (cfg.Enabled == false), all requests pass through.
@@ -78,9 +83,61 @@ func AuthMiddleware(cfg Config, exempt []string, next http.Handler) http.Handler
 		}
 
 		// Store claims in context and call next handler.
-		ctx := context.WithValue(r.Context(), ClaimsContextKey, claims)
+		ctx := WithClaims(r.Context(), claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// AuthorizationMiddleware enforces role-based access for authenticated
+// requests. When no claims are present, it passes through so disabled-auth
+// development mode remains usable.
+func AuthorizationMiddleware(exempt []string, next http.Handler) http.Handler {
+	exemptSet := make(map[string]bool, len(exempt))
+	for _, p := range exempt {
+		exemptSet[p] = true
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if exemptSet[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		claims := GetClaims(r)
+		if claims == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !CheckPermission(claims.Role, r.Method) {
+			writeAuthorizationError(w, "role is not allowed to perform this action")
+			log.Printf("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=method",
+				claims.Subject, claims.Role, r.Method, r.URL.Path)
+			return
+		}
+
+		if claims.Role == RoleTenant && !tenantRequestAllowed(claims.Subject, r.Method, r.URL.Path) {
+			writeAuthorizationError(w, "tenant is not allowed to access this resource")
+			log.Printf("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=tenant_scope",
+				claims.Subject, claims.Role, r.Method, r.URL.Path)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func tenantRequestAllowed(subject, method, path string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	const prefix = "/api/v1/tenants/"
+	const suffix = "/usage"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	tenantID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return tenantID != "" && tenantID == subject
 }
 
 // writeAuthError writes a 401 JSON error response.
@@ -89,6 +146,16 @@ func writeAuthError(w http.ResponseWriter, detail string) {
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"error":  "unauthorized",
+		"detail": detail,
+	})
+}
+
+// writeAuthorizationError writes a 403 JSON error response.
+func writeAuthorizationError(w http.ResponseWriter, detail string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":  "forbidden",
 		"detail": detail,
 	})
 }

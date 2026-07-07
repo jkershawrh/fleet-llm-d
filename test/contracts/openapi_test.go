@@ -89,7 +89,7 @@ func waitForHealthy(url string, timeout time.Duration) bool {
 // function that stops the process and removes the binary. On failure
 // serverURL is left empty and an error is returned.
 func startFleetController() (cleanup func(), retErr error) {
-	binPath := filepath.Join(os.TempDir(), fmt.Sprintf("fleet-controller-contracts-%d", os.Getpid()))
+	binPath := filepath.Join(os.TempDir(), fmt.Sprintf("fleet-controller-contracts-%d%s", os.Getpid(), executableSuffix()))
 
 	build := exec.Command("go", "build", "-o", binPath, "./cmd/fleet-controller")
 	build.Dir = testRootDir
@@ -144,6 +144,13 @@ func startFleetController() (cleanup func(), retErr error) {
 		proc.Wait()
 		os.Remove(binPath)
 	}, nil
+}
+
+func executableSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }
 
 // requireServer skips the calling test when the fleet-controller is not running.
