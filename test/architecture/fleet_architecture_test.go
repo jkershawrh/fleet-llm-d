@@ -1,6 +1,6 @@
 //go:build architecture
 
-// Package architecture proves 36 architectural claims about fleet-llm-d.
+// Package architecture proves 39 architectural claims about fleet-llm-d.
 // Each test function maps to a specific claim (A01-A36).
 // A failing test means the architecture is broken, not just a bug.
 package architecture
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
@@ -1334,6 +1335,228 @@ func TestA36_Events_HTTPPublisherDeliversExternally(t *testing.T) {
 	}
 	if payload["type"] != "fleet.placement.assigned" {
 		t.Fatalf("payload type = %v, want 'fleet.placement.assigned'", payload["type"])
+	}
+}
+
+// ===========================================================================
+// MULTI-CLUSTER (A37-A39)
+// ===========================================================================
+
+func TestA37_MultiCluster_RoutingSelectsCorrectCluster(t *testing.T) {
+	claim(t, "A37", "multi-cluster", "TDD", "Cross-cluster routing selects correct cluster by objective")
+
+	proxy := routing.NewInferenceProxy()
+	proxy.RegisterBackend("multi-model", routing.Backend{
+		Name: "us-east-backend", URL: "http://us-east:8000", Healthy: true, LatencyMs: 10,
+	})
+	proxy.RegisterBackend("multi-model", routing.Backend{
+		Name: "eu-west-backend", URL: "http://eu-west:8000", Healthy: true, LatencyMs: 50,
+	})
+
+	// Realtime request should select the lowest-latency cluster (us-east, 10ms).
+	headers := http.Header{}
+	headers.Set("x-llm-d-inference-objective", "realtime")
+
+	backend, reason, err := proxy.SelectBackend("multi-model", headers)
+	if err != nil {
+		t.Fatalf("SelectBackend realtime: %v", err)
+	}
+	if backend.Name != "us-east-backend" {
+		t.Fatalf("realtime: expected us-east-backend (10ms), got %s (%.0fms)", backend.Name, backend.LatencyMs)
+	}
+	if !strings.Contains(reason, "realtime") {
+		t.Fatalf("reason should mention realtime, got %q", reason)
+	}
+
+	// Default (round-robin) requests should distribute across both clusters.
+	seen := map[string]bool{}
+	for i := 0; i < 4; i++ {
+		backend, _, err = proxy.SelectBackend("multi-model", http.Header{})
+		if err != nil {
+			t.Fatalf("SelectBackend round-robin iteration %d: %v", i, err)
+		}
+		seen[backend.Name] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("round-robin should select both clusters, only saw: %v", seen)
+	}
+}
+
+func TestA38_MultiCluster_FailoverOnBackendHealthChange(t *testing.T) {
+	claim(t, "A38", "multi-cluster", "TDD", "Failover redirects traffic when backend health changes")
+
+	proxy := routing.NewInferenceProxy()
+	proxy.RegisterBackend("failover-model", routing.Backend{
+		Name: "primary", URL: "http://primary:8000", Healthy: true, LatencyMs: 10,
+	})
+	proxy.RegisterBackend("failover-model", routing.Backend{
+		Name: "secondary", URL: "http://secondary:8000", Healthy: true, LatencyMs: 50,
+	})
+
+	// Realtime selects the lowest-latency backend (primary).
+	headers := http.Header{}
+	headers.Set("x-llm-d-inference-objective", "realtime")
+
+	backend, _, err := proxy.SelectBackend("failover-model", headers)
+	if err != nil {
+		t.Fatalf("SelectBackend initial: %v", err)
+	}
+	if backend.Name != "primary" {
+		t.Fatalf("expected primary (10ms), got %s", backend.Name)
+	}
+
+	// Mark primary unhealthy.
+	proxy.UpdateBackendHealth("failover-model", "primary", false)
+
+	// Next request must failover to secondary.
+	backend, _, err = proxy.SelectBackend("failover-model", headers)
+	if err != nil {
+		t.Fatalf("SelectBackend after failover: %v", err)
+	}
+	if backend.Name != "secondary" {
+		t.Fatalf("expected secondary after primary failure, got %s", backend.Name)
+	}
+
+	// Restore primary health.
+	proxy.UpdateBackendHealth("failover-model", "primary", true)
+
+	// Send multiple default requests and verify traffic redistributes to both.
+	seen := map[string]int{}
+	for i := 0; i < 10; i++ {
+		backend, _, err = proxy.SelectBackend("failover-model", http.Header{})
+		if err != nil {
+			t.Fatalf("SelectBackend redistribute %d: %v", i, err)
+		}
+		seen[backend.Name]++
+	}
+	if len(seen) < 2 {
+		t.Fatalf("traffic should redistribute to both backends after restore, only saw: %v", seen)
+	}
+}
+
+func TestA39_MultiCluster_ReconcilerPlacesAcrossClusters(t *testing.T) {
+	claim(t, "A39", "multi-cluster", "TDD", "Reconciler places model across multiple clusters")
+
+	// The test world has 3 clusters: us-east, eu-west, ap-south.
+	w := newTestWorld(t)
+	ctx := context.Background()
+
+	pool := v1alpha1.FleetInferencePoolSpec{
+		Model: v1alpha1.ModelSpec{
+			Name:   "spread-model",
+			Source: "huggingface",
+		},
+		Placement: v1alpha1.PlacementRef{
+			PolicyRef:   "spread-policy",
+			MinClusters: 2,
+			MaxClusters: 3,
+		},
+		Serving: v1alpha1.ServingSpec{
+			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
+				Spec: v1alpha1.InferencePoolTemplateSpec{
+					TargetPorts: []int{8000},
+				},
+			},
+		},
+	}
+
+	if err := w.Reconciler.ReconcilePool(ctx, pool); err != nil {
+		t.Fatalf("ReconcilePool: %v", err)
+	}
+
+	state, err := w.Reconciler.GetPoolState("spread-model")
+	if err != nil {
+		t.Fatalf("GetPoolState: %v", err)
+	}
+
+	// Verify the reconciler produced placement decisions for at least 2 clusters.
+	if len(state.DesiredClusters) < 2 {
+		t.Fatalf("expected at least 2 desired clusters (minClusters=2), got %d: %v",
+			len(state.DesiredClusters), state.DesiredClusters)
+	}
+
+	// Verify they are distinct cluster IDs (proves spreading across regions).
+	uniqueClusters := map[string]bool{}
+	for _, c := range state.DesiredClusters {
+		uniqueClusters[c] = true
+	}
+	if len(uniqueClusters) < 2 {
+		t.Fatalf("expected at least 2 distinct cluster IDs, got: %v", state.DesiredClusters)
+	}
+}
+
+// ===========================================================================
+// SECURITY / HARDENING (A40-A41)
+// ===========================================================================
+
+func TestA40_Security_RateLimitRejectsOverBurst(t *testing.T) {
+	claim(t, "A40", "security", "TDD", "Rate limiter rejects requests over burst")
+
+	rl := auth.NewRateLimiter(10, 5)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := auth.RateLimitMiddleware(rl, inner)
+
+	allowed := 0
+	rejected := 0
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			allowed++
+		} else if rec.Code == http.StatusTooManyRequests {
+			rejected++
+		} else {
+			t.Fatalf("unexpected status code %d on request %d", rec.Code, i+1)
+		}
+	}
+
+	if rejected == 0 {
+		t.Fatal("expected some requests to be rejected (429), but all were allowed")
+	}
+	if allowed == 0 {
+		t.Fatal("expected some requests to be allowed, but all were rejected")
+	}
+	if allowed > 5 {
+		t.Fatalf("expected at most 5 allowed (burst=5), got %d", allowed)
+	}
+}
+
+func TestA41_Validation_WebhookRejectsInvalidCRDs(t *testing.T) {
+	claim(t, "A41", "security", "TDD", "Webhook rejects invalid CRDs")
+
+	// Validate a FleetInferencePool with an empty model name.
+	spec := v1alpha1.FleetInferencePoolSpec{
+		Model: v1alpha1.ModelSpec{Name: "", Source: "huggingface"},
+		Serving: v1alpha1.ServingSpec{
+			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
+				Spec: v1alpha1.InferencePoolTemplateSpec{
+					TargetPorts: []int{8000},
+				},
+			},
+		},
+	}
+	result := controller.ValidateFleetInferencePool(spec)
+	if result.Valid {
+		t.Fatal("expected invalid result for empty model name")
+	}
+	if len(result.Details) == 0 {
+		t.Fatal("expected validation details describing the error")
+	}
+
+	foundModelError := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "model name") {
+			foundModelError = true
+			break
+		}
+	}
+	if !foundModelError {
+		t.Fatalf("expected model name error in details, got: %v", result.Details)
 	}
 }
 

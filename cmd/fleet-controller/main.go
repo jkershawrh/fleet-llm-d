@@ -514,6 +514,9 @@ func (fc *FleetController) setupAPIServer() *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/pools/{name}/state", fc.handleGetPoolState)
 	}
 
+	// Validation webhook (admission controller)
+	mux.HandleFunc("POST /api/v1/webhook/validate", controller.WebhookHandler())
+
 	// Tenants
 	mux.HandleFunc("GET /api/v1/tenants", fc.handleListTenants)
 	mux.HandleFunc("GET /api/v1/tenants/{id}/usage", fc.handleTenantUsage)
@@ -547,15 +550,18 @@ func setupMetricsServer() *http.ServeMux {
 
 // Run starts the fleet controller HTTP servers and blocks until the context
 // is cancelled or a shutdown signal is received.
-func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey string) error {
+func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey string, rateLimiter *auth.RateLimiter) error {
 	// Create a context that is cancelled on SIGINT or SIGTERM.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Wrap the API server mux with auth middleware.
+	// Wrap the API server mux with auth middleware and rate limiting.
 	mux := fc.setupAPIServer()
 	exempt := []string{"/healthz", "/readyz", "/metrics"}
 	var handler http.Handler = auth.AuthMiddleware(authCfg, exempt, mux)
+	if rateLimiter != nil {
+		handler = auth.RateLimitMiddleware(rateLimiter, handler)
+	}
 
 	apiServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
@@ -646,6 +652,8 @@ func main() {
 	namespace := flag.String("namespace", "default", "Kubernetes namespace to watch for FleetInferencePool CRDs")
 	pgURL := flag.String("pg-url", "", "PostgreSQL connection string (e.g. postgres://user:pass@host:5432/fleet?sslmode=disable). When set, uses PostgreSQL instead of in-memory stores")
 	eventEndpoint := flag.String("event-endpoint", "", "HTTP endpoint for publishing fleet events (e.g. http://kafka-bridge:8080/topics/fleet-events). When set, events are also POSTed to this URL")
+	rateLimit := flag.Float64("rate-limit", 100, "Rate limit in requests per second per IP (0 to disable)")
+	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
 	flag.Parse()
 
 	log.Printf("fleet-controller starting (log-level=%s, ledger=%s)", *logLevel, *ledgerEndpoint)
@@ -688,7 +696,14 @@ func main() {
 		log.Printf("event publishing enabled (endpoint=%s)", *eventEndpoint)
 	}
 
-	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey); err != nil {
+	// Create rate limiter when rate limiting is enabled.
+	var rl *auth.RateLimiter
+	if *rateLimit > 0 {
+		rl = auth.NewRateLimiter(*rateLimit, *rateBurst)
+		log.Printf("rate limiting enabled (rate=%.0f/s, burst=%d)", *rateLimit, *rateBurst)
+	}
+
+	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey, rl); err != nil {
 		log.Fatal(err)
 	}
 }
