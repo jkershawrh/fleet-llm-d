@@ -1,0 +1,58 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-controller
+  labels:
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: fleet-llm-d
+rules:
+  - apiGroups:
+      - fleet.llm-d.ai
+    resources:
+      - fleetinferencepools
+      - fleetroutingpolicies
+      - fleetscalingpolicies
+      - kvcachetransferpolicies
+      - modellifecycles
+      - placementpolicies
+      - tenantprofiles
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - inference.networking.k8s.io
+    resources:
+      - inferencepools
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - pods
+    verbs:
+      - get
+      - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-controller
+  labels:
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: fleet-llm-d
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-controller
+subjects:
+  - kind: ServiceAccount
+    name: fleet-controller
+    namespace: fleet-llm-d

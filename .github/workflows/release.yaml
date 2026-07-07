@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            rust-release-${{ runner.os }}-
+
+      - name: Build Go binaries (linux/amd64)
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist/linux-amd64
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-amd64/fleet-controller ./cmd/fleet-controller
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-amd64/fleetctl ./cmd/fleetctl
+
+      - name: Build Go binaries (linux/arm64)
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist/linux-arm64
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-arm64/fleet-controller ./cmd/fleet-controller
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-arm64/fleetctl ./cmd/fleetctl
+
+      - name: Build Rust binaries (linux/amd64)
+        run: |
+          mkdir -p dist/linux-amd64
+          cargo build --release --workspace
+          cp target/release/fleet-agent dist/linux-amd64/ 2>/dev/null || true
+          cp target/release/fleet-gateway dist/linux-amd64/ 2>/dev/null || true
+
+      - name: Create release archives
+        run: |
+          cd dist
+          tar czf fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz -C linux-amd64 .
+          tar czf fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz -C linux-arm64 .
+          sha256sum *.tar.gz > checksums-sha256.txt
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push fleet-controller image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.controller
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:latest
+          cache-from: type=gha,scope=controller
+          cache-to: type=gha,mode=max,scope=controller
+
+      - name: Build and push fleet-agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.agent
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:latest
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+
+      - name: Build and push fleet-gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.gateway
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-gateway:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-gateway:latest
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            dist/checksums-sha256.txt

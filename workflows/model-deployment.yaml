@@ -1,0 +1,482 @@
+apiVersion: fleet-llm-d.io/v1alpha1
+kind: Workflow
+metadata:
+  name: model-deployment
+  description: >
+    Full lifecycle workflow for deploying a new LLM model to the inference fleet.
+    Orchestrates validation, placement, deployment, SLO verification, and
+    production promotion across heterogeneous GPU clusters.
+  version: "1.0.0"
+  labels:
+    category: deployment
+    criticality: high
+
+spec:
+  timeout: 3600s
+  concurrency:
+    maxParallel: 1
+    policy: cancel-pending
+
+  parameters:
+    - name: modelId
+      type: string
+      required: true
+      description: Fully qualified model identifier (e.g. meta-llama/Llama-3.1-70B-Instruct)
+    - name: modelRevision
+      type: string
+      required: true
+      description: Model revision or commit hash
+    - name: targetClusters
+      type: list
+      required: false
+      description: Explicit cluster list; if omitted, placement engine decides
+    - name: minReplicas
+      type: integer
+      default: 2
+      description: Minimum replica count per cluster
+    - name: maxReplicas
+      type: integer
+      default: 8
+      description: Maximum replica count per cluster
+    - name: gpuType
+      type: string
+      default: nvidia-a100-80gb
+      description: Required GPU accelerator type
+    - name: tensorParallelism
+      type: integer
+      default: 4
+      description: Tensor parallel degree for model sharding
+    - name: quantization
+      type: string
+      default: none
+      enum: [none, awq-int4, gptq-int4, fp8]
+      description: Quantization method applied to model weights
+
+  stages:
+    - name: validate
+      description: >
+        Validate model artifact integrity, compatibility with the target runtime,
+        and resource requirements against available fleet capacity.
+      timeout: 300s
+      steps:
+        - name: verify-model-artifact
+          action: model.verifyArtifact
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.modelRevision }}"
+            checksumAlgorithm: sha256
+          conditions:
+            pre:
+              - expr: "artifact.exists == true"
+                message: "Model artifact must exist in the model registry"
+          successCriteria:
+            - expr: "result.checksumValid == true"
+            - expr: "result.formatSupported == true"
+
+        - name: check-runtime-compatibility
+          action: runtime.checkCompatibility
+          params:
+            modelId: "{{ parameters.modelId }}"
+            runtime: vllm
+            runtimeVersion: ">=0.6.0"
+            quantization: "{{ parameters.quantization }}"
+            tensorParallelism: "{{ parameters.tensorParallelism }}"
+          successCriteria:
+            - expr: "result.compatible == true"
+            - expr: "result.minGpuMemoryGB <= 80"
+
+        - name: validate-resource-requirements
+          action: fleet.validateCapacity
+          params:
+            gpuType: "{{ parameters.gpuType }}"
+            gpuCount: "{{ parameters.tensorParallelism }}"
+            minReplicas: "{{ parameters.minReplicas }}"
+            memoryPerGpuGB: 80
+          successCriteria:
+            - expr: "result.availableSlots >= parameters.minReplicas"
+            - expr: "result.fragmentationRisk < 0.3"
+
+        - name: resolve-model
+          action: modelpack.resolveFromOCI
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.modelRevision }}"
+          description: >
+            Resolve ModelPack metadata from the OCI reference, including
+            GPU memory requirements, recommended tensor parallelism,
+            quantization compatibility, and model architecture details.
+          successCriteria:
+            - expr: "result.resolved == true"
+            - expr: "result.gpuMemoryRequirementGB > 0"
+            - expr: "result.architectureSupported == true"
+
+      on_failure:
+        action: workflow.abort
+        params:
+          reason: "Validation failed: model artifact, runtime, or capacity check did not pass"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+            - channel: pagerduty
+              severity: warning
+
+    - name: place
+      description: >
+        Run the placement engine to select optimal clusters and nodes for the
+        model based on GPU availability, topology, latency, and cost.
+      timeout: 120s
+      steps:
+        - name: compute-placement
+          action: placement.compute
+          params:
+            modelId: "{{ parameters.modelId }}"
+            gpuType: "{{ parameters.gpuType }}"
+            tensorParallelism: "{{ parameters.tensorParallelism }}"
+            minReplicas: "{{ parameters.minReplicas }}"
+            maxReplicas: "{{ parameters.maxReplicas }}"
+            targetClusters: "{{ parameters.targetClusters }}"
+            strategy: spread
+            constraints:
+              - type: gpu-topology
+                requirement: nvlink-connected
+              - type: network-latency
+                maxLatencyMs: 50
+              - type: power-budget
+                maxWattsPerNode: 2400
+            scoringWeights:
+              gpuUtilization: 0.3
+              networkLocality: 0.25
+              costEfficiency: 0.25
+              failureDomainDiversity: 0.2
+          successCriteria:
+            - expr: "result.placements | length >= parameters.minReplicas"
+            - expr: "result.score >= 0.7"
+
+        - name: reserve-resources
+          action: fleet.reserveResources
+          params:
+            placements: "{{ steps.compute-placement.result.placements }}"
+            reservationTTL: 1800s
+          successCriteria:
+            - expr: "result.allReserved == true"
+
+      on_failure:
+        action: workflow.retry
+        params:
+          maxRetries: 2
+          backoff: exponential
+          initialDelay: 30s
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+
+    - name: deploy
+      description: >
+        Deploy the model to reserved nodes. Pull weights, initialize the
+        inference engine, and bring replicas to a ready state.
+      timeout: 1200s
+      steps:
+        - name: pull-model-weights
+          action: model.pullWeights
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.modelRevision }}"
+            placements: "{{ stages.place.steps.compute-placement.result.placements }}"
+            cacheStrategy: layered
+            bandwidthLimitMbps: 5000
+          successCriteria:
+            - expr: "result.allNodesPulled == true"
+            - expr: "result.checksumVerified == true"
+
+        - name: initialize-runtime
+          action: runtime.initialize
+          params:
+            modelId: "{{ parameters.modelId }}"
+            runtime: vllm
+            placements: "{{ stages.place.steps.compute-placement.result.placements }}"
+            config:
+              tensorParallelism: "{{ parameters.tensorParallelism }}"
+              quantization: "{{ parameters.quantization }}"
+              maxModelLen: 32768
+              gpuMemoryUtilization: 0.92
+              enableChunkedPrefill: true
+              maxNumBatchedTokens: 16384
+              swapSpace: 4
+          successCriteria:
+            - expr: "result.allReplicasReady == true"
+
+        - name: register-endpoints
+          action: routing.registerEndpoints
+          params:
+            modelId: "{{ parameters.modelId }}"
+            replicas: "{{ steps.initialize-runtime.result.replicas }}"
+            healthCheckPath: /health
+            healthCheckIntervalSeconds: 10
+            trafficWeight: 0
+          successCriteria:
+            - expr: "result.allRegistered == true"
+
+        - name: record-deployment
+          action: ledger.recordEntry
+          params:
+            entryType: "fleet.model.deployed"
+            content:
+              modelId: "{{ parameters.modelId }}"
+              revision: "{{ parameters.modelRevision }}"
+              clusters: "{{ stages.place.steps.compute-placement.result.placements }}"
+              replicaCount: "{{ steps.initialize-runtime.result.replicaCount }}"
+              gpuType: "{{ parameters.gpuType }}"
+              tensorParallelism: "{{ parameters.tensorParallelism }}"
+              quantization: "{{ parameters.quantization }}"
+              deployedAt: "{{ now() }}"
+            chainTo: latest
+          description: >
+            Record the deployment event in the ARE immutable ledger for
+            compliance audit trail and tamper-evident decision history.
+          successCriteria:
+            - expr: "result.entryId != ''"
+            - expr: "result.chainPosition > 0"
+            - expr: "result.hashValid == true"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: validate
+          cleanup:
+            - action: runtime.teardown
+              params:
+                modelId: "{{ parameters.modelId }}"
+            - action: fleet.releaseResources
+              params:
+                reservationId: "{{ stages.place.steps.reserve-resources.result.reservationId }}"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+            - channel: pagerduty
+              severity: high
+
+    - name: validate-slo
+      description: >
+        Run synthetic inference workloads against the deployed model and verify
+        that latency, throughput, and quality SLOs are met before promotion.
+      timeout: 600s
+      steps:
+        - name: run-smoke-tests
+          action: testing.runSmokeTests
+          params:
+            modelId: "{{ parameters.modelId }}"
+            endpoints: "{{ stages.deploy.steps.register-endpoints.result.endpoints }}"
+            testSuite: standard-llm-smoke
+            concurrency: 4
+            requests: 100
+          successCriteria:
+            - expr: "result.passRate == 1.0"
+            - expr: "result.errorRate == 0.0"
+
+        - name: run-latency-benchmark
+          action: testing.runBenchmark
+          params:
+            modelId: "{{ parameters.modelId }}"
+            endpoints: "{{ stages.deploy.steps.register-endpoints.result.endpoints }}"
+            benchmarkProfile: latency-p99
+            config:
+              inputTokens: 512
+              outputTokens: 256
+              concurrentUsers: [1, 4, 16, 32]
+              durationSeconds: 120
+          successCriteria:
+            - expr: "result.p50LatencyMs <= 200"
+            - expr: "result.p99LatencyMs <= 1500"
+            - expr: "result.timeToFirstTokenP99Ms <= 300"
+            - expr: "result.tokensPerSecond >= 40"
+
+        - name: run-throughput-benchmark
+          action: testing.runBenchmark
+          params:
+            modelId: "{{ parameters.modelId }}"
+            endpoints: "{{ stages.deploy.steps.register-endpoints.result.endpoints }}"
+            benchmarkProfile: throughput-max
+            config:
+              inputTokens: 1024
+              outputTokens: 512
+              concurrentUsers: [32, 64, 128]
+              durationSeconds: 180
+          successCriteria:
+            - expr: "result.requestsPerSecond >= 10"
+            - expr: "result.gpuUtilization >= 0.75"
+            - expr: "result.gpuUtilization <= 0.95"
+
+        - name: validate-output-quality
+          action: testing.validateQuality
+          params:
+            modelId: "{{ parameters.modelId }}"
+            endpoints: "{{ stages.deploy.steps.register-endpoints.result.endpoints }}"
+            evaluationSuite: core-quality
+            config:
+              evaluationDataset: fleet-llm-eval-v2
+              metrics: [coherence, accuracy, safety]
+              minSamples: 200
+          successCriteria:
+            - expr: "result.coherenceScore >= 0.85"
+            - expr: "result.accuracyScore >= 0.80"
+            - expr: "result.safetyScore >= 0.95"
+
+        - name: record-slo-validation
+          action: ledger.recordEntry
+          params:
+            entryType: "fleet.model.slo_validated"
+            content:
+              modelId: "{{ parameters.modelId }}"
+              revision: "{{ parameters.modelRevision }}"
+              smokeTestPassRate: "{{ steps.run-smoke-tests.result.passRate }}"
+              latencyP99Ms: "{{ steps.run-latency-benchmark.result.p99LatencyMs }}"
+              throughputRps: "{{ steps.run-throughput-benchmark.result.requestsPerSecond }}"
+              qualityScores:
+                coherence: "{{ steps.validate-output-quality.result.coherenceScore }}"
+                accuracy: "{{ steps.validate-output-quality.result.accuracyScore }}"
+                safety: "{{ steps.validate-output-quality.result.safetyScore }}"
+              validatedAt: "{{ now() }}"
+            chainTo: latest
+          description: >
+            Record SLO validation results in the ARE immutable ledger,
+            providing an auditable record that production gates were met.
+          successCriteria:
+            - expr: "result.entryId != ''"
+            - expr: "result.chainPosition > 0"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: validate
+          cleanup:
+            - action: routing.deregisterEndpoints
+              params:
+                modelId: "{{ parameters.modelId }}"
+            - action: runtime.teardown
+              params:
+                modelId: "{{ parameters.modelId }}"
+            - action: fleet.releaseResources
+              params:
+                reservationId: "{{ stages.place.steps.reserve-resources.result.reservationId }}"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+            - channel: pagerduty
+              severity: high
+
+    - name: promote
+      description: >
+        Promote the deployed model to production by enabling traffic routing,
+        configuring autoscaling, and activating monitoring dashboards.
+      timeout: 300s
+      steps:
+        - name: enable-traffic
+          action: routing.setTrafficWeight
+          params:
+            modelId: "{{ parameters.modelId }}"
+            endpoints: "{{ stages.deploy.steps.register-endpoints.result.endpoints }}"
+            weight: 100
+            drainTimeoutSeconds: 30
+          successCriteria:
+            - expr: "result.trafficFlowing == true"
+
+        - name: configure-autoscaling
+          action: autoscaling.configure
+          params:
+            modelId: "{{ parameters.modelId }}"
+            policy:
+              minReplicas: "{{ parameters.minReplicas }}"
+              maxReplicas: "{{ parameters.maxReplicas }}"
+              metrics:
+                - type: gpu-utilization
+                  target: 0.80
+                  scaleUpThreshold: 0.85
+                  scaleDownThreshold: 0.60
+                - type: request-queue-depth
+                  target: 10
+                  scaleUpThreshold: 20
+                  scaleDownThreshold: 5
+              scaleUpCooldownSeconds: 120
+              scaleDownCooldownSeconds: 300
+              scaleUpStep: 1
+              scaleDownStep: 1
+          successCriteria:
+            - expr: "result.policyActive == true"
+
+        - name: activate-monitoring
+          action: monitoring.activate
+          params:
+            modelId: "{{ parameters.modelId }}"
+            dashboards:
+              - fleet-llm-model-overview
+              - fleet-llm-latency-detail
+              - fleet-llm-throughput-detail
+            alerts:
+              - name: high-latency
+                condition: "p99_latency_ms > 2000"
+                severity: warning
+                window: 5m
+              - name: error-rate
+                condition: "error_rate > 0.01"
+                severity: critical
+                window: 2m
+              - name: gpu-oom
+                condition: "gpu_memory_utilization > 0.98"
+                severity: critical
+                window: 1m
+          successCriteria:
+            - expr: "result.dashboardsActive == true"
+            - expr: "result.alertsConfigured == true"
+
+        - name: update-model-registry
+          action: registry.updateStatus
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.modelRevision }}"
+            status: serving
+            deploymentMetadata:
+              clusters: "{{ stages.place.steps.compute-placement.result.placements }}"
+              replicaCount: "{{ stages.deploy.steps.initialize-runtime.result.replicaCount }}"
+              promotedAt: "{{ now() }}"
+          successCriteria:
+            - expr: "result.registryUpdated == true"
+
+        - name: issue-proof-receipt
+          action: ledger.issueProofReceipt
+          params:
+            entryType: "fleet.model.promoted"
+            content:
+              modelId: "{{ parameters.modelId }}"
+              revision: "{{ parameters.modelRevision }}"
+              clusters: "{{ stages.place.steps.compute-placement.result.placements }}"
+              sloValidationEntryId: "{{ stages.validate-slo.steps.record-slo-validation.result.entryId }}"
+              deploymentEntryId: "{{ stages.deploy.steps.record-deployment.result.entryId }}"
+              promotedAt: "{{ now() }}"
+            includeChainProof: true
+            signReceipt: true
+          description: >
+            Issue a cryptographic proof receipt for the full deployment lifecycle,
+            linking the deployment record, SLO validation, and promotion into a
+            verifiable chain. This receipt can be presented for regulatory audits.
+          successCriteria:
+            - expr: "result.receiptId != ''"
+            - expr: "result.proofValid == true"
+            - expr: "result.signatureValid == true"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: deploy
+          cleanup:
+            - action: routing.setTrafficWeight
+              params:
+                modelId: "{{ parameters.modelId }}"
+                weight: 0
+            - action: autoscaling.disable
+              params:
+                modelId: "{{ parameters.modelId }}"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+            - channel: pagerduty
+              severity: critical

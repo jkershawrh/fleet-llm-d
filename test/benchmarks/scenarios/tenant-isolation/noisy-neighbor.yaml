@@ -1,0 +1,168 @@
+# Noisy neighbor tenant isolation benchmark scenario.
+# One tenant saturates its capacity; measures impact on other tenants'
+# latency and throughput.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: BenchmarkScenario
+metadata:
+  name: noisy-neighbor
+  labels:
+    category: tenant-isolation
+    severity: reliability
+spec:
+  description: >-
+    Validates fleet-llm-d tenant isolation under noisy-neighbor conditions.
+    A low-priority tenant sends traffic far exceeding its quota, while
+    high-priority tenants maintain steady load. Measures whether the
+    rate limiting, priority scheduling, and quota enforcement in the
+    TenantProfile CRD effectively protect higher-priority tenants from
+    latency degradation and throughput loss.
+
+  workload_ref: multi-tenant-mixed
+
+  fleet_topology:
+    clusters:
+      - name: us-east-1
+        region: us-east
+        gpu_type: nvidia-h100
+        replicas: 8
+
+  tenant_profiles:
+    - name: gold-tier
+      priority: 900
+      quota:
+        max_tokens_per_minute: 2000000
+        max_concurrent_requests: 500
+      rate_limit:
+        requests_per_second: 100
+        burst_size: 200
+      workload:
+        type: chat-multi-turn
+        input_tokens_mean: 1024
+        output_tokens_mean: 256
+
+    - name: silver-tier
+      priority: 500
+      quota:
+        max_tokens_per_minute: 1000000
+        max_concurrent_requests: 150
+      rate_limit:
+        requests_per_second: 30
+        burst_size: 60
+      workload:
+        type: rag-retrieval
+        input_tokens_mean: 4096
+        output_tokens_mean: 384
+
+    - name: noisy-tenant
+      priority: 100
+      quota:
+        max_tokens_per_minute: 500000
+        max_concurrent_requests: 50
+      rate_limit:
+        requests_per_second: 10
+        burst_size: 20
+      workload:
+        type: document-summarization
+        input_tokens_mean: 32768
+        output_tokens_mean: 1024
+
+  phases:
+    - name: baseline
+      description: >-
+        All tenants operating within quotas. Establish per-tenant
+        latency and throughput baselines.
+      duration: 300s
+      tenant_traffic:
+        gold-tier:
+          qps: 40
+        silver-tier:
+          qps: 15
+        noisy-tenant:
+          qps: 5
+      metrics:
+        - per_tenant_ttft_p99_ms
+        - per_tenant_tpot_p99_ms
+        - per_tenant_e2e_p99_ms
+        - per_tenant_success_rate
+        - per_tenant_throughput_tokens_per_second
+        - gpu_utilization
+
+    - name: noisy-neighbor-onset
+      description: >-
+        noisy-tenant ramps to 20x its normal QPS (100 QPS) with long
+        context requests, attempting to monopolize GPU compute and
+        memory. Rate limiter and quota enforcement should activate.
+      duration: 300s
+      tenant_traffic:
+        gold-tier:
+          qps: 40
+        silver-tier:
+          qps: 15
+        noisy-tenant:
+          qps: 100
+      metrics:
+        - per_tenant_ttft_p99_ms
+        - per_tenant_tpot_p99_ms
+        - per_tenant_success_rate
+        - noisy_tenant_rejected_requests
+        - noisy_tenant_rate_limited_count
+        - noisy_tenant_quota_exceeded_count
+        - gpu_utilization
+
+    - name: sustained-saturation
+      description: >-
+        noisy-tenant continues at saturation level. gold-tier and
+        silver-tier must remain within their SLOs. Measures sustained
+        isolation effectiveness.
+      duration: 600s
+      tenant_traffic:
+        gold-tier:
+          qps: 40
+        silver-tier:
+          qps: 15
+        noisy-tenant:
+          qps: 100
+      metrics:
+        - per_tenant_ttft_p99_ms
+        - per_tenant_tpot_p99_ms
+        - per_tenant_e2e_p99_ms
+        - per_tenant_success_rate
+        - per_tenant_throughput_tokens_per_second
+        - noisy_tenant_effective_qps
+        - gpu_utilization
+
+    - name: recovery
+      description: >-
+        noisy-tenant drops back to normal levels. All tenants should
+        return to baseline performance rapidly.
+      duration: 180s
+      tenant_traffic:
+        gold-tier:
+          qps: 40
+        silver-tier:
+          qps: 15
+        noisy-tenant:
+          qps: 5
+      metrics:
+        - per_tenant_ttft_p99_ms
+        - per_tenant_success_rate
+        - recovery_time_ms
+
+  success_criteria:
+    # Gold-tier tenant must experience < 10% TTFT degradation during
+    # noisy neighbor saturation vs. baseline.
+    gold_tier_max_ttft_degradation_percent: 10
+    # Gold-tier success rate must stay above 0.999.
+    gold_tier_min_success_rate: 0.999
+    # Silver-tier tenant must experience < 15% TTFT degradation.
+    silver_tier_max_ttft_degradation_percent: 15
+    # Silver-tier success rate must stay above 0.998.
+    silver_tier_min_success_rate: 0.998
+    # Noisy tenant's excess requests must be rate-limited (not silently
+    # served at the expense of others).
+    noisy_tenant_min_rejection_rate: 0.80
+    # Noisy tenant's effective QPS should be clamped near its
+    # rate_limit.requests_per_second (10 RPS +/- burst).
+    noisy_tenant_max_effective_qps: 25
+    # Recovery to baseline within 30 seconds after noisy tenant stops.
+    max_recovery_time_ms: 30000

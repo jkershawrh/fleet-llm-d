@@ -1,0 +1,402 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: fleetinferencepools.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: FleetInferencePool
+    listKind: FleetInferencePoolList
+    plural: fleetinferencepools
+    singular: fleetinferencepool
+    shortNames:
+      - fip
+      - fips
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Model
+          type: string
+          jsonPath: .spec.model.name
+          description: The model being served
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+          description: Current lifecycle phase
+        - name: Clusters
+          type: integer
+          jsonPath: .status.clusterCount
+          description: Number of clusters serving this model
+        - name: Throughput
+          type: string
+          jsonPath: .status.aggregatedMetrics.totalThroughput
+          description: Aggregate throughput across all clusters
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            FleetInferencePool declares a model's fleet-wide deployment intent,
+            specifying how a model should be placed, routed, scaled, and served
+            across multiple clusters.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired state of the fleet-wide inference pool.
+              required:
+                - model
+                - serving
+              properties:
+                model:
+                  type: object
+                  description: The model to be deployed across the fleet.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: >-
+                        Name of the model (e.g. "meta-llama/Llama-3.1-70B-Instruct").
+                    source:
+                      type: string
+                      description: >-
+                        Source registry or repository for the model artifacts
+                        (e.g. "huggingface", "s3://models-bucket/llama-70b").
+                    version:
+                      type: string
+                      description: >-
+                        Semantic version or revision of the model to deploy.
+                placement:
+                  type: object
+                  description: >-
+                    Placement configuration controlling where the model runs
+                    across the fleet.
+                  properties:
+                    policyRef:
+                      type: object
+                      description: Reference to a PlacementPolicy resource.
+                      required:
+                        - name
+                      properties:
+                        name:
+                          type: string
+                          description: Name of the PlacementPolicy.
+                        namespace:
+                          type: string
+                          description: >-
+                            Namespace of the PlacementPolicy. Defaults to the
+                            same namespace as this resource.
+                    minClusters:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: >-
+                        Minimum number of clusters the model must be placed on
+                        for redundancy and availability.
+                    maxClusters:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: >-
+                        Maximum number of clusters the model may be placed on
+                        to control cost and resource sprawl.
+                routing:
+                  type: object
+                  description: >-
+                    Routing configuration for cross-cluster traffic management.
+                  properties:
+                    policyRef:
+                      type: object
+                      description: Reference to a FleetRoutingPolicy resource.
+                      required:
+                        - name
+                      properties:
+                        name:
+                          type: string
+                          description: Name of the FleetRoutingPolicy.
+                        namespace:
+                          type: string
+                          description: >-
+                            Namespace of the FleetRoutingPolicy. Defaults to the
+                            same namespace as this resource.
+                scaling:
+                  type: object
+                  description: >-
+                    Scaling configuration for fleet-wide autoscaling behavior.
+                  properties:
+                    policyRef:
+                      type: object
+                      description: Reference to a FleetScalingPolicy resource.
+                      required:
+                        - name
+                      properties:
+                        name:
+                          type: string
+                          description: Name of the FleetScalingPolicy.
+                        namespace:
+                          type: string
+                          description: >-
+                            Namespace of the FleetScalingPolicy. Defaults to the
+                            same namespace as this resource.
+                serving:
+                  type: object
+                  description: >-
+                    Serving configuration defining how the model is exposed
+                    within each cluster.
+                  required:
+                    - inferencePoolTemplate
+                  properties:
+                    inferencePoolTemplate:
+                      type: object
+                      description: >-
+                        Template for the per-cluster InferencePool resources
+                        that will be created.
+                      properties:
+                        targetPorts:
+                          type: object
+                          description: >-
+                            Port configuration for the inference service endpoints.
+                          properties:
+                            serving:
+                              type: integer
+                              format: int32
+                              minimum: 1
+                              maximum: 65535
+                              description: >-
+                                Port for serving inference requests.
+                            health:
+                              type: integer
+                              format: int32
+                              minimum: 1
+                              maximum: 65535
+                              description: >-
+                                Port for health check endpoints.
+                            metrics:
+                              type: integer
+                              format: int32
+                              minimum: 1
+                              maximum: 65535
+                              description: >-
+                                Port for Prometheus metrics scraping.
+                        endpointPickerRef:
+                          type: object
+                          description: >-
+                            Reference to an endpoint picker (EPP) implementation
+                            for request-level routing within a cluster.
+                          required:
+                            - name
+                          properties:
+                            name:
+                              type: string
+                              description: Name of the endpoint picker resource.
+                            namespace:
+                              type: string
+                              description: >-
+                                Namespace of the endpoint picker. Defaults to the
+                                same namespace as this resource.
+                lifecycle:
+                  type: object
+                  description: >-
+                    Lifecycle management configuration for model rollouts and
+                    updates.
+                  properties:
+                    rolloutStrategy:
+                      type: string
+                      description: >-
+                        Strategy for rolling out model updates across the fleet.
+                      enum:
+                        - Canary
+                        - Rolling
+                        - BlueGreen
+                        - AllAtOnce
+                      default: Rolling
+                    canary:
+                      type: object
+                      description: >-
+                        Canary rollout configuration, used when rolloutStrategy
+                        is Canary.
+                      properties:
+                        initialWeight:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                          maximum: 100
+                          description: >-
+                            Initial traffic weight percentage directed to the
+                            canary deployment.
+                          default: 10
+                        weightIncrement:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 100
+                          description: >-
+                            Percentage to increase canary traffic weight at
+                            each promotion step.
+                          default: 10
+                        interval:
+                          type: string
+                          description: >-
+                            Duration between canary promotion steps (e.g. "10m",
+                            "1h").
+                          default: "10m"
+                        sloGate:
+                          type: object
+                          description: >-
+                            SLO gates that must be met before promoting the canary.
+                          properties:
+                            maxLatencyP99Ms:
+                              type: integer
+                              format: int32
+                              description: >-
+                                Maximum p99 latency in milliseconds for the
+                                canary to be considered healthy.
+                            minSuccessRate:
+                              type: number
+                              format: double
+                              minimum: 0
+                              maximum: 1
+                              description: >-
+                                Minimum success rate (0.0-1.0) required for the
+                                canary to be promoted.
+                        rollbackOnFailure:
+                          type: boolean
+                          description: >-
+                            Whether to automatically roll back the canary if
+                            SLO gates are not met.
+                          default: true
+            status:
+              type: object
+              description: Observed state of the fleet-wide inference pool.
+              properties:
+                phase:
+                  type: string
+                  description: >-
+                    High-level lifecycle phase of the fleet inference pool.
+                  enum:
+                    - Pending
+                    - Placing
+                    - Running
+                    - Degraded
+                    - Failed
+                clusterCount:
+                  type: integer
+                  format: int32
+                  description: >-
+                    Number of clusters currently serving this model.
+                clusters:
+                  type: array
+                  description: >-
+                    Per-cluster status of the model deployment.
+                  items:
+                    type: object
+                    required:
+                      - name
+                    properties:
+                      name:
+                        type: string
+                        description: Name of the cluster.
+                      replicas:
+                        type: integer
+                        format: int32
+                        description: >-
+                          Number of serving replicas in this cluster.
+                      gpuType:
+                        type: string
+                        description: >-
+                          GPU type used in this cluster (e.g. "nvidia-h100",
+                          "nvidia-a100").
+                      status:
+                        type: string
+                        description: >-
+                          Status of the model deployment in this cluster.
+                        enum:
+                          - Pending
+                          - Running
+                          - Degraded
+                          - Failed
+                          - ScaledToZero
+                aggregatedMetrics:
+                  type: object
+                  description: >-
+                    Aggregated performance metrics across all clusters.
+                  properties:
+                    totalThroughput:
+                      type: string
+                      description: >-
+                        Total throughput across all clusters
+                        (e.g. "15000 tokens/s").
+                    avgTTFT:
+                      type: string
+                      description: >-
+                        Average time-to-first-token across all clusters
+                        (e.g. "120ms").
+                    kvCacheHitRate:
+                      type: number
+                      format: double
+                      minimum: 0
+                      maximum: 1
+                      description: >-
+                        Fleet-wide KV cache hit rate as a fraction (0.0-1.0).
+                conditions:
+                  type: array
+                  description: >-
+                    Standard Kubernetes conditions for the resource.
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: >-
+                          Type of the condition (e.g. "Ready", "Placed",
+                          "Healthy").
+                      status:
+                        type: string
+                        description: >-
+                          Status of the condition.
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      reason:
+                        type: string
+                        description: >-
+                          Machine-readable reason for the condition's last
+                          transition.
+                      message:
+                        type: string
+                        description: >-
+                          Human-readable message with details about the
+                          condition.
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: >-
+                          Timestamp of the last transition of the condition.
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        description: >-
+                          The generation observed by the controller.
