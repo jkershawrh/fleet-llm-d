@@ -144,6 +144,65 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 	}
 }
 
+func TestRefreshToken(t *testing.T) {
+	secret := "test-secret"
+	claims := Claims{
+		Subject:   "test-user",
+		Role:      "admin",
+		IssuedAt:  time.Now().Add(-23 * time.Hour),
+		ExpiresAt: time.Now().Add(1 * time.Hour), // 1 hour left
+	}
+	originalToken, err := GenerateToken(secret, claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed, err := RefreshToken(secret, originalToken, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the refreshed token is valid
+	newClaims, err := ValidateToken(secret, refreshed)
+	if err != nil {
+		t.Fatalf("refreshed token should be valid: %v", err)
+	}
+
+	// Same subject and role
+	if newClaims.Subject != "test-user" {
+		t.Errorf("subject changed: %s", newClaims.Subject)
+	}
+	if newClaims.Role != "admin" {
+		t.Errorf("role changed: %s", newClaims.Role)
+	}
+
+	// New expiry is in the future
+	if newClaims.ExpiresAt.Before(time.Now().Add(23 * time.Hour)) {
+		t.Error("refreshed token should have extended expiry")
+	}
+
+	// Different token string (new IssuedAt)
+	if refreshed == originalToken {
+		t.Error("refreshed token should be different from original")
+	}
+}
+
+func TestRefreshToken_RejectsExpired(t *testing.T) {
+	secret := "test-secret"
+	claims := Claims{
+		Subject:   "expired-user",
+		Role:      "viewer",
+		IssuedAt:  time.Now().Add(-48 * time.Hour),
+		ExpiresAt: time.Now().Add(-1 * time.Hour), // already expired
+	}
+	token, _ := GenerateToken(secret, claims)
+
+	_, err := RefreshToken(secret, token, 24*time.Hour)
+	if err == nil {
+		t.Fatal("should reject expired token for refresh")
+	}
+}
+
 func BenchmarkGenerateToken(b *testing.B) {
 	claims := Claims{Subject: "bench", Role: RoleAdmin, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
 	for i := 0; i < b.N; i++ {

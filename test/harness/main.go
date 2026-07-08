@@ -15,7 +15,7 @@ func main() {
 		metricsFlag        = flag.String("metrics", "http://localhost:9090", "Metrics endpoint URL")
 		tokenFlag          = flag.String("token", "", "Bearer token for authenticated endpoints")
 		secretFlag         = flag.String("secret", "", "HMAC secret for generating tokens internally")
-		suiteFlag          = flag.String("suite", "smoke", "Test suite(s) to run: smoke|stress|soak|pressure|chaos|redteam|latency|throughput|inference|all")
+		suiteFlag          = flag.String("suite", "smoke", "Test suite(s) to run: smoke|stress|soak|pressure|chaos|chaos-recovery|redteam|latency|throughput|inference|all")
 		durationFlag       = flag.Duration("duration", 5*time.Minute, "Duration for soak tests")
 		outputFlag         = flag.String("output", "test/harness/results/report.json", "Output path for JSON report")
 		inferenceModelFlag  = flag.String("inference-model", "", "Model name for inference tests (skips auto-discovery)")
@@ -66,6 +66,8 @@ func main() {
 			result = RunPressure(cfg)
 		case "chaos":
 			result = RunChaos(cfg)
+		case "chaos-recovery":
+			result = RunChaosRecovery(cfg)
 		case "redteam":
 			result = RunRedTeam(cfg)
 		case "latency":
@@ -111,7 +113,7 @@ func main() {
 
 // parseSuites splits the suite flag into individual suite names.
 func parseSuites(s string) []string {
-	allSuites := []string{"smoke", "stress", "soak", "pressure", "chaos", "redteam", "latency", "throughput", "inference", "multimodel", "fairness"}
+	allSuites := []string{"smoke", "stress", "soak", "pressure", "chaos", "chaos-recovery", "redteam", "latency", "throughput", "inference", "multimodel", "fairness"}
 
 	if s == "all" {
 		return allSuites
