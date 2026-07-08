@@ -81,6 +81,45 @@ func TestProtoServiceDeclarations(t *testing.T) {
 	}
 }
 
+// TestProtoFleetServiceRPCs verifies that the fleet proto defines a
+// FleetService with the expected RPC methods that the gRPC server implements.
+func TestProtoFleetServiceRPCs(t *testing.T) {
+	expectedRPCs := []string{
+		"RegisterCluster",
+		"DeregisterCluster",
+		"ListClusters",
+		"GetClusterStatus",
+		"WatchClusterEvents",
+	}
+
+	var fleetProto string
+	for _, f := range protoFiles(t) {
+		if strings.Contains(filepath.ToSlash(f), "/fleet/") {
+			fleetProto = f
+			break
+		}
+	}
+	if fleetProto == "" {
+		t.Fatal("no fleet proto file found")
+	}
+
+	data, err := os.ReadFile(fleetProto)
+	if err != nil {
+		t.Fatalf("read fleet proto: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "service FleetService") {
+		t.Fatal("fleet proto does not define service FleetService")
+	}
+
+	for _, rpc := range expectedRPCs {
+		if !strings.Contains(content, "rpc "+rpc+"(") {
+			t.Errorf("fleet proto is missing rpc %s", rpc)
+		}
+	}
+}
+
 // TestProtoGoPackageOptions verifies that every .proto file contains both
 // an option go_package directive and a proper package declaration.
 func TestProtoGoPackageOptions(t *testing.T) {

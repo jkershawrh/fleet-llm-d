@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-fleet-controller
+  labels:
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-controller
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: fleet-controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --port={{ .Values.ports.api }}
+            - --metrics-port={{ .Values.ports.metrics }}
+            - --mode={{ .Values.mode }}
+            {{- if .Values.rateLimit.requestsPerSecond }}
+            - --rate-limit={{ .Values.rateLimit.requestsPerSecond }}
+            - --rate-burst={{ .Values.rateLimit.burst }}
+            {{- end }}
+            {{- if gt (int .Values.loadShedding.maxInflight) 0 }}
+            - --max-inflight={{ .Values.loadShedding.maxInflight }}
+            {{- end }}
+            {{- if .Values.backends }}
+            - --backends={{ .Values.backends | toJson }}
+            {{- end }}
+          {{- if .Values.auth.enabled }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.auth.secretName }}
+          {{- end }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.ports.api }}
+            - name: metrics
+              containerPort: {{ .Values.ports.metrics }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.ports.api }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.ports.api }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

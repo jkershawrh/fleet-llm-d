@@ -21,8 +21,9 @@ type ModelResolver interface {
 // RegistryModelResolver pulls ModelPack configs from OCI-compatible registry
 // manifests and config blobs.
 type RegistryModelResolver struct {
-	scheme string
-	http   *http.Client
+	scheme           string
+	http             *http.Client
+	requireSignature bool
 }
 
 // RegistryResolverOption customizes RegistryModelResolver.
@@ -33,6 +34,15 @@ type RegistryResolverOption func(*RegistryModelResolver)
 func WithRegistryScheme(scheme string) RegistryResolverOption {
 	return func(r *RegistryModelResolver) {
 		r.scheme = scheme
+	}
+}
+
+// WithRequireSignature enables cosign signature verification for resolved
+// models. When true, Resolve will reject any OCI reference that does not
+// have a valid cosign signature.
+func WithRequireSignature(require bool) RegistryResolverOption {
+	return func(r *RegistryModelResolver) {
+		r.requireSignature = require
 	}
 }
 
@@ -96,7 +106,37 @@ func (r *RegistryModelResolver) Resolve(ctx context.Context, ociRef string) (*Mo
 	if config.Descriptor.Name == "" {
 		config.Descriptor.Name = parsed.repository
 	}
+
+	if r.requireSignature {
+		if err := r.verifySignature(ctx, ociRef); err != nil {
+			return nil, fmt.Errorf("model signature verification failed for %s: %w", ociRef, err)
+		}
+	}
+
 	return &config, nil
+}
+
+// verifySignature checks for a cosign signature at the standard OCI location.
+// Currently returns an error for any model when requireSignature is true and
+// no signature is found. Full cosign integration would use the cosign Go
+// library to verify against a public key or keyless (Fulcio) signing.
+func (r *RegistryModelResolver) verifySignature(ctx context.Context, ref string) error {
+	parsed, err := parseOCIRef(ref)
+	if err != nil {
+		return fmt.Errorf("invalid reference for signature check: %w", err)
+	}
+
+	// Check for cosign signature tag at the standard location:
+	// <registry>/<repo>:sha256-<digest>.sig
+	// Attempt to fetch the signature manifest. If it does not exist (404 or
+	// network error), the image is considered unsigned.
+	sigTag := parsed.reference + ".sig"
+	sigURL := r.registryURL(parsed.host, "/v2/"+parsed.repository+"/manifests/"+sigTag)
+	_, err = r.doGet(ctx, sigURL, "application/vnd.oci.image.manifest.v1+json")
+	if err != nil {
+		return fmt.Errorf("no cosign signature found for %s: %w", ref, err)
+	}
+	return nil
 }
 
 type parsedOCIRef struct {

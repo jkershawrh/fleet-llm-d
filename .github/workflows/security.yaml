@@ -106,6 +106,22 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 
+      - name: Generate SBOM for ${{ matrix.image.name }}
+        if: matrix.image.name == 'fleet-controller'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ matrix.image.name }}:scan
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.image.name }}.json
+
+      - name: Upload SBOM for ${{ matrix.image.name }}
+        if: matrix.image.name == 'fleet-controller'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-security-${{ matrix.image.name }}
+          path: sbom-${{ matrix.image.name }}.json
+          retention-days: 30
+
   dashboard-security:
     name: Dashboard Security Audit
     runs-on: ubuntu-latest

@@ -1,0 +1,44 @@
+replicaCount: 1
+
+image:
+  repository: quay.io/fleet-llm-d/fleet-controller
+  tag: latest
+  pullPolicy: Always
+
+mode: all  # all, control, inference
+
+auth:
+  enabled: true
+  secretName: fleet-auth
+  secretKey: FLEET_AUTH_SECRET
+
+rateLimit:
+  requestsPerSecond: 100
+  burst: 200
+
+loadShedding:
+  maxInflight: 0  # 0 = disabled
+
+backends: []
+  # - model: granite-2b-cpu
+  #   url: http://backend.namespace.svc:80
+  #   runtime: openvino
+
+ports:
+  api: 8080
+  metrics: 9091
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+service:
+  type: ClusterIP
+
+route:
+  enabled: false
+  host: ""
