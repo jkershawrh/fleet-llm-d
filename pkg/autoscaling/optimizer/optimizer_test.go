@@ -256,3 +256,80 @@ func TestOptimize(t *testing.T) {
 		})
 	}
 }
+
+func TestOptimizer_ScalesUpOnInferenceLatency(t *testing.T) {
+	opt := NewFleetOptimizer()
+	policy := v1alpha1.FleetScalingPolicySpec{
+		Objectives: []v1alpha1.ScalingObjective{
+			{Metric: "inferenceLatencyP99Ms", Target: "500"},
+		},
+		Constraints: v1alpha1.ScalingConstraints{
+			GlobalMaxGPUs:  64,
+			MaxScaleUpRate: 4,
+		},
+	}
+	metrics := []collector.ClusterMetrics{
+		{
+			ClusterID: "cpu-cluster",
+			Pools: []collector.PoolMetrics{
+				{
+					PoolName:              "cpu-pool",
+					Replicas:              2,
+					InferenceLatencyP99Ms: 1200, // way over 500 target
+					CPUUtilization:        0.8,
+				},
+			},
+			Timestamp: time.Now(),
+		},
+	}
+	actions, err := opt.Optimize(context.Background(), metrics, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	scaleUp := false
+	for _, a := range actions {
+		if a.DesiredReplicas > a.CurrentReplicas {
+			scaleUp = true
+		}
+	}
+	if !scaleUp {
+		t.Error("should recommend scale-up when inference latency exceeds target")
+	}
+}
+
+func TestOptimizer_DoesNotScaleDownActiveCPUPool(t *testing.T) {
+	opt := NewFleetOptimizer()
+	policy := v1alpha1.FleetScalingPolicySpec{
+		Objectives: []v1alpha1.ScalingObjective{
+			{Metric: "cpuUtilization", Target: "0.30"},
+		},
+		Constraints: v1alpha1.ScalingConstraints{
+			GlobalMaxGPUs:  64,
+			MaxScaleUpRate: 4,
+		},
+	}
+	metrics := []collector.ClusterMetrics{
+		{
+			ClusterID: "cpu-cluster",
+			Pools: []collector.PoolMetrics{
+				{
+					PoolName:       "cpu-pool",
+					Replicas:       4,
+					GPUUtilization: 0,   // no GPU
+					CPUUtilization: 0.7, // 70% CPU -- should NOT scale down
+				},
+			},
+			Timestamp: time.Now(),
+		},
+	}
+	actions, err := opt.Optimize(context.Background(), metrics, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, a := range actions {
+		if a.DesiredReplicas < a.CurrentReplicas {
+			t.Errorf("should NOT recommend scale-down when CPU utilization (0.7) is above target (0.30), but got DesiredReplicas=%d < CurrentReplicas=%d",
+				a.DesiredReplicas, a.CurrentReplicas)
+		}
+	}
+}

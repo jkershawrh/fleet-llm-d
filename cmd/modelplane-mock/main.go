@@ -142,6 +142,16 @@ func seedClusters() []inferenceCluster {
 				{Name: "h200-pool", GPUType: "H200", Count: 2, Available: 2},
 			},
 		},
+		{
+			Name:     "dev-cluster-1-cpu",
+			Region:   "us-east-1",
+			Provider: "existing",
+			Labels:   map[string]string{"region": "us-east-1"},
+			Status:   clusterStatus{Phase: "Ready", Nodes: 256},
+			Pools: []nodePool{
+				{Name: "cpu-pool", GPUType: "CPU", Count: 256, Available: 200},
+			},
+		},
 	}
 }
 
@@ -175,6 +185,20 @@ func seedDeployments(ns string) []modelDeployment {
 				Clusters:      []string{"edge-east"},
 			},
 		},
+		{
+			Name:        "granite-cpu-fleet",
+			Namespace:   ns,
+			Model:       "granite-3.2-sovereign",
+			Engine:      "ovms",
+			Replicas:    1,
+			Labels:      map[string]string{"model": "granite-3.2-sovereign"},
+			Annotations: map[string]string{},
+			Status: deploymentStatus{
+				Phase:         "Running",
+				ReadyReplicas: 1,
+				Clusters:      []string{"dev-cluster-1-cpu"},
+			},
+		},
 	}
 }
 
@@ -204,6 +228,14 @@ func seedEndpoints(ns string) []modelEndpoint {
 			URL:       "http://llama-east:8000",
 			Ready:     true,
 		},
+		{
+			Name:      "granite-cpu-dev-cluster-1",
+			Namespace: ns,
+			Model:     "granite-3.2-sovereign",
+			Cluster:   "dev-cluster-1-cpu",
+			URL:       "http://ovms-sovereign-granite.sovereign-ai-lab.svc:8080",
+			Ready:     true,
+		},
 	}
 }
 
@@ -225,6 +257,7 @@ func seedInferenceClasses() []inferenceClass {
 		{Name: "gpu-h200", GPUType: "H200", Count: 1, Memory: 141},
 		{Name: "gpu-b200", GPUType: "B200", Count: 1, Memory: 192},
 		{Name: "gpu-a100", GPUType: "A100", Count: 1, Memory: 80},
+		{Name: "cpu-intel-amx", GPUType: "CPU", Count: 0, Memory: 0},
 	}
 }
 
@@ -326,6 +359,7 @@ func extractResource(path string) string {
 
 // handlePatch accepts a PATCH request, logs the body, and returns 200.
 func handlePatch(w http.ResponseWriter, r *http.Request, kind string) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)

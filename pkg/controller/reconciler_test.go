@@ -237,6 +237,100 @@ func TestWatchEndpoint_Deleted(t *testing.T) {
 	}
 }
 
+func TestReconcilePool_DoesNotBlockReads(t *testing.T) {
+	slowLister := func(ctx context.Context) ([]solver.ClusterInfo, error) {
+		time.Sleep(500 * time.Millisecond)
+		return []solver.ClusterInfo{
+			{ID: "c1", Name: "c1", Region: "us", GPUCapacity: solver.GPUCapacity{Available: 4, Total: 8}},
+		}, nil
+	}
+
+	r := NewReconciler(solver.NewConstraintSolver(), slowLister)
+
+	// Seed a pool so ListPools has something to return
+	fastLister := func(ctx context.Context) ([]solver.ClusterInfo, error) {
+		return []solver.ClusterInfo{
+			{ID: "c1", Name: "c1", Region: "us", GPUCapacity: solver.GPUCapacity{Available: 4, Total: 8}},
+		}, nil
+	}
+	fastReconciler := NewReconciler(solver.NewConstraintSolver(), fastLister)
+	pool := v1alpha1.FleetInferencePoolSpec{
+		Model: v1alpha1.ModelSpec{Name: "seed-model", Source: "test"},
+		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
+		Serving: v1alpha1.ServingSpec{
+			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
+				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8000}},
+			},
+		},
+	}
+	fastReconciler.ReconcilePool(context.Background(), pool)
+
+	// Now use the slow lister reconciler
+	r.ReconcilePool(context.Background(), pool) // seed it
+
+	// Start a slow reconcile in background
+	go r.ReconcilePool(context.Background(), v1alpha1.FleetInferencePoolSpec{
+		Model: v1alpha1.ModelSpec{Name: "slow-model", Source: "test"},
+		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
+		Serving: v1alpha1.ServingSpec{
+			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
+				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8000}},
+			},
+		},
+	})
+	time.Sleep(50 * time.Millisecond) // let it start
+
+	// ListPools should NOT block
+	done := make(chan struct{})
+	go func() {
+		r.ListPools()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// pass — ListPools returned quickly
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("ListPools blocked while ReconcilePool was fetching clusters")
+	}
+}
+
+func TestReconcilePool_OnChangeCalledOutsideLock(t *testing.T) {
+	lister := func(ctx context.Context) ([]solver.ClusterInfo, error) {
+		return []solver.ClusterInfo{
+			{ID: "c1", Name: "c1", Region: "us", GPUCapacity: solver.GPUCapacity{Available: 4, Total: 8}},
+		}, nil
+	}
+
+	r := NewReconciler(solver.NewConstraintSolver(), lister)
+
+	var callbackCalled bool
+	r.SetOnChange(func(pool *FleetPoolState) {
+		// If this is called inside the lock, trying to call ListPools would deadlock.
+		// We test by calling ListPools from the callback.
+		_ = r.ListPools()
+		callbackCalled = true
+	})
+
+	pool := v1alpha1.FleetInferencePoolSpec{
+		Model: v1alpha1.ModelSpec{Name: "test-model", Source: "test"},
+		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
+		Serving: v1alpha1.ServingSpec{
+			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
+				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8000}},
+			},
+		},
+	}
+
+	err := r.ReconcilePool(context.Background(), pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !callbackCalled {
+		t.Fatal("onChange callback was not called")
+	}
+}
+
 func TestWatchEndpoint_BadJSON(t *testing.T) {
 	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
 	srv := httptest.NewServer(r.WatchEndpoint())

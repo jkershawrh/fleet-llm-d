@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"log"
 	"sort"
 	"time"
 )
@@ -33,6 +34,7 @@ type CostLineItem struct {
 	Tokens   int64   `json:"tokens"`
 	GPUHours float64 `json:"gpu_hours"`
 	Cost     float64 `json:"cost"`
+	Unpriced bool    `json:"unpriced,omitempty"`
 }
 
 // UsageRecord is a single usage event recorded by the metering system.
@@ -101,6 +103,8 @@ func GenerateChargebackReport(tenantID string, usage []UsageRecord, pricing *Pri
 		if err != nil {
 			// Fall back to zero cost if GPU type is unknown.
 			costPerHour = 0
+			item.Unpriced = true
+			log.Printf("WARNING: unknown GPU type %q for tenant %s — cost will be $0", u.GPUType, tenantID)
 		}
 		item.Cost += gpuHours * costPerHour
 	}

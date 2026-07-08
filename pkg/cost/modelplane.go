@@ -2,6 +2,7 @@ package cost
 
 import (
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
@@ -48,33 +49,47 @@ func ComputeDeploymentCost(md modelplane.ModelDeployment, clusters []modelplane.
 		return 0, fmt.Errorf("no clusters available for deployment %s", md.Name)
 	}
 
+	// Filter to only clusters that exist, have pools, and have a priceable GPU type
+	var priceableClusters []string
+	for _, name := range targetClusters {
+		cluster, ok := clusterMap[name]
+		if !ok {
+			log.Printf("WARNING: cluster %q in deployment %s not found — replicas will be redistributed", name, md.Name)
+			continue
+		}
+		if len(cluster.Pools) == 0 {
+			log.Printf("WARNING: cluster %q has no GPU pools — replicas will be redistributed", name)
+			continue
+		}
+		gpuType := cluster.Pools[0].GPUType
+		if _, err := table.CostPerHour(gpuType, "on-demand"); err != nil {
+			log.Printf("WARNING: GPU type %q on cluster %q has no pricing — replicas will be redistributed", gpuType, name)
+			continue
+		}
+		priceableClusters = append(priceableClusters, name)
+	}
+
+	if len(priceableClusters) == 0 {
+		return 0, fmt.Errorf("no priceable clusters for deployment %s", md.Name)
+	}
+
 	// Compute cost: replicas * cost-per-GPU-hour
 	// Use the first available GPU type from the first cluster's pools
 	totalCost := 0.0
-	replicasPerCluster := md.Replicas / len(targetClusters)
-	remainder := md.Replicas % len(targetClusters)
+	replicasPerCluster := md.Replicas / len(priceableClusters)
+	remainder := md.Replicas % len(priceableClusters)
 
-	for i, clusterName := range targetClusters {
-		cluster, ok := clusterMap[clusterName]
-		if !ok {
-			continue
-		}
+	for i, clusterName := range priceableClusters {
+		cluster := clusterMap[clusterName]
 
 		replicas := replicasPerCluster
 		if i < remainder {
 			replicas++
 		}
 
-		if len(cluster.Pools) == 0 {
-			continue
-		}
-
 		// Use the first pool's GPU type for pricing
 		gpuType := cluster.Pools[0].GPUType
-		hourly, err := table.CostPerHour(gpuType, "on-demand")
-		if err != nil {
-			continue
-		}
+		hourly, _ := table.CostPerHour(gpuType, "on-demand")
 
 		totalCost += float64(replicas) * hourly
 	}

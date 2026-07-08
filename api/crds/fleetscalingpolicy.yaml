@@ -77,10 +77,12 @@ spec:
                           Metric to use as the scaling signal.
                         enum:
                           - gpu-utilization
+                          - cpu-utilization
                           - requests-per-second
                           - queue-depth
                           - ttft-p99
                           - tpot-p99
+                          - inference-latency-p99
                           - kv-cache-utilization
                           - tokens-per-second
                       target:

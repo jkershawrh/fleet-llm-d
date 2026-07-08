@@ -6,8 +6,20 @@ import (
 	"time"
 )
 
-func TestGetUsage(t *testing.T) {
+func TestNewUsageTracker_StartsEmpty(t *testing.T) {
 	tracker := NewUsageTracker()
+	period := TimePeriod{
+		Start: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC),
+	}
+	_, err := tracker.GetUsage(context.Background(), "tenant-alpha", period)
+	if err == nil {
+		t.Error("empty tracker should return error for unknown tenant")
+	}
+}
+
+func TestGetUsage(t *testing.T) {
+	tracker := NewSeededUsageTracker()
 
 	tests := []struct {
 		name     string
@@ -76,7 +88,7 @@ func TestGetUsage(t *testing.T) {
 }
 
 func TestGetUsageByModel(t *testing.T) {
-	tracker := NewUsageTracker()
+	tracker := NewSeededUsageTracker()
 
 	tests := []struct {
 		name     string

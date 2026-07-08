@@ -111,6 +111,12 @@ jobs:
           cache-from: type=gha,scope=controller
           cache-to: type=gha,mode=max,scope=controller
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign fleet-controller image
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+
       - name: Build and push fleet-agent image
         uses: docker/build-push-action@v6
         with:
@@ -122,6 +128,9 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:latest
           cache-from: type=gha,scope=agent
           cache-to: type=gha,mode=max,scope=agent
+
+      - name: Sign fleet-agent image
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
 
       - name: Build and push fleet-gateway image
         uses: docker/build-push-action@v6
@@ -135,6 +144,9 @@ jobs:
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,mode=max,scope=gateway
 
+      - name: Sign fleet-gateway image
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-gateway:${{ steps.version.outputs.VERSION }}
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -143,3 +155,27 @@ jobs:
             dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
             dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
             dist/checksums-sha256.txt
+
+  smoke-test:
+    name: Smoke Test Published Images
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and test fleet-controller
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+          docker run -d --name smoke-test -p 8080:8080 ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }} --port 8080
+          sleep 5
+          curl -f http://localhost:8080/healthz || exit 1
+          docker stop smoke-test

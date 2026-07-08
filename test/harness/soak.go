@@ -159,7 +159,7 @@ func RunSoak(cfg Config) SuiteResult {
 			snapshots = append(snapshots, snap)
 
 			name := fmt.Sprintf("soak:snapshot-%d", snapshotCount)
-			check(&sr, name, errRate < 5.0,
+			check(&sr, name, errRate < 0.1,
 				fmt.Sprintf("reqs=%d errs=%d rate=%.1f%% p50=%.1fms p95=%.1fms mem=%.1fMB",
 					reqs, errs, errRate, stats.P50, stats.P95, memMB),
 				int64(stats.P50))
@@ -181,7 +181,7 @@ done:
 	stats := computeLatencyStats(allLatencies)
 	mu.Unlock()
 
-	check(&sr, "soak:final-error-rate", errRate < 5.0,
+	check(&sr, "soak:final-error-rate", errRate < 0.1,
 		fmt.Sprintf("total_reqs=%d total_errs=%d error_rate=%.2f%%", reqs, errs, errRate), 0)
 
 	sr.Latencies = stats

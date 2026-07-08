@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestCollectAll(t *testing.T) {
@@ -81,5 +82,55 @@ func TestCollectCluster_NotFound(t *testing.T) {
 				t.Fatal("expected non-nil result")
 			}
 		})
+	}
+}
+
+func TestPoolMetrics_HasCPUFields(t *testing.T) {
+	mc := NewMetricsCollector()
+	imc := mc.(*InMemoryCollector)
+	imc.Add(ClusterMetrics{
+		ClusterID: "cpu-cluster",
+		Pools: []PoolMetrics{
+			{
+				PoolName:              "cpu-pool",
+				CPUUtilization:        0.75,
+				InferenceLatencyP99Ms: 450.0,
+				QueueDepth:            5,
+			},
+		},
+		Timestamp: time.Now(),
+	})
+	cm, err := imc.CollectCluster(context.Background(), "cpu-cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := cm.Pools[0]
+	if m.CPUUtilization != 0.75 {
+		t.Errorf("CPUUtilization = %f, want 0.75", m.CPUUtilization)
+	}
+	if m.InferenceLatencyP99Ms != 450.0 {
+		t.Errorf("InferenceLatencyP99Ms = %f, want 450.0", m.InferenceLatencyP99Ms)
+	}
+}
+
+func TestPrometheusCollector_Implements_Interface(t *testing.T) {
+	pc := NewPrometheusCollector("http://localhost:9090")
+	var _ MetricsCollector = pc // compile-time check
+	pc.Add(ClusterMetrics{
+		ClusterID: "test-cluster",
+		Pools: []PoolMetrics{
+			{
+				PoolName:       "test-pool",
+				CPUUtilization: 0.5,
+			},
+		},
+		Timestamp: time.Now(),
+	})
+	cm, err := pc.CollectCluster(context.Background(), "test-cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cm.Pools[0].CPUUtilization != 0.5 {
+		t.Error("expected 0.5")
 	}
 }

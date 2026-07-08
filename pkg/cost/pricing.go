@@ -35,6 +35,10 @@ func DefaultPricingTable() *PricingTable {
 		{GPUType: "B200", CostPerHour: 5.80, MemoryGB: 192, PricingTier: "on-demand"},
 		{GPUType: "B200", CostPerHour: 3.48, MemoryGB: 192, PricingTier: "reserved-1yr"},
 		{GPUType: "B200", CostPerHour: 1.74, MemoryGB: 192, PricingTier: "spot"},
+		// H100
+		{GPUType: "H100", CostPerHour: 3.50, MemoryGB: 80, PricingTier: "on-demand"},
+		{GPUType: "H100", CostPerHour: 2.10, MemoryGB: 80, PricingTier: "reserved-1yr"},
+		{GPUType: "H100", CostPerHour: 1.05, MemoryGB: 80, PricingTier: "spot"},
 		// A100
 		{GPUType: "A100", CostPerHour: 3.20, MemoryGB: 80, PricingTier: "on-demand"},
 		{GPUType: "A100", CostPerHour: 1.92, MemoryGB: 80, PricingTier: "reserved-1yr"},

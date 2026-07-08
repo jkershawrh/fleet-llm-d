@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -59,7 +60,7 @@ type areReceiptResponse struct {
 }
 
 func (c *HTTPLedgerClient) RecordDecision(ctx context.Context, decision FleetDecision) (*LedgerReceipt, error) {
-	body, _ := json.Marshal(areWriteRequest{
+	body, err := json.Marshal(areWriteRequest{
 		EntryType:      decision.Type,
 		AgentID:        decision.AgentID,
 		Content:        string(decision.Content),
@@ -69,6 +70,9 @@ func (c *HTTPLedgerClient) RecordDecision(ctx context.Context, decision FleetDec
 		IdempotencyKey: decision.IdempotencyKey,
 		InputHash:      decision.InputHash,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshalling ledger request: %w", err)
+	}
 
 	resp, err := c.doPost(ctx, "/api/entries", body)
 	if err != nil {
@@ -89,7 +93,7 @@ func (c *HTTPLedgerClient) RecordDecision(ctx context.Context, decision FleetDec
 }
 
 func (c *HTTPLedgerClient) VerifyDecisionChain(ctx context.Context, decisionType string) (*ChainVerification, error) {
-	resp, err := c.doGet(ctx, "/api/verify/"+decisionType)
+	resp, err := c.doGet(ctx, "/api/verify/"+url.PathEscape(decisionType))
 	if err != nil {
 		return nil, fmt.Errorf("chain verification failed: %w", err)
 	}
@@ -108,12 +112,14 @@ func (c *HTTPLedgerClient) VerifyDecisionChain(ctx context.Context, decisionType
 }
 
 func (c *HTTPLedgerClient) QueryDecisions(ctx context.Context, query DecisionQuery) ([]FleetDecision, error) {
-	url := "/api/entries?entry_type=" + query.DecisionType
+	params := url.Values{}
+	params.Set("entry_type", query.DecisionType)
 	if query.CorrelationID != "" {
-		url += "&correlation_id=" + query.CorrelationID
+		params.Set("correlation_id", query.CorrelationID)
 	}
+	path := "/api/entries?" + params.Encode()
 
-	resp, err := c.doGet(ctx, url)
+	resp, err := c.doGet(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +142,7 @@ func (c *HTTPLedgerClient) QueryDecisions(ctx context.Context, query DecisionQue
 }
 
 func (c *HTTPLedgerClient) IssueProofReceipt(ctx context.Context, decision FleetDecision) (*ProofReceipt, error) {
-	body, _ := json.Marshal(areWriteRequest{
+	body, err := json.Marshal(areWriteRequest{
 		EntryType:   decision.Type,
 		AgentID:     decision.AgentID,
 		Content:     string(decision.Content),
@@ -144,6 +150,9 @@ func (c *HTTPLedgerClient) IssueProofReceipt(ctx context.Context, decision Fleet
 		SourceID:    decision.SourceID,
 		InputHash:   decision.InputHash,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshalling ledger request: %w", err)
+	}
 
 	resp, err := c.doPost(ctx, "/api/receipts", body)
 	if err != nil {
@@ -165,7 +174,10 @@ func (c *HTTPLedgerClient) IssueProofReceipt(ctx context.Context, decision Fleet
 }
 
 func (c *HTTPLedgerClient) VerifyProof(ctx context.Context, entryHash, entryType string) (*ProofVerification, error) {
-	resp, err := c.doGet(ctx, fmt.Sprintf("/api/receipts/verify?hash=%s&type=%s", entryHash, entryType))
+	params := url.Values{}
+	params.Set("hash", entryHash)
+	params.Set("type", entryType)
+	resp, err := c.doGet(ctx, "/api/receipts/verify?"+params.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +217,7 @@ func (c *HTTPLedgerClient) doRequest(req *http.Request) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, err
 	}

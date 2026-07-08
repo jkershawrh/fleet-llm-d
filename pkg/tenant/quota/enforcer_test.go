@@ -22,8 +22,8 @@ func TestCheckQuota_Allowed(t *testing.T) {
 			},
 			want: QuotaCheckResult{
 				Allowed:         true,
-				RemainingTokens: 900,
-				RemainingBudget: "$9.00",
+				RemainingTokens: 1000,
+				RemainingBudget: "$10.00",
 				Reason:          "",
 			},
 		},
@@ -134,6 +134,69 @@ func TestCheckQuota_BudgetExceeded(t *testing.T) {
 				t.Errorf("RemainingBudget = %q, want %q", got.RemainingBudget, tt.want.RemainingBudget)
 			}
 		})
+	}
+}
+
+func TestCheckQuota_DoesNotDeductTokens(t *testing.T) {
+	e := NewQuotaEnforcer()
+
+	// First check — should be allowed
+	result1, err := e.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result1.Allowed {
+		t.Fatal("first check should be allowed")
+	}
+	remaining1 := result1.RemainingTokens
+
+	// Second check with same amount — remaining should be unchanged
+	result2, err := e.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result2.Allowed {
+		t.Fatal("second check should be allowed")
+	}
+
+	if result2.RemainingTokens != remaining1 {
+		t.Errorf("CheckQuota changed remaining tokens: %d -> %d (should be read-only)", remaining1, result2.RemainingTokens)
+	}
+}
+
+func TestConsumeQuota_DeductsTokens(t *testing.T) {
+	e := NewQuotaEnforcer()
+	ce, ok := e.(*DefaultQuotaEnforcer)
+	if !ok {
+		t.Skip("not DefaultQuotaEnforcer")
+	}
+
+	// Consume 500 tokens
+	result1, err := ce.ConsumeQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result1.Allowed {
+		t.Fatal("consume should be allowed")
+	}
+
+	// Check should show reduced tokens
+	result2, err := e.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.RemainingTokens != result1.RemainingTokens {
+		t.Errorf("after ConsumeQuota, CheckQuota should see reduced tokens: got %d, expected %d",
+			result2.RemainingTokens, result1.RemainingTokens)
+	}
+
+	// Consume should show further reduction
+	result3, err := ce.ConsumeQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result3.RemainingTokens >= result1.RemainingTokens {
+		t.Error("ConsumeQuota should reduce remaining tokens each call")
 	}
 }
 

@@ -14,22 +14,67 @@ type RateLimiter struct {
 	buckets map[string]*tokenBucket
 	rate    float64 // tokens per second
 	burst   int     // max bucket size
+	ttl     time.Duration
+	done    chan struct{}
 }
 
 type tokenBucket struct {
-	tokens    float64
-	lastCheck time.Time
+	tokens     float64
+	lastCheck  time.Time
+	lastAccess time.Time
+}
+
+// NewRateLimiterWithTTL creates a new per-key rate limiter with a custom TTL
+// for bucket eviction. Buckets not accessed within the TTL are automatically
+// removed by a background sweep goroutine. Call Stop() to release the goroutine.
+func NewRateLimiterWithTTL(ratePerSecond float64, burstSize int, ttl time.Duration) *RateLimiter {
+	rl := &RateLimiter{
+		buckets: make(map[string]*tokenBucket),
+		rate:    ratePerSecond,
+		burst:   burstSize,
+		ttl:     ttl,
+		done:    make(chan struct{}),
+	}
+	go rl.sweepLoop()
+	return rl
+}
+
+func (rl *RateLimiter) sweepLoop() {
+	ticker := time.NewTicker(rl.ttl / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-rl.done:
+			return
+		case <-ticker.C:
+			rl.mu.Lock()
+			for key, b := range rl.buckets {
+				if time.Since(b.lastAccess) > rl.ttl {
+					delete(rl.buckets, key)
+				}
+			}
+			rl.mu.Unlock()
+		}
+	}
+}
+
+// Stop stops the background eviction goroutine.
+func (rl *RateLimiter) Stop() {
+	close(rl.done)
+}
+
+// BucketCount returns the number of active token buckets.
+func (rl *RateLimiter) BucketCount() int {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return len(rl.buckets)
 }
 
 // NewRateLimiter creates a new per-key rate limiter. ratePerSecond is the
 // sustained rate (tokens refilled per second) and burstSize is the maximum
 // number of tokens a bucket can hold (i.e. the burst capacity).
 func NewRateLimiter(ratePerSecond float64, burstSize int) *RateLimiter {
-	return &RateLimiter{
-		buckets: make(map[string]*tokenBucket),
-		rate:    ratePerSecond,
-		burst:   burstSize,
-	}
+	return NewRateLimiterWithTTL(ratePerSecond, burstSize, 10*time.Minute)
 }
 
 // Allow checks if a request from the given key is allowed. It consumes one
@@ -43,8 +88,9 @@ func (rl *RateLimiter) Allow(key string) bool {
 	if !ok {
 		// First request for this key: start with a full bucket minus one token.
 		rl.buckets[key] = &tokenBucket{
-			tokens:    float64(rl.burst) - 1,
-			lastCheck: now,
+			tokens:     float64(rl.burst) - 1,
+			lastCheck:  now,
+			lastAccess: now,
 		}
 		return true
 	}
@@ -56,6 +102,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 		b.tokens = float64(rl.burst)
 	}
 	b.lastCheck = now
+	b.lastAccess = now
 
 	if b.tokens < 1 {
 		return false

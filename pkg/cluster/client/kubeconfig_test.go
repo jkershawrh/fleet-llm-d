@@ -194,6 +194,36 @@ func TestApplyResource(t *testing.T) {
 	}
 }
 
+func TestGetResource_ErrorsOnNon2xx(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer ts.Close()
+
+	c := NewKubeconfigClusterClient()
+	ctx := context.Background()
+
+	err := c.RegisterCluster(ctx, ClusterRegistration{
+		ID:     "test-cluster",
+		Name:   "test",
+		Region: "us",
+	})
+	if err != nil {
+		t.Fatalf("RegisterCluster: %v", err)
+	}
+
+	c.mu.Lock()
+	c.clusters["test-cluster"].APIServer = ts.URL
+	c.clusters["test-cluster"].Token = "test-token"
+	c.mu.Unlock()
+
+	_, err = c.GetResource(ctx, "test-cluster", "/api/v1/pods")
+	if err == nil {
+		t.Fatal("expected error on 404 response")
+	}
+}
+
 func TestDeregisterCluster(t *testing.T) {
 	c := NewKubeconfigClusterClient()
 	ctx := context.Background()

@@ -47,7 +47,9 @@ type tenantProfile struct {
 // costPerToken is the cost in cents per token.
 const costPerToken int64 = 1
 
-type defaultQuotaEnforcer struct {
+// DefaultQuotaEnforcer is the concrete quota enforcer. Exported so callers
+// can type-assert to access ConsumeQuota.
+type DefaultQuotaEnforcer struct {
 	mu       sync.Mutex
 	profiles map[string]*tenantProfile
 	records  []usageEntry
@@ -80,7 +82,7 @@ func NewQuotaEnforcer() QuotaEnforcer {
 			budgetSpent: 0,
 		},
 	}
-	return &defaultQuotaEnforcer{
+	return &DefaultQuotaEnforcer{
 		profiles: profiles,
 	}
 }
@@ -92,7 +94,7 @@ func formatBudget(cents int64) string {
 	return fmt.Sprintf("$%.2f", float64(cents)/100.0)
 }
 
-func (e *defaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, request QuotaCheckRequest) (QuotaCheckResult, error) {
+func (e *DefaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, request QuotaCheckRequest) (QuotaCheckResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -131,7 +133,53 @@ func (e *defaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, re
 		}, nil
 	}
 
-	// Allowed: deduct tokens and budget.
+	// Read-only: report current remaining without deducting
+	return QuotaCheckResult{
+		Allowed:         true,
+		RemainingTokens: remainingTokens,
+		RemainingBudget: formatBudget(remainingBudgetCents),
+		Reason:          "",
+	}, nil
+}
+
+// ConsumeQuota checks quota and deducts tokens and budget if allowed.
+// Unlike CheckQuota (which is read-only), this method mutates tenant state.
+func (e *DefaultQuotaEnforcer) ConsumeQuota(_ context.Context, tenantID string, request QuotaCheckRequest) (QuotaCheckResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	profile, ok := e.profiles[tenantID]
+	if !ok {
+		profile = &tenantProfile{
+			tokenLimit:  1000,
+			tokensUsed:  0,
+			budgetCents: 1000,
+			budgetSpent: 0,
+		}
+		e.profiles[tenantID] = profile
+	}
+
+	remainingTokens := profile.tokenLimit - profile.tokensUsed
+	remainingBudgetCents := profile.budgetCents - profile.budgetSpent
+
+	if remainingBudgetCents <= 0 {
+		return QuotaCheckResult{
+			Allowed:         false,
+			RemainingTokens: remainingTokens,
+			RemainingBudget: formatBudget(remainingBudgetCents),
+			Reason:          "budget exceeded: tenant has no remaining budget",
+		}, nil
+	}
+
+	if request.TokensRequested > remainingTokens {
+		return QuotaCheckResult{
+			Allowed:         false,
+			RemainingTokens: remainingTokens,
+			RemainingBudget: formatBudget(remainingBudgetCents),
+			Reason:          fmt.Sprintf("token limit exceeded: requested %d but only %d remaining", request.TokensRequested, remainingTokens),
+		}, nil
+	}
+
 	profile.tokensUsed += request.TokensRequested
 	tokenCost := request.TokensRequested * costPerToken
 	profile.budgetSpent += tokenCost
@@ -147,7 +195,7 @@ func (e *defaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, re
 	}, nil
 }
 
-func (e *defaultQuotaEnforcer) RecordUsage(_ context.Context, tenantID string, usage UsageRecord) error {
+func (e *DefaultQuotaEnforcer) RecordUsage(_ context.Context, tenantID string, usage UsageRecord) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

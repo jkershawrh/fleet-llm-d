@@ -53,58 +53,70 @@ func (r *Reconciler) SetOnChange(fn func(pool *FleetPoolState)) {
 
 // ReconcilePool reconciles the desired state described by pool against the
 // available clusters. It updates the internal pool state and transitions the
-// phase through Pending -> Placing -> Running (or Failed on error).
+// phase to Running (or Failed on error).
+//
+// Network calls (cluster listing) and the onChange callback are performed
+// outside the lock so that readers (ListPools, GetPoolState) are never blocked
+// by slow I/O.
 func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	name := pool.Model.Name
 
-	// Set initial state to Pending if new, or keep existing phase.
-	state, exists := r.pools[name]
-	if !exists {
-		state = &FleetPoolState{
-			Name:   name,
-			Model:  pool.Model.Name,
-			Source: pool.Model.Source,
-			Phase:  v1alpha1.FleetPhasePending,
-		}
-		r.pools[name] = state
-	}
-
-	// Transition to Placing.
-	state.Phase = v1alpha1.FleetPhasePlacing
-
-	// Get available clusters.
+	// 1. Fetch clusters OUTSIDE the lock (potentially slow network call).
 	clusters, err := r.clusters(ctx)
 	if err != nil {
-		state.Phase = v1alpha1.FleetPhaseFailed
+		r.mu.Lock()
+		if state, exists := r.pools[name]; exists {
+			state.Phase = v1alpha1.FleetPhaseFailed
+		}
+		r.mu.Unlock()
 		return fmt.Errorf("listing clusters: %w", err)
 	}
 
-	// Run constraint solver with a default (empty) placement policy.
-	// The real policy would be looked up by pool.Placement.PolicyRef.
+	// 2. Run solver (CPU-only, no I/O).
 	policy := v1alpha1.PlacementPolicySpec{}
 	decisions, err := r.solver.Solve(ctx, pool, clusters, policy)
 	if err != nil {
-		state.Phase = v1alpha1.FleetPhaseFailed
+		r.mu.Lock()
+		if state, exists := r.pools[name]; exists {
+			state.Phase = v1alpha1.FleetPhaseFailed
+		}
+		r.mu.Unlock()
 		return fmt.Errorf("solving placement: %w", err)
 	}
 
-	// Extract cluster IDs from placement decisions.
 	desired := make([]string, 0, len(decisions))
 	for _, d := range decisions {
 		desired = append(desired, d.ClusterID)
 	}
-	state.DesiredClusters = desired
 
-	// Transition to Running.
+	// 3. Acquire lock for state mutation only.
+	r.mu.Lock()
+	state, exists := r.pools[name]
+	if !exists {
+		state = &FleetPoolState{
+			Name:  name,
+			Model: pool.Model.Name,
+			Source: pool.Model.Source,
+		}
+		r.pools[name] = state
+	}
+
 	state.Phase = v1alpha1.FleetPhaseRunning
+	state.DesiredClusters = desired
 	state.LastReconciled = time.Now()
 
-	// Invoke onChange callback if set.
-	if r.onChange != nil {
-		r.onChange(state)
+	// Copy state and onChange ref for use outside the lock.
+	stateCopy := *state
+	stateCopy.DesiredClusters = make([]string, len(state.DesiredClusters))
+	copy(stateCopy.DesiredClusters, state.DesiredClusters)
+	stateCopy.ActualClusters = make([]string, len(state.ActualClusters))
+	copy(stateCopy.ActualClusters, state.ActualClusters)
+	onChange := r.onChange
+	r.mu.Unlock()
+
+	// 4. Invoke onChange OUTSIDE the lock.
+	if onChange != nil {
+		onChange(&stateCopy)
 	}
 
 	return nil

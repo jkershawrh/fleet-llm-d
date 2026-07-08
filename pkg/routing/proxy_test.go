@@ -3,12 +3,15 @@ package routing
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -506,6 +509,314 @@ func TestProxyRequest_StreamingSSE_LiveFlush(t *testing.T) {
 	}
 	if events[2] != "data: [DONE]" {
 		t.Errorf("expected last event to be data: [DONE], got %q", events[2])
+	}
+}
+
+func TestProxyRequest_StripsAuthHeaders(t *testing.T) {
+	var receivedHeaders http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+
+	p := NewInferenceProxy()
+	b := &Backend{Name: "strip-test", URL: backend.URL, Runtime: "vllm", Healthy: true}
+
+	reqBody := `{"model":"test","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Cookie", "session=abc123")
+	req.Header.Set("Proxy-Authorization", "Basic creds")
+	req.Header.Set("X-Custom-Header", "keep-me")
+	req.Header.Set("X-Llm-D-Inference-Objective", "realtime")
+
+	recorder := httptest.NewRecorder()
+	p.ProxyRequest(recorder, req, b)
+
+	if receivedHeaders.Get("Authorization") != "" {
+		t.Error("Authorization header was forwarded to backend")
+	}
+	if receivedHeaders.Get("Cookie") != "" {
+		t.Error("Cookie header was forwarded to backend")
+	}
+	if receivedHeaders.Get("Proxy-Authorization") != "" {
+		t.Error("Proxy-Authorization header was forwarded to backend")
+	}
+	if receivedHeaders.Get("X-Custom-Header") != "keep-me" {
+		t.Error("X-Custom-Header should be forwarded but was stripped")
+	}
+	if receivedHeaders.Get("X-Llm-D-Inference-Objective") != "realtime" {
+		t.Error("X-Llm-D-Inference-Objective should be forwarded")
+	}
+}
+
+func TestProxyError_ValidJSONWithSpecialChars(t *testing.T) {
+	p := NewInferenceProxy()
+	// No backends registered — will trigger the "no backends" error
+	body := `{"model":"nonexistent"}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", w.Header().Get("Content-Type"))
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Errorf("response body is not valid JSON: %v\nbody: %s", err, w.Body.String())
+	}
+	if parsed["error"] == "" {
+		t.Error("expected error field in JSON response")
+	}
+}
+
+func TestProxyError_NoModelField(t *testing.T) {
+	p := NewInferenceProxy()
+	body := `{"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("expected application/json Content-Type, got %s", w.Header().Get("Content-Type"))
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Errorf("error response is not valid JSON: %v", err)
+	}
+}
+
+func TestServeHTTP_RejectsOversizedBody(t *testing.T) {
+	p := NewInferenceProxy()
+	p.RegisterBackend("test", Backend{Name: "b", URL: "http://unused:8000", Healthy: true})
+
+	bigBody := strings.Repeat("x", 11<<20) // 11 MB
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(bigBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest && w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 400 or 413 for oversized body, got %d", w.Code)
+	}
+}
+
+func TestInferenceProxy_TransportConfig(t *testing.T) {
+	p := NewInferenceProxy()
+	transport, ok := p.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("proxy should use *http.Transport")
+	}
+	if transport.MaxIdleConnsPerHost < 50 {
+		t.Errorf("MaxIdleConnsPerHost=%d, want >=50 for concurrent inference load", transport.MaxIdleConnsPerHost)
+	}
+	if transport.MaxConnsPerHost < 100 {
+		t.Errorf("MaxConnsPerHost=%d, want >=100", transport.MaxConnsPerHost)
+	}
+	if transport.MaxIdleConns < 200 {
+		t.Errorf("MaxIdleConns=%d, want >=200", transport.MaxIdleConns)
+	}
+}
+
+func TestInferenceProxy_HealthPolling(t *testing.T) {
+	healthCallCount := int32(0)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			atomic.AddInt32(&healthCallCount, 1)
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"id":"test"}]}`))
+			return
+		}
+		w.WriteHeader(200)
+	}))
+	defer backend.Close()
+
+	p := NewInferenceProxy()
+	p.RegisterBackend("health-model", Backend{
+		Name: "health-be", URL: backend.URL, Runtime: "vllm", Healthy: true,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.StartHealthChecks(ctx, 100*time.Millisecond)
+
+	time.Sleep(350 * time.Millisecond)
+	cancel()
+
+	count := atomic.LoadInt32(&healthCallCount)
+	if count < 2 {
+		t.Errorf("expected at least 2 health checks, got %d", count)
+	}
+}
+
+func TestInferenceProxy_HealthPolling_MarksUnhealthy(t *testing.T) {
+	healthy := int32(1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			if atomic.LoadInt32(&healthy) == 0 {
+				w.WriteHeader(500)
+				return
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[{"id":"test"}]}`))
+			return
+		}
+		w.WriteHeader(200)
+	}))
+	defer backend.Close()
+
+	p := NewInferenceProxy()
+	p.RegisterBackend("unhealthy-model", Backend{
+		Name: "flaky-be", URL: backend.URL, Runtime: "vllm", Healthy: true,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.StartHealthChecks(ctx, 100*time.Millisecond)
+
+	// Backend is healthy initially
+	time.Sleep(150 * time.Millisecond)
+	b, _, err := p.SelectBackend("unhealthy-model", http.Header{})
+	if err != nil {
+		t.Fatalf("should have healthy backend: %v", err)
+	}
+	if !b.Healthy {
+		t.Fatal("backend should be healthy initially")
+	}
+
+	// Make backend unhealthy
+	atomic.StoreInt32(&healthy, 0)
+	time.Sleep(200 * time.Millisecond)
+
+	// Should now be marked unhealthy
+	_, _, err = p.SelectBackend("unhealthy-model", http.Header{})
+	if err == nil {
+		t.Fatal("expected error — backend should be marked unhealthy")
+	}
+
+	cancel()
+}
+
+func TestProxy_ShedsLoadWhenOverloaded(t *testing.T) {
+	// Create a slow backend (takes 200ms per request)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer backend.Close()
+
+	p := NewInferenceProxy()
+	p.SetMaxInflight(2) // only allow 2 concurrent
+	p.RegisterBackend("slow-model", Backend{Name: "slow", URL: backend.URL, Runtime: "vllm", Healthy: true})
+
+	// Send 4 concurrent requests — 2 should succeed, 2 should get 503
+	var wg sync.WaitGroup
+	results := make([]int, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			body := `{"model":"slow-model","messages":[{"role":"user","content":"hi"}]}`
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			p.ServeHTTP(w, req)
+			results[idx] = w.Code
+		}(i)
+	}
+	wg.Wait()
+
+	successes := 0
+	shedded := 0
+	for _, code := range results {
+		if code == 200 {
+			successes++
+		} else if code == 503 {
+			shedded++
+		}
+	}
+
+	if successes < 2 {
+		t.Errorf("expected at least 2 successes, got %d", successes)
+	}
+	if shedded == 0 {
+		t.Error("expected at least 1 request to be shed (503)")
+	}
+}
+
+func TestProxy_ReturnsRetryAfterHeader(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(200)
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer backend.Close()
+
+	p := NewInferenceProxy()
+	p.SetMaxInflight(1)
+	p.RegisterBackend("retry-model", Backend{Name: "b1", URL: backend.URL, Runtime: "vllm", Healthy: true})
+
+	// Start a slow request in background
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		body := `{"model":"retry-model","messages":[{"role":"user","content":"hi"}]}`
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, req)
+	}()
+
+	time.Sleep(50 * time.Millisecond) // let first request start
+
+	// Second request should be shed
+	body := `{"model":"retry-model","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	wg.Wait()
+
+	if w.Code != 503 {
+		t.Errorf("expected 503, got %d", w.Code)
+	}
+	if w.Header().Get("Retry-After") != "5" {
+		t.Errorf("expected Retry-After: 5, got %q", w.Header().Get("Retry-After"))
+	}
+	// Verify response is valid JSON
+	var parsed map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+		t.Errorf("response not valid JSON: %v", err)
+	}
+}
+
+func TestProxy_NoLoadSheddingWhenDisabled(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer backend.Close()
+
+	p := NewInferenceProxy()
+	// maxInflight defaults to 0 (disabled)
+	p.RegisterBackend("noload-model", Backend{Name: "b1", URL: backend.URL, Runtime: "vllm", Healthy: true})
+
+	body := `{"model":"noload-model","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200 when load shedding disabled, got %d", w.Code)
 	}
 }
 

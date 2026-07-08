@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // ModelPlaneWatcher polls the ModelPlane API for CRD changes and invokes
@@ -21,7 +23,7 @@ type ModelPlaneWatcher struct {
 	interval  time.Duration
 	http      *http.Client
 
-	mu                 sync.Mutex
+	mu                 sync.RWMutex
 	onClusterChange    func([]InferenceCluster)
 	onDeploymentChange func([]ModelDeployment)
 	onEndpointChange   func([]ModelEndpoint)
@@ -32,7 +34,20 @@ type ModelPlaneWatcher struct {
 }
 
 // NewModelPlaneWatcher creates a new watcher that polls the ModelPlane API.
-func NewModelPlaneWatcher(apiServer, namespace, token string) *ModelPlaneWatcher {
+// An optional tlsutil.TLSOptions can be passed to configure TLS behavior;
+// when omitted, InsecureSkipVerify is used for backward compatibility.
+func NewModelPlaneWatcher(apiServer, namespace, token string, tlsOpts ...tlsutil.TLSOptions) *ModelPlaneWatcher {
+	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	if len(tlsOpts) > 0 {
+		opts = tlsOpts[0]
+	}
+
+	tlsCfg, err := tlsutil.NewTLSConfig(opts)
+	if err != nil {
+		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", err)
+		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+	}
+
 	return &ModelPlaneWatcher{
 		apiServer: apiServer,
 		namespace: namespace,
@@ -41,9 +56,7 @@ func NewModelPlaneWatcher(apiServer, namespace, token string) *ModelPlaneWatcher
 		http: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // #nosec G402 -- in-cluster self-signed certs
-				},
+				TLSClientConfig: tlsCfg,
 			},
 		},
 	}
@@ -80,7 +93,7 @@ func (w *ModelPlaneWatcher) OnEndpointChange(fn func([]ModelEndpoint)) {
 // Start begins polling the ModelPlane API. It performs an initial poll then
 // starts a background goroutine that polls on each tick of the interval.
 func (w *ModelPlaneWatcher) Start(ctx context.Context) error {
-	if err := w.pollOnce(ctx); err != nil {
+	if err := w.PollOnce(ctx); err != nil {
 		log.Printf("WARNING: initial ModelPlane poll failed: %v (will retry on next tick)", err)
 	}
 
@@ -96,7 +109,7 @@ func (w *ModelPlaneWatcher) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := w.pollOnce(ctx); err != nil {
+				if err := w.PollOnce(ctx); err != nil {
 					log.Printf("ModelPlane poll error: %v", err)
 				}
 			}
@@ -106,44 +119,63 @@ func (w *ModelPlaneWatcher) Start(ctx context.Context) error {
 	return nil
 }
 
-// pollOnce fetches all three resource types from the ModelPlane API and
-// invokes callbacks when changes are detected.
-func (w *ModelPlaneWatcher) pollOnce(ctx context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// Poll clusters
+// PollOnce fetches all three resource types from the ModelPlane API and
+// invokes callbacks when changes are detected. HTTP fetches happen outside
+// the lock so that LastClusters/LastDeployments/LastEndpoints are never
+// blocked during network I/O.
+func (w *ModelPlaneWatcher) PollOnce(ctx context.Context) error {
+	// Fetch all three resources without holding the lock.
 	clusters, err := fetchClusters(ctx, w.http, w.apiServer, w.token,
 		"/apis/modelplane.ai/v1alpha1/inferenceclusters")
 	if err != nil {
 		return fmt.Errorf("polling clusters: %w", err)
 	}
-	if w.onClusterChange != nil && !clustersEqual(w.lastClusters, clusters) {
-		w.onClusterChange(clusters)
-	}
-	w.lastClusters = clusters
 
-	// Poll deployments
 	deployments, err := fetchDeployments(ctx, w.http, w.apiServer, w.token,
 		fmt.Sprintf("/apis/modelplane.ai/v1alpha1/namespaces/%s/modeldeployments", w.namespace))
 	if err != nil {
 		return fmt.Errorf("polling deployments: %w", err)
 	}
-	if w.onDeploymentChange != nil && !deploymentsEqual(w.lastDeployments, deployments) {
-		w.onDeploymentChange(deployments)
-	}
-	w.lastDeployments = deployments
 
-	// Poll endpoints
 	endpoints, err := fetchEndpoints(ctx, w.http, w.apiServer, w.token,
 		fmt.Sprintf("/apis/modelplane.ai/v1alpha1/namespaces/%s/modelendpoints", w.namespace))
 	if err != nil {
 		return fmt.Errorf("polling endpoints: %w", err)
 	}
+
+	// Briefly write-lock to swap cached data and detect changes.
+	w.mu.Lock()
+	var clusterCB func([]InferenceCluster)
+	var deployCB func([]ModelDeployment)
+	var endpointCB func([]ModelEndpoint)
+
+	if w.onClusterChange != nil && !clustersEqual(w.lastClusters, clusters) {
+		clusterCB = w.onClusterChange
+	}
+	w.lastClusters = clusters
+
+	if w.onDeploymentChange != nil && !deploymentsEqual(w.lastDeployments, deployments) {
+		deployCB = w.onDeploymentChange
+	}
+	w.lastDeployments = deployments
+
 	if w.onEndpointChange != nil && !endpointsEqual(w.lastEndpoints, endpoints) {
-		w.onEndpointChange(endpoints)
+		endpointCB = w.onEndpointChange
 	}
 	w.lastEndpoints = endpoints
+	w.mu.Unlock()
+
+	// Invoke callbacks outside the lock to avoid holding it during
+	// potentially expensive handler logic.
+	if clusterCB != nil {
+		clusterCB(clusters)
+	}
+	if deployCB != nil {
+		deployCB(deployments)
+	}
+	if endpointCB != nil {
+		endpointCB(endpoints)
+	}
 
 	return nil
 }
@@ -219,7 +251,7 @@ func doFetch(ctx context.Context, client *http.Client, apiServer, token, path st
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
@@ -262,8 +294,8 @@ func jsonEqual(a, b interface{}) bool {
 
 // LastClusters returns the most recently polled clusters (for API handlers).
 func (w *ModelPlaneWatcher) LastClusters() []InferenceCluster {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	cp := make([]InferenceCluster, len(w.lastClusters))
 	copy(cp, w.lastClusters)
 	return cp
@@ -271,9 +303,18 @@ func (w *ModelPlaneWatcher) LastClusters() []InferenceCluster {
 
 // LastDeployments returns the most recently polled deployments (for API handlers).
 func (w *ModelPlaneWatcher) LastDeployments() []ModelDeployment {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	cp := make([]ModelDeployment, len(w.lastDeployments))
 	copy(cp, w.lastDeployments)
+	return cp
+}
+
+// LastEndpoints returns the most recently polled endpoints (for API handlers).
+func (w *ModelPlaneWatcher) LastEndpoints() []ModelEndpoint {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	cp := make([]ModelEndpoint, len(w.lastEndpoints))
+	copy(cp, w.lastEndpoints)
 	return cp
 }

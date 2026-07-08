@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,30 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// proxyStripHeaders lists headers that must not be forwarded to inference
+// backends.  This prevents leaking client credentials and removes hop-by-hop
+// headers that are meaningless on the backend leg.
+var proxyStripHeaders = map[string]bool{
+	"Authorization":       true,
+	"Cookie":              true,
+	"Proxy-Authorization": true,
+	"Connection":          true,
+	"Transfer-Encoding":   true,
+	"Keep-Alive":          true,
+	"Trailer":             true,
+	"Upgrade":             true,
+	"Te":                  true,
+}
+
+// writeProxyError writes a JSON error response with the given HTTP status code
+// and message.  Using json.Encoder guarantees proper escaping and prevents
+// injection through attacker-controlled error strings.
+func writeProxyError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
 
 // Backend represents an inference backend endpoint.
 type Backend struct {
@@ -24,10 +49,12 @@ type Backend struct {
 
 // InferenceProxy routes inference requests to backend model servers.
 type InferenceProxy struct {
-	mu       sync.RWMutex
-	backends map[string][]Backend // model -> backends
-	rrIndex  atomic.Uint64        // round-robin counter
-	http     *http.Client
+	mu          sync.RWMutex
+	backends    map[string][]Backend // model -> backends
+	rrIndex     atomic.Uint64        // round-robin counter
+	http        *http.Client
+	inflight    sync.Map // model -> *int64 (atomic counter per model)
+	maxInflight int      // per-model max concurrent requests (0 = disabled)
 }
 
 // NewInferenceProxy creates a new InferenceProxy with an HTTP client
@@ -37,6 +64,14 @@ func NewInferenceProxy() *InferenceProxy {
 		backends: make(map[string][]Backend),
 		http: &http.Client{
 			Timeout: 120 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:          200,
+				MaxIdleConnsPerHost:   50,
+				MaxConnsPerHost:       100,
+				IdleConnTimeout:       90 * time.Second,
+				ResponseHeaderTimeout: 120 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+			},
 		},
 	}
 }
@@ -46,6 +81,27 @@ func (p *InferenceProxy) RegisterBackend(model string, backend Backend) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.backends[model] = append(p.backends[model], backend)
+}
+
+// incrementInflight atomically increments the in-flight counter for a model
+// and returns the new value.
+func (p *InferenceProxy) incrementInflight(model string) int64 {
+	counter, _ := p.inflight.LoadOrStore(model, new(int64))
+	return atomic.AddInt64(counter.(*int64), 1)
+}
+
+// decrementInflight atomically decrements the in-flight counter for a model.
+func (p *InferenceProxy) decrementInflight(model string) {
+	if counter, ok := p.inflight.Load(model); ok {
+		atomic.AddInt64(counter.(*int64), -1)
+	}
+}
+
+// SetMaxInflight sets the per-model maximum concurrent in-flight requests.
+// When the limit is exceeded, new requests are rejected with 503. A value
+// of 0 disables load shedding (the default).
+func (p *InferenceProxy) SetMaxInflight(max int) {
+	p.maxInflight = max
 }
 
 // UpdateBackendHealth sets the health status of a named backend for a model.
@@ -62,6 +118,54 @@ func (p *InferenceProxy) UpdateBackendHealth(model, backendName string, healthy 
 			backends[i].Healthy = healthy
 			break
 		}
+	}
+}
+
+// StartHealthChecks begins periodic health polling of all registered backends.
+// Each tick, it sends a GET to <backend>/v1/models and marks the backend
+// healthy (200) or unhealthy (anything else / error). Polling stops when ctx
+// is cancelled.
+func (p *InferenceProxy) StartHealthChecks(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.checkAllBackends()
+			}
+		}
+	}()
+}
+
+func (p *InferenceProxy) checkAllBackends() {
+	p.mu.RLock()
+	var checks []struct {
+		model string
+		name  string
+		url   string
+	}
+	for model, backends := range p.backends {
+		for _, b := range backends {
+			checks = append(checks, struct {
+				model string
+				name  string
+				url   string
+			}{model, b.Name, b.URL})
+		}
+	}
+	p.mu.RUnlock()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, c := range checks {
+		resp, err := client.Get(c.url + "/v1/models")
+		healthy := err == nil && resp != nil && resp.StatusCode == 200
+		if resp != nil {
+			resp.Body.Close()
+		}
+		p.UpdateBackendHealth(c.model, c.name, healthy)
 	}
 }
 
@@ -122,9 +226,10 @@ func (p *InferenceProxy) SelectBackend(model string, headers http.Header) (*Back
 // tokens in real-time. Non-streaming responses are copied in bulk.
 func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, backend *Backend) {
 	// Read the original body.
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadGateway)
+		writeProxyError(w, http.StatusBadGateway, "failed to read request body")
 		return
 	}
 
@@ -136,12 +241,15 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 	backendURL := backend.URL + path
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, backendURL, bytes.NewReader(body))
 	if err != nil {
-		http.Error(w, `{"error":"failed to create proxy request"}`, http.StatusBadGateway)
+		writeProxyError(w, http.StatusBadGateway, "failed to create proxy request")
 		return
 	}
 
-	// Copy relevant headers.
+	// Copy relevant headers, stripping auth and hop-by-hop headers.
 	for key, vals := range r.Header {
+		if proxyStripHeaders[http.CanonicalHeaderKey(key)] {
+			continue
+		}
 		for _, v := range vals {
 			proxyReq.Header.Add(key, v)
 		}
@@ -150,7 +258,7 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 
 	resp, err := p.http.Do(proxyReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"backend request failed: %s"}`, err.Error()), http.StatusBadGateway)
+		writeProxyError(w, http.StatusBadGateway, "backend request failed: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -210,27 +318,44 @@ type inferenceRequest struct {
 // headers are set before proxying so that clients receive chunked tokens.
 func (p *InferenceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Read the body so we can peek at the model field.
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
+		writeProxyError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
 
 	// Parse the model and stream flag from the request.
 	var req inferenceRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		writeProxyError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	if req.Model == "" {
-		http.Error(w, `{"error":"model field is required"}`, http.StatusBadRequest)
+		writeProxyError(w, http.StatusBadRequest, "model field is required")
 		return
+	}
+
+	// Load shedding: reject if too many in-flight requests for this model
+	if p.maxInflight > 0 {
+		count := p.incrementInflight(req.Model)
+		defer p.decrementInflight(req.Model)
+		if count > int64(p.maxInflight) {
+			w.Header().Set("Retry-After", "5")
+			writeProxyError(w, http.StatusServiceUnavailable,
+				fmt.Sprintf("model %s overloaded: %d in-flight requests (max %d)", req.Model, count, p.maxInflight))
+			return
+		}
+	} else {
+		// Even without load shedding, track in-flight for metrics
+		p.incrementInflight(req.Model)
+		defer p.decrementInflight(req.Model)
 	}
 
 	// Select a backend.
 	backend, reason, err := p.SelectBackend(req.Model, r.Header)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		writeProxyError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
