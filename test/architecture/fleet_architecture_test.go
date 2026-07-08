@@ -22,6 +22,7 @@ import (
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	"github.com/llm-d/fleet-llm-d/pkg/cost"
+	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
@@ -2047,6 +2048,29 @@ func TestA54_Tenant_CheckQuotaIsReadOnly(t *testing.T) {
 	if result1.RemainingTokens != result2.RemainingTokens {
 		t.Errorf("ARCHITECTURE VIOLATION: CheckQuota changed remaining tokens from %d to %d",
 			result1.RemainingTokens, result2.RemainingTokens)
+	}
+}
+
+// ===========================================================================
+// PREDICTIVE BRAIN (A55)
+// ===========================================================================
+
+func TestA55_IntentConsumerAcceptsPreWarm(t *testing.T) {
+	claim(t, "A55", "predictive-brain", "CDD", "Intent consumer accepts valid PreWarm intent")
+
+	intent := intents.FleetIntent{
+		ID:             "arch-test-1",
+		Type:           intents.IntentPreWarm,
+		Confidence:     0.85,
+		HorizonSeconds: 1800,
+		Justification:  "Event pre-warming",
+		Model:          "granite-2b",
+		TargetReplicas: 4,
+	}
+
+	resp := intents.Evaluate(context.Background(), intent, intents.DefaultPolicyConfig())
+	if resp.Status != intents.StatusExecuted {
+		t.Fatalf("ARCHITECTURE VIOLATION: valid intent refused: %s", resp.Reason)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	"github.com/llm-d/fleet-llm-d/pkg/cost"
 	fleetgrpc "github.com/llm-d/fleet-llm-d/pkg/grpc"
+	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
@@ -527,6 +528,33 @@ func (fc *FleetController) handleVerifyChains(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, results)
 }
 
+// handleIntent receives a typed intent from the predictive brain, evaluates it
+// against policy, and records the decision to the ARE ledger.
+func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) {
+	requestsTotal.Add(1)
+	var intent intents.FleetIntent
+	if err := json.NewDecoder(r.Body).Decode(&intent); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
+		return
+	}
+
+	resp := intents.Evaluate(r.Context(), intent, intents.DefaultPolicyConfig())
+
+	// Record to ledger
+	if fc.FleetRecorder != nil {
+		receipt, _ := fc.FleetRecorder.RecordDecision(r.Context(), ledger.FleetDecision{
+			Type:          "fleet.intent." + string(intent.Type),
+			CorrelationID: intent.ID,
+			Content:       []byte(intent.Justification),
+		})
+		if receipt != nil {
+			resp.LedgerEntryID = receipt.EntryID
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // ----------------------------------------------------------------------------
 // Cost and pricing handlers
 // ----------------------------------------------------------------------------
@@ -896,6 +924,11 @@ func (fc *FleetController) setupAPIServer(mode string) *http.ServeMux {
 	if mode == "all" || mode == "inference" {
 		mux.Handle("POST /v1/chat/completions", fc.InferenceProxy)
 		mux.Handle("POST /v1/completions", fc.InferenceProxy)
+	}
+
+	// Intents (predictive brain)
+	if mode == "all" || mode == "control" || mode == "inference" {
+		mux.HandleFunc("POST /api/v1/intents", fc.handleIntent)
 	}
 
 	return mux
