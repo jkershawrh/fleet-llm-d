@@ -130,6 +130,29 @@ func TestAuditCompleteness_CorrelationIDsPresent(t *testing.T) {
 	}
 }
 
+func TestAuditCompleteness_VerifyProofRejectsUnknownHash(t *testing.T) {
+	lc := ledger.NewInMemoryLedgerClient()
+
+	// Record one decision
+	_, err := lc.RecordDecision(context.Background(), ledger.FleetDecision{
+		Type:      "fleet.placement.assigned",
+		InputHash: "real-hash",
+		Content:   []byte(`{"test":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify with a hash that was never recorded
+	result, err := lc.VerifyProof(context.Background(), "fake-hash", "fleet.placement.assigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Valid {
+		t.Error("VerifyProof should reject unknown hashes for compliance — tampered entries must be detectable")
+	}
+}
+
 func TestAuditCompleteness_NoMissingOperationTypes(t *testing.T) {
 	fr, lc := newAuditTestWorld()
 	ctx := context.Background()

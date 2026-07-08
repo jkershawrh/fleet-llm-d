@@ -73,8 +73,17 @@ func makeModelUsageKey(tenantID string, model string, period TimePeriod) modelUs
 	}
 }
 
-// NewUsageTracker returns a new UsageTracker instance.
+// NewUsageTracker returns a new empty UsageTracker instance.
 func NewUsageTracker() UsageTracker {
+	return &defaultUsageTracker{
+		tenantUsage: make(map[usageKey]*TenantUsageSummary),
+		modelUsage:  make(map[modelUsageKey]*ModelUsageSummary),
+	}
+}
+
+// NewSeededUsageTracker returns a UsageTracker pre-seeded with synthetic
+// tenant and model usage data. Useful for demos and testing.
+func NewSeededUsageTracker() UsageTracker {
 	tracker := &defaultUsageTracker{
 		tenantUsage: make(map[usageKey]*TenantUsageSummary),
 		modelUsage:  make(map[modelUsageKey]*ModelUsageSummary),

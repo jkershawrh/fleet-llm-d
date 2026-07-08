@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -18,12 +22,34 @@ type FleetClient struct {
 }
 
 // NewFleetClient creates a new FleetClient targeting the given base URL.
-func NewFleetClient(baseURL string) *FleetClient {
+// When caPath is non-empty, the client loads the PEM-encoded CA certificate
+// and uses it for TLS verification.
+func NewFleetClient(baseURL, caPath string) *FleetClient {
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	if caPath != "" {
+		pemData, err := os.ReadFile(caPath)
+		if err != nil {
+			log.Printf("WARNING: failed to read CA file %s: %v; using default TLS config", caPath, err)
+		} else {
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				pool = x509.NewCertPool()
+			}
+			pool.AppendCertsFromPEM(pemData)
+			httpClient.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{
+					RootCAs: pool,
+				},
+			}
+		}
+	}
+
 	return &FleetClient{
 		BaseURL: baseURL,
-		HTTP: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		HTTP:    httpClient,
 	}
 }
 
@@ -177,7 +203,7 @@ func (c *FleetClient) doRequest(ctx context.Context, method, path string, body i
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
 	}

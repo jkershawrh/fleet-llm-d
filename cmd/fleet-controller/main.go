@@ -800,64 +800,72 @@ func (fc *FleetController) handleModelPlaneDeploymentCost(w http.ResponseWriter,
 // Server setup and lifecycle
 // ----------------------------------------------------------------------------
 
-// setupAPIServer creates the main HTTP API server mux.
-func (fc *FleetController) setupAPIServer() *http.ServeMux {
+// setupAPIServer creates the main HTTP API server mux. The mode parameter
+// controls which routes are mounted: "all" (default) mounts everything,
+// "control" mounts only fleet management API routes, and "inference" mounts
+// only inference proxy routes. Health probes are always mounted.
+func (fc *FleetController) setupAPIServer(mode string) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Health probes
+	// Health probes — always mounted
 	mux.HandleFunc("GET /healthz", fc.handleHealthz)
 	mux.HandleFunc("GET /readyz", fc.handleReadyz)
 
-	// Clusters
-	mux.HandleFunc("GET /api/v1/clusters", fc.handleListClusters)
-	mux.HandleFunc("POST /api/v1/clusters", fc.handleRegisterCluster)
-	mux.HandleFunc("DELETE /api/v1/clusters/{id}", fc.handleDeregisterCluster)
+	// Control plane routes
+	if mode == "all" || mode == "control" {
+		// Clusters
+		mux.HandleFunc("GET /api/v1/clusters", fc.handleListClusters)
+		mux.HandleFunc("POST /api/v1/clusters", fc.handleRegisterCluster)
+		mux.HandleFunc("DELETE /api/v1/clusters/{id}", fc.handleDeregisterCluster)
 
-	// Pools
-	mux.HandleFunc("GET /api/v1/pools", fc.handleListPools)
+		// Pools
+		mux.HandleFunc("GET /api/v1/pools", fc.handleListPools)
 
-	// Reconciler webhook (accepts CRD watch events)
-	if fc.Reconciler != nil {
-		mux.HandleFunc("POST /api/v1/webhook/fleetinferencepool", fc.Reconciler.WatchEndpoint())
-		mux.HandleFunc("GET /api/v1/pools/{name}/state", fc.handleGetPoolState)
+		// Reconciler webhook (accepts CRD watch events)
+		if fc.Reconciler != nil {
+			mux.HandleFunc("POST /api/v1/webhook/fleetinferencepool", fc.Reconciler.WatchEndpoint())
+			mux.HandleFunc("GET /api/v1/pools/{name}/state", fc.handleGetPoolState)
+		}
+
+		// Validation webhook (admission controller)
+		mux.HandleFunc("POST /api/v1/webhook/validate", controller.WebhookHandler())
+
+		// Tenants
+		mux.HandleFunc("GET /api/v1/tenants", fc.handleListTenants)
+		mux.HandleFunc("GET /api/v1/tenants/{id}/usage", fc.handleTenantUsage)
+
+		// Metrics
+		mux.HandleFunc("GET /api/v1/metrics/fleet", fc.handleFleetMetrics)
+		mux.HandleFunc("GET /api/v1/metrics/model/{model}", fc.handleModelMetrics)
+
+		// Rollouts
+		mux.HandleFunc("GET /api/v1/rollouts", fc.handleListRollouts)
+		mux.HandleFunc("POST /api/v1/rollouts", fc.handleCreateRollout)
+		mux.HandleFunc("POST /api/v1/rollouts/{id}/promote", fc.handlePromoteRollout)
+		mux.HandleFunc("POST /api/v1/rollouts/{id}/rollback", fc.handleRollbackRollout)
+
+		// Ledger verification
+		mux.HandleFunc("GET /api/v1/verify/chains", fc.handleVerifyChains)
+
+		// Cost and pricing
+		mux.HandleFunc("GET /api/v1/cost/pricing", fc.handleCostPricing)
+		mux.HandleFunc("GET /api/v1/cost/tokenomics/{model}", fc.handleCostTokenomics)
+		mux.HandleFunc("GET /api/v1/cost/chargeback/{tenant}", fc.handleCostChargeback)
+		mux.HandleFunc("GET /api/v1/cost/projection", fc.handleCostProjection)
+		mux.HandleFunc("GET /api/v1/cost/savings", fc.handleCostSavings)
+		mux.HandleFunc("GET /api/v1/cost/alerts", fc.handleCostAlerts)
+
+		// ModelPlane integration
+		mux.HandleFunc("GET /api/v1/modelplane/clusters", fc.handleModelPlaneClusters)
+		mux.HandleFunc("GET /api/v1/modelplane/deployments", fc.handleModelPlaneDeployments)
+		mux.HandleFunc("GET /api/v1/modelplane/cost/{deployment}", fc.handleModelPlaneDeploymentCost)
 	}
 
-	// Validation webhook (admission controller)
-	mux.HandleFunc("POST /api/v1/webhook/validate", controller.WebhookHandler())
-
-	// Tenants
-	mux.HandleFunc("GET /api/v1/tenants", fc.handleListTenants)
-	mux.HandleFunc("GET /api/v1/tenants/{id}/usage", fc.handleTenantUsage)
-
-	// Metrics
-	mux.HandleFunc("GET /api/v1/metrics/fleet", fc.handleFleetMetrics)
-	mux.HandleFunc("GET /api/v1/metrics/model/{model}", fc.handleModelMetrics)
-
-	// Rollouts
-	mux.HandleFunc("GET /api/v1/rollouts", fc.handleListRollouts)
-	mux.HandleFunc("POST /api/v1/rollouts", fc.handleCreateRollout)
-	mux.HandleFunc("POST /api/v1/rollouts/{id}/promote", fc.handlePromoteRollout)
-	mux.HandleFunc("POST /api/v1/rollouts/{id}/rollback", fc.handleRollbackRollout)
-
-	// Ledger verification
-	mux.HandleFunc("GET /api/v1/verify/chains", fc.handleVerifyChains)
-
-	// Cost and pricing
-	mux.HandleFunc("GET /api/v1/cost/pricing", fc.handleCostPricing)
-	mux.HandleFunc("GET /api/v1/cost/tokenomics/{model}", fc.handleCostTokenomics)
-	mux.HandleFunc("GET /api/v1/cost/chargeback/{tenant}", fc.handleCostChargeback)
-	mux.HandleFunc("GET /api/v1/cost/projection", fc.handleCostProjection)
-	mux.HandleFunc("GET /api/v1/cost/savings", fc.handleCostSavings)
-	mux.HandleFunc("GET /api/v1/cost/alerts", fc.handleCostAlerts)
-
-	// ModelPlane integration
-	mux.HandleFunc("GET /api/v1/modelplane/clusters", fc.handleModelPlaneClusters)
-	mux.HandleFunc("GET /api/v1/modelplane/deployments", fc.handleModelPlaneDeployments)
-	mux.HandleFunc("GET /api/v1/modelplane/cost/{deployment}", fc.handleModelPlaneDeploymentCost)
-
 	// Inference proxy routes
-	mux.Handle("POST /v1/chat/completions", fc.InferenceProxy)
-	mux.Handle("POST /v1/completions", fc.InferenceProxy)
+	if mode == "all" || mode == "inference" {
+		mux.Handle("POST /v1/chat/completions", fc.InferenceProxy)
+		mux.Handle("POST /v1/completions", fc.InferenceProxy)
+	}
 
 	return mux
 }
@@ -871,13 +879,13 @@ func setupMetricsServer() *http.ServeMux {
 
 // Run starts the fleet controller HTTP servers and blocks until the context
 // is cancelled or a shutdown signal is received.
-func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey string, rateLimiter *auth.RateLimiter, rateLimitExempt []string) error {
+func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey, mode string, rateLimiter *auth.RateLimiter, rateLimitExempt []string) error {
 	// Create a context that is cancelled on SIGINT or SIGTERM.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Wrap the API server mux with auth middleware and rate limiting.
-	mux := fc.setupAPIServer()
+	mux := fc.setupAPIServer(mode)
 	exempt := defaultExemptPaths(rateLimitExempt)
 	var handler http.Handler = auth.AuthorizationMiddleware(exempt, mux)
 	handler = auth.AuthMiddleware(authCfg, exempt, handler)
@@ -889,8 +897,8 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		WriteTimeout: 180 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	metricsServer := &http.Server{
@@ -923,21 +931,24 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 		}
 	}()
 
-	// Start CRD watcher if Kubernetes API is configured.
-	if fc.CRDWatcher != nil {
-		if err := fc.CRDWatcher.Start(ctx); err != nil {
-			log.Printf("WARNING: CRD watcher failed to start: %v", err)
-		} else {
-			log.Println("CRD watcher started for FleetInferencePool resources")
+	// Start CRD and ModelPlane watchers only when running control plane.
+	if mode != "inference" {
+		// Start CRD watcher if Kubernetes API is configured.
+		if fc.CRDWatcher != nil {
+			if err := fc.CRDWatcher.Start(ctx); err != nil {
+				log.Printf("WARNING: CRD watcher failed to start: %v", err)
+			} else {
+				log.Println("CRD watcher started for FleetInferencePool resources")
+			}
 		}
-	}
 
-	// Start ModelPlane watcher if configured.
-	if fc.ModelPlaneWatcher != nil {
-		if err := fc.ModelPlaneWatcher.Start(ctx); err != nil {
-			log.Printf("WARNING: ModelPlane watcher failed to start: %v", err)
-		} else {
-			log.Println("ModelPlane watcher started")
+		// Start ModelPlane watcher if configured.
+		if fc.ModelPlaneWatcher != nil {
+			if err := fc.ModelPlaneWatcher.Start(ctx); err != nil {
+				log.Printf("WARNING: ModelPlane watcher failed to start: %v", err)
+			} else {
+				log.Println("ModelPlane watcher started")
+			}
 		}
 	}
 
@@ -998,13 +1009,13 @@ func splitCSV(value string) []string {
 
 func main() {
 	port := flag.Int("port", 8080, "API server port")
-	metricsPort := flag.Int("metrics-port", 9090, "Metrics server port")
+	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
+	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only), inference (inference proxy only)")
 	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http, grpc")
 	ledgerEndpoint := flag.String("ledger-endpoint", "localhost:9092", "ARE ledger endpoint")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
-	authSecret := flag.String("auth-secret", "", "HMAC-SHA256 auth secret (alternative to FLEET_AUTH_SECRET env var)")
 	backendVLLM := flag.String("backend-vllm", "http://vllm-cpu.fleet-llm-d.svc:8000", "Base URL for the vLLM inference backend")
 	backendOVMS := flag.String("backend-ovms", "http://ovms-granite-external.fleet-llm-d.svc:8080", "Base URL for the OVMS inference backend")
 	kubeAPI := flag.String("kube-api", "", "Kubernetes API server URL (enables CRD watching when set)")
@@ -1016,16 +1027,14 @@ func main() {
 	rateLimit := flag.Float64("rate-limit", 100, "Rate limit in requests per second per IP (0 to disable)")
 	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
+	backends := flag.String("backends", "", `JSON array of inference backends: [{"model":"name","url":"http://...","runtime":"openvino|vllm","path_prefix":"/v3"}]`)
+	maxInflight := flag.Int("max-inflight", 0, "Max concurrent inference requests per model (0 = disabled)")
 	flag.Parse()
 
-	log.Printf("fleet-controller starting (log-level=%s, ledger-mode=%s, ledger=%s)", *logLevel, *ledgerMode, *ledgerEndpoint)
+	log.Printf("fleet-controller starting (mode=%s, log-level=%s, ledger-mode=%s, ledger=%s)", *mode, *logLevel, *ledgerMode, *ledgerEndpoint)
 
-	// Build auth config: CLI flag takes precedence over env var.
+	// Build auth config from environment variable FLEET_AUTH_SECRET.
 	authCfg := auth.ConfigFromEnv()
-	if *authSecret != "" {
-		authCfg.Secret = *authSecret
-		authCfg.Enabled = true
-	}
 
 	log.Printf("auth enabled=%v, TLS enabled=%v, kube-api=%q, namespace=%q, pg=%v, event-endpoint=%q",
 		authCfg.Enabled, *tlsCert != "" && *tlsKey != "", *kubeAPI, *namespace,
@@ -1035,6 +1044,33 @@ func main() {
 		Mode:     ledger.Mode(*ledgerMode),
 		Endpoint: *ledgerEndpoint,
 	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
+
+	// Configure per-model load shedding if --max-inflight is set.
+	fc.InferenceProxy.SetMaxInflight(*maxInflight)
+
+	// Register additional backends from --backends JSON flag.
+	if *backends != "" {
+		var backendList []struct {
+			Model      string `json:"model"`
+			URL        string `json:"url"`
+			Runtime    string `json:"runtime"`
+			PathPrefix string `json:"path_prefix"`
+		}
+		if err := json.Unmarshal([]byte(*backends), &backendList); err != nil {
+			log.Fatalf("failed to parse --backends JSON: %v", err)
+		}
+		for _, b := range backendList {
+			fc.InferenceProxy.RegisterBackend(b.Model, routing.Backend{
+				Name:       fmt.Sprintf("%s-%s", b.Runtime, b.Model),
+				URL:        b.URL,
+				Runtime:    b.Runtime,
+				PathPrefix: b.PathPrefix,
+				Healthy:    true,
+				LatencyMs:  500,
+			})
+			log.Printf("registered backend: model=%s url=%s runtime=%s", b.Model, b.URL, b.Runtime)
+		}
+	}
 
 	// Override stores with PostgreSQL when --pg-url is set.
 	if *pgURL != "" {
@@ -1055,6 +1091,12 @@ func main() {
 		fc.PoolRepo = postgres.NewPGFleetPoolRepository(pgClient)
 		fc.TenantRepo = postgres.NewPGTenantRepository(pgClient)
 		fc.RolloutRepo = postgres.NewPGRolloutRepository(pgClient)
+	}
+
+	// Initialize clustersGauge from existing data so the gauge reflects
+	// clusters that were persisted before this process started.
+	if clusters, err := fc.ClusterClient.ListClusters(context.Background()); err == nil {
+		clustersGauge.Add(int64(len(clusters)))
 	}
 
 	// Override event publisher with HTTP publisher when --event-endpoint is set.
@@ -1106,7 +1148,7 @@ func main() {
 		log.Printf("rate limiting enabled (rate=%.0f/s, burst=%d)", *rateLimit, *rateBurst)
 	}
 
-	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey, rl, splitCSV(*rateLimitExempt)); err != nil {
+	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey, *mode, rl, splitCSV(*rateLimitExempt)); err != nil {
 		log.Fatal(err)
 	}
 }

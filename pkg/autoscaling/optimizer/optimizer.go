@@ -70,7 +70,7 @@ func (o *defaultFleetOptimizer) Optimize(
 			for _, obj := range objectives {
 				actual := metricValue(pool, obj.metric)
 				switch obj.metric {
-				case "queueDepth", "ttft_p99_ms":
+				case "queueDepth", "ttft_p99_ms", "inferenceLatencyP99Ms":
 					if actual > obj.target {
 						needsScaleUp = true
 						ratio := actual / obj.target
@@ -78,8 +78,15 @@ func (o *defaultFleetOptimizer) Optimize(
 							maxRatio = ratio
 						}
 					}
-				case "gpuUtilization":
-					if actual < obj.target {
+				case "gpuUtilization", "cpuUtilization":
+					// Scale-down: use cpuUtilization for CPU pools, gpuUtilization for GPU pools.
+					// For cpuUtilization objectives, check whether actual CPU use is below target.
+					// For gpuUtilization objectives on CPU-only pools (GPU=0, CPU>0), use CPU utilization instead.
+					effectiveActual := actual
+					if obj.metric == "gpuUtilization" && pool.GPUUtilization == 0 && pool.CPUUtilization > 0 {
+						effectiveActual = pool.CPUUtilization
+					}
+					if effectiveActual < obj.target {
 						needsScaleDown = true
 					}
 				}
@@ -134,7 +141,16 @@ func (o *defaultFleetOptimizer) Optimize(
 				if other.overloaded &&
 					other.pool.PoolName == st.pool.PoolName &&
 					other.clusterID != st.clusterID {
-					diff := other.pool.GPUUtilization - st.pool.GPUUtilization
+					// Use cpuUtilization for CPU pools (GPUUtilization == 0), gpuUtilization otherwise.
+					otherUtil := other.pool.GPUUtilization
+					if otherUtil == 0 && other.pool.CPUUtilization > 0 {
+						otherUtil = other.pool.CPUUtilization
+					}
+					stUtil := st.pool.GPUUtilization
+					if stUtil == 0 && st.pool.CPUUtilization > 0 {
+						stUtil = st.pool.CPUUtilization
+					}
+					diff := otherUtil - stUtil
 					if diff >= pol.CrossCluster.MigrationThreshold {
 						shouldAbsorb = true
 						break
@@ -225,6 +241,10 @@ func metricValue(p collector.PoolMetrics, metric string) float64 {
 		return p.Throughput_TPS
 	case "kvCacheHitRate":
 		return p.KVCacheHitRate
+	case "cpuUtilization":
+		return p.CPUUtilization
+	case "inferenceLatencyP99Ms":
+		return p.InferenceLatencyP99Ms
 	default:
 		return 0
 	}
@@ -242,19 +262,29 @@ func objectiveTarget(objectives []scalingObjective, metric string) float64 {
 }
 
 // scaleDownReplicas computes the desired replica count when a pool is
-// underutilized, honouring ScaleToZero if enabled.
+// underutilized, honouring ScaleToZero if enabled. For CPU-only pools
+// (GPUUtilization == 0, CPUUtilization > 0) it uses CPU utilization
+// instead of GPU utilization.
 func scaleDownReplicas(pool collector.PoolMetrics, objectives []scalingObjective, stz *v1alpha1.ScaleToZeroSpec) int {
 	minReplicas := 1
 	if stz != nil && stz.Enabled {
 		minReplicas = 0
 	}
 
-	gpuTarget := objectiveTarget(objectives, "gpuUtilization")
-	if gpuTarget <= 0 {
-		gpuTarget = 1.0
+	// Use cpuUtilization for CPU pools, gpuUtilization for GPU pools.
+	utilization := pool.GPUUtilization
+	targetMetric := "gpuUtilization"
+	if pool.GPUUtilization == 0 && pool.CPUUtilization > 0 {
+		utilization = pool.CPUUtilization
+		targetMetric = "cpuUtilization"
 	}
 
-	desired := int(math.Floor(float64(pool.Replicas) * pool.GPUUtilization / gpuTarget))
+	target := objectiveTarget(objectives, targetMetric)
+	if target <= 0 {
+		target = 1.0
+	}
+
+	desired := int(math.Floor(float64(pool.Replicas) * utilization / target))
 	if desired >= pool.Replicas {
 		desired = pool.Replicas - 1
 	}

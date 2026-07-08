@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // ClusterConnection holds the runtime connection state for a registered cluster.
@@ -31,13 +33,20 @@ type ClusterConnection struct {
 type KubeconfigClusterClient struct {
 	mu       sync.RWMutex
 	clusters map[string]*ClusterConnection
+	tlsOpts  tlsutil.TLSOptions
 }
 
 // NewKubeconfigClusterClient returns a new KubeconfigClusterClient with an
-// empty cluster map.
-func NewKubeconfigClusterClient() *KubeconfigClusterClient {
+// empty cluster map. An optional tlsutil.TLSOptions can be passed to configure
+// TLS behavior; when omitted, InsecureSkipVerify is used for backward compatibility.
+func NewKubeconfigClusterClient(tlsOpts ...tlsutil.TLSOptions) *KubeconfigClusterClient {
+	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	if len(tlsOpts) > 0 {
+		opts = tlsOpts[0]
+	}
 	return &KubeconfigClusterClient{
 		clusters: make(map[string]*ClusterConnection),
+		tlsOpts:  opts,
 	}
 }
 
@@ -104,12 +113,16 @@ func (c *KubeconfigClusterClient) RegisterCluster(ctx context.Context, reg Clust
 		}
 	}
 
+	tlsCfg, tlsErr := tlsutil.NewTLSConfig(c.tlsOpts)
+	if tlsErr != nil {
+		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", tlsErr)
+		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+	}
+
 	httpClient := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // intentional for multi-cluster bootstrapping
-			},
+			TLSClientConfig: tlsCfg,
 		},
 	}
 
@@ -219,7 +232,7 @@ func (c *KubeconfigClusterClient) ApplyResource(ctx context.Context, clusterID s
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return fmt.Errorf("API server returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -306,7 +319,16 @@ func (c *KubeconfigClusterClient) GetResource(ctx context.Context, clusterID, ap
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading response from cluster %q: %w", clusterID, err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("cluster %q returned HTTP %d: %s", clusterID, resp.StatusCode, string(body))
+	}
+
+	return body, nil
 }
 
 // HealthCheck probes the /healthz endpoint of the cluster's API server and

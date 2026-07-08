@@ -167,10 +167,14 @@ func (c *InMemoryLedgerClient) IssueProofReceipt(_ context.Context, decision Fle
 }
 
 func (c *InMemoryLedgerClient) VerifyProof(_ context.Context, entryHash, entryType string) (*ProofVerification, error) {
-	return &ProofVerification{
-		Valid:     true,
-		EntryType: entryType,
-	}, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.entries {
+		if e.InputHash == entryHash && e.Type == entryType {
+			return &ProofVerification{Valid: true, EntryType: entryType}, nil
+		}
+	}
+	return &ProofVerification{Valid: false, EntryType: entryType}, nil
 }
 
 // Entries returns all recorded entries (for test assertions).

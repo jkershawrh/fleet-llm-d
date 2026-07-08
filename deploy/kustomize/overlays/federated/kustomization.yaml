@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: fleet-llm-d
 resources:
   - ../../base
+  - pdb.yaml
 patches:
   # Patch fleet-controller: 3 replicas, federation env vars, mesh annotations
   - target:

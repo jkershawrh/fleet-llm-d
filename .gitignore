@@ -62,3 +62,13 @@ web/src/lib/api-client.generated.ts
 upstream-are-ledger/
 upstream-llm-d/
 upstream-model-spec/
+
+# Deployment-specific (cluster snapshots, rollback data)
+rollback/
+deploy/prod-cluster-1/
+*.kubeconfig
+*-snapshot-*.yaml
+
+# Local model exports (large binaries)
+ovms-models*/
+ovms-tmp*/

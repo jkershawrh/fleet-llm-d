@@ -165,3 +165,153 @@ func TestHealthProbeBypassesAuth(t *testing.T) {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
 }
+
+func TestOperatorCannotDeleteClusters(t *testing.T) {
+	secret := "integration-test-secret"
+	ts := newTestServer(secret)
+	defer ts.Close()
+
+	token := generateTestToken(secret, "operator-user", auth.RoleOperator, 1*time.Hour)
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/clusters/test-cluster", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 for operator DELETE, got %d", resp.StatusCode)
+	}
+}
+
+func TestAdminCanPerformAllOperations(t *testing.T) {
+	secret := "integration-test-secret"
+	ts := newTestServer(secret)
+	defer ts.Close()
+
+	token := generateTestToken(secret, "admin-user", auth.RoleAdmin, 1*time.Hour)
+
+	// Admin can GET
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/clusters", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("admin GET should return 200, got %d", resp.StatusCode)
+	}
+
+	// Admin can DELETE
+	req, _ = http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/clusters/test-cluster", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("admin DELETE should return 200, got %d", resp.StatusCode)
+	}
+}
+
+// newTenantTestServer creates an httptest.Server with both AuthMiddleware and
+// AuthorizationMiddleware wired up, including a tenant usage endpoint for
+// testing tenant-scoped access control.
+func newTenantTestServer(secret string) *httptest.Server {
+	cfg := auth.Config{
+		Secret:   secret,
+		TokenTTL: 24 * time.Hour,
+		Enabled:  true,
+	}
+	exempt := []string{"/healthz", "/readyz", "/metrics"}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/clusters", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode([]map[string]string{})
+	})
+	mux.HandleFunc("GET /api/v1/tenants/{id}/usage", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("DELETE /api/v1/clusters/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	})
+
+	var handler http.Handler = auth.AuthorizationMiddleware(exempt, mux)
+	handler = auth.AuthMiddleware(cfg, exempt, handler)
+	return httptest.NewServer(handler)
+}
+
+func TestTenantCanAccessOwnUsage(t *testing.T) {
+	secret := "integration-test-secret"
+	ts := newTenantTestServer(secret)
+	defer ts.Close()
+
+	token := generateTestToken(secret, "tenant-alpha", auth.RoleTenant, 1*time.Hour)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/tenants/tenant-alpha/usage", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("tenant should access own usage, got %d", resp.StatusCode)
+	}
+}
+
+func TestTenantCannotAccessOtherTenantUsage(t *testing.T) {
+	secret := "integration-test-secret"
+	ts := newTenantTestServer(secret)
+	defer ts.Close()
+
+	token := generateTestToken(secret, "tenant-alpha", auth.RoleTenant, 1*time.Hour)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/tenants/tenant-beta/usage", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("tenant should NOT access other tenant's usage, got %d", resp.StatusCode)
+	}
+}
+
+func TestTenantCannotListClusters(t *testing.T) {
+	secret := "integration-test-secret"
+	ts := newTenantTestServer(secret)
+	defer ts.Close()
+
+	token := generateTestToken(secret, "tenant-alpha", auth.RoleTenant, 1*time.Hour)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/clusters", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Tenants should be forbidden from non-usage endpoints
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("tenant should NOT access clusters, got %d", resp.StatusCode)
+	}
+}

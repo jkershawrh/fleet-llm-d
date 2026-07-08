@@ -121,6 +121,33 @@ func TestComputeDeploymentCost_MultiCluster(t *testing.T) {
 	}
 }
 
+func TestComputeDeploymentCost_HandlesUnknownClusters(t *testing.T) {
+	md := modelplane.ModelDeployment{
+		Name: "test-deploy", Model: "test-model", Replicas: 6,
+		Status: modelplane.DeploymentStatus{
+			Clusters: []string{"known-cluster", "unknown-cluster"},
+		},
+	}
+	clusters := []modelplane.InferenceCluster{{
+		Name:  "known-cluster",
+		Pools: []modelplane.NodePool{{Name: "pool-1", GPUType: "A100", Count: 8, Available: 4}},
+	}}
+	pricing := DefaultPricingTable()
+
+	cost, err := ComputeDeploymentCost(md, clusters, pricing)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All 6 replicas should be costed on the known cluster
+	// (not divided between 2 clusters with 3 silently dropped)
+	expectedPerReplica := 3.20 // A100 on-demand
+	expectedTotal := 6.0 * expectedPerReplica
+	if cost != expectedTotal {
+		t.Errorf("expected cost %.2f (all replicas on known cluster), got %.2f", expectedTotal, cost)
+	}
+}
+
 func TestOptimizePlacement_SortedByCost(t *testing.T) {
 	table := DefaultPricingTable()
 

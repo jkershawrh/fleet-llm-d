@@ -5,6 +5,7 @@ resources:
   - ../../base
   - postgres.yaml
   - redis.yaml
+  - pdb.yaml
 patches:
   - target:
       kind: Deployment

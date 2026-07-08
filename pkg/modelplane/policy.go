@@ -7,8 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // PolicyInjector patches ModelPlane resources with fleet policy constraints.
@@ -19,16 +23,27 @@ type PolicyInjector struct {
 }
 
 // NewPolicyInjector creates a new PolicyInjector.
-func NewPolicyInjector(apiServer, token string) *PolicyInjector {
+// An optional tlsutil.TLSOptions can be passed to configure TLS behavior;
+// when omitted, InsecureSkipVerify is used for backward compatibility.
+func NewPolicyInjector(apiServer, token string, tlsOpts ...tlsutil.TLSOptions) *PolicyInjector {
+	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	if len(tlsOpts) > 0 {
+		opts = tlsOpts[0]
+	}
+
+	tlsCfg, err := tlsutil.NewTLSConfig(opts)
+	if err != nil {
+		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", err)
+		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+	}
+
 	return &PolicyInjector{
 		apiServer: apiServer,
 		token:     token,
 		http: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
+				TLSClientConfig: tlsCfg,
 			},
 		},
 	}
@@ -43,7 +58,7 @@ func (p *PolicyInjector) ApplyPlacementAnnotations(ctx context.Context, deployme
 	}
 	return p.patchResource(ctx, fmt.Sprintf(
 		"/apis/modelplane.ai/v1alpha1/namespaces/%s/modeldeployments/%s",
-		namespace, deploymentName), patch)
+		url.PathEscape(namespace), url.PathEscape(deploymentName)), patch)
 }
 
 // SetReplicaCount patches ModelDeployment.spec.replicas.
@@ -55,7 +70,7 @@ func (p *PolicyInjector) SetReplicaCount(ctx context.Context, deploymentName, na
 	}
 	return p.patchResource(ctx, fmt.Sprintf(
 		"/apis/modelplane.ai/v1alpha1/namespaces/%s/modeldeployments/%s",
-		namespace, deploymentName), patch)
+		url.PathEscape(namespace), url.PathEscape(deploymentName)), patch)
 }
 
 // SetServiceWeights patches ModelService endpoint weights for canary routing.
@@ -74,7 +89,7 @@ func (p *PolicyInjector) SetServiceWeights(ctx context.Context, serviceName, nam
 	}
 	return p.patchResource(ctx, fmt.Sprintf(
 		"/apis/modelplane.ai/v1alpha1/namespaces/%s/modelservices/%s",
-		namespace, serviceName), patch)
+		url.PathEscape(namespace), url.PathEscape(serviceName)), patch)
 }
 
 // patchResource sends a JSON merge patch to the ModelPlane API.
@@ -101,7 +116,7 @@ func (p *PolicyInjector) patchResource(ctx context.Context, path string, patch i
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		snippet := string(respBody)
 		if len(snippet) > 200 {
 			snippet = snippet[:200]

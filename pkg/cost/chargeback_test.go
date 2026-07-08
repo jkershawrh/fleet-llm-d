@@ -134,6 +134,25 @@ func TestChargebackReport_BudgetUsage(t *testing.T) {
 	}
 }
 
+func TestChargebackReport_FlagsUnpricedGPU(t *testing.T) {
+	pricing := DefaultPricingTable()
+	usage := []UsageRecord{{
+		TenantID: "t1", Model: "m1", Cluster: "c1",
+		GPUType: "UNKNOWN_GPU_TYPE", Tokens: 1000,
+		Duration: time.Hour, Timestamp: time.Now(),
+	}}
+	report := GenerateChargebackReport("t1", usage, pricing, 10000)
+	if len(report.CostBreakdown) == 0 {
+		t.Fatal("expected at least one line item")
+	}
+	if !report.CostBreakdown[0].Unpriced {
+		t.Error("line item with unknown GPU should be marked Unpriced=true")
+	}
+	if report.CostBreakdown[0].Cost != 0 {
+		t.Error("unpriced GPU should have zero cost")
+	}
+}
+
 func TestChargebackReport_NoUsage(t *testing.T) {
 	pt := DefaultPricingTable()
 

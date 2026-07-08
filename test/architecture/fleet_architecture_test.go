@@ -1,7 +1,7 @@
 //go:build architecture
 
-// Package architecture proves 39 architectural claims about fleet-llm-d.
-// Each test function maps to a specific claim (A01-A36).
+// Package architecture proves 54 architectural claims about fleet-llm-d.
+// Each test function maps to a specific claim (A01-A54).
 // A failing test means the architecture is broken, not just a bug.
 package architecture
 
@@ -527,12 +527,14 @@ func TestA12_Tenant_QuotaAllowsWithinLimits(t *testing.T) {
 	qe := quota.NewQuotaEnforcer()
 	ctx := context.Background()
 
-	result, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{
+	// CheckQuota is read-only; use ConsumeQuota to actually deduct.
+	ce := qe.(*quota.DefaultQuotaEnforcer)
+	result, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{
 		TokensRequested: 500,
 		Model:           "test-model",
 	})
 	if err != nil {
-		t.Fatalf("CheckQuota: %v", err)
+		t.Fatalf("ConsumeQuota: %v", err)
 	}
 	if !result.Allowed {
 		t.Fatalf("500 tokens should be allowed (limit 1000), reason: %s", result.Reason)
@@ -546,27 +548,28 @@ func TestA13_Tenant_QuotaRejectsOverLimits(t *testing.T) {
 	claim(t, "A13", "tenant", "TDD", "Quota rejects requests exceeding token limits")
 
 	qe := quota.NewQuotaEnforcer()
+	ce := qe.(*quota.DefaultQuotaEnforcer)
 	ctx := context.Background()
 
 	// Consume 900 of 1000 tokens.
-	result, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{
+	result, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{
 		TokensRequested: 900,
 		Model:           "test-model",
 	})
 	if err != nil {
-		t.Fatalf("first CheckQuota: %v", err)
+		t.Fatalf("first ConsumeQuota: %v", err)
 	}
 	if !result.Allowed {
 		t.Fatalf("900 tokens should be allowed, reason: %s", result.Reason)
 	}
 
 	// Try to consume 200 more (only 100 remaining).
-	result, err = qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{
+	result, err = ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{
 		TokensRequested: 200,
 		Model:           "test-model",
 	})
 	if err != nil {
-		t.Fatalf("second CheckQuota: %v", err)
+		t.Fatalf("second ConsumeQuota: %v", err)
 	}
 	if result.Allowed {
 		t.Fatal("200 tokens should be rejected (only 100 remaining)")
@@ -580,21 +583,22 @@ func TestA14_Tenant_UsageAccumulatesAcrossRequests(t *testing.T) {
 	claim(t, "A14", "tenant", "TDD", "Token usage accumulates across requests")
 
 	qe := quota.NewQuotaEnforcer()
+	ce := qe.(*quota.DefaultQuotaEnforcer)
 	ctx := context.Background()
 
 	// First request: 100 tokens.
-	r1, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 100})
+	r1, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 100})
 	if err != nil {
-		t.Fatalf("CheckQuota 1: %v", err)
+		t.Fatalf("ConsumeQuota 1: %v", err)
 	}
 	if r1.RemainingTokens != 900 {
 		t.Fatalf("after 100 tokens: remaining = %d, want 900", r1.RemainingTokens)
 	}
 
 	// Second request: 200 more tokens.
-	r2, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 200})
+	r2, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 200})
 	if err != nil {
-		t.Fatalf("CheckQuota 2: %v", err)
+		t.Fatalf("ConsumeQuota 2: %v", err)
 	}
 	if r2.RemainingTokens != 700 {
 		t.Fatalf("after 100+200 tokens: remaining = %d, want 700 (300 consumed)", r2.RemainingTokens)
@@ -605,22 +609,23 @@ func TestA15_Tenant_BudgetRejectsOverCap(t *testing.T) {
 	claim(t, "A15", "tenant", "TDD", "Budget cap rejects when exhausted")
 
 	qe := quota.NewQuotaEnforcer()
+	ce := qe.(*quota.DefaultQuotaEnforcer)
 	ctx := context.Background()
 
 	// Exhaust the entire budget by consuming all 1000 tokens
 	// (1000 tokens * 1 cent/token = $10.00 = full budget).
-	r1, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1000})
+	r1, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1000})
 	if err != nil {
-		t.Fatalf("CheckQuota (exhaust): %v", err)
+		t.Fatalf("ConsumeQuota (exhaust): %v", err)
 	}
 	if !r1.Allowed {
 		t.Fatalf("1000 tokens should be allowed on fresh tenant, reason: %s", r1.Reason)
 	}
 
 	// Now the budget is $0.00. Next request should fail on budget check.
-	r2, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1})
+	r2, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1})
 	if err != nil {
-		t.Fatalf("CheckQuota (over budget): %v", err)
+		t.Fatalf("ConsumeQuota (over budget): %v", err)
 	}
 	if r2.Allowed {
 		t.Fatal("request should be rejected when budget is exhausted")
@@ -634,24 +639,25 @@ func TestA16_Tenant_MultiTenantIsolation(t *testing.T) {
 	claim(t, "A16", "tenant", "TDD", "Tenant quotas are isolated from each other")
 
 	qe := quota.NewQuotaEnforcer()
+	ce := qe.(*quota.DefaultQuotaEnforcer)
 	ctx := context.Background()
 
 	// Exhaust tenant-1's quota entirely.
-	_, err := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1000})
+	_, err := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1000})
 	if err != nil {
 		t.Fatalf("exhaust tenant-1: %v", err)
 	}
 
 	// Verify tenant-1 is exhausted.
-	r1, _ := qe.CheckQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1})
+	r1, _ := ce.ConsumeQuota(ctx, "tenant-1", quota.QuotaCheckRequest{TokensRequested: 1})
 	if r1.Allowed {
 		t.Fatal("tenant-1 should be exhausted")
 	}
 
 	// Verify tenant-2 still has full quota (isolated from tenant-1).
-	r2, err := qe.CheckQuota(ctx, "tenant-2", quota.QuotaCheckRequest{TokensRequested: 500})
+	r2, err := ce.ConsumeQuota(ctx, "tenant-2", quota.QuotaCheckRequest{TokensRequested: 500})
 	if err != nil {
-		t.Fatalf("CheckQuota tenant-2: %v", err)
+		t.Fatalf("ConsumeQuota tenant-2: %v", err)
 	}
 	if !r2.Allowed {
 		t.Fatalf("tenant-2 should still have full quota, reason: %s", r2.Reason)
@@ -1919,6 +1925,128 @@ func TestA50_ModelPlane_EventsRecordedToLedger(t *testing.T) {
 	}
 	if content1["deployment"] != "granite-deploy" {
 		t.Fatalf("entry[1] deployment = %v, want 'granite-deploy'", content1["deployment"])
+	}
+}
+
+// ===========================================================================
+// SECURITY CONTRACTS (A51-A54)
+// ===========================================================================
+
+func TestA51_Security_ProxyStripsAuthHeaders(t *testing.T) {
+	claim(t, "A51", "security", "CDD", "Proxy strips Authorization/Cookie/Proxy-Authorization before forwarding")
+
+	// Architecture claim: the inference proxy MUST strip Authorization,
+	// Cookie, and Proxy-Authorization headers before forwarding to backends.
+	var receivedHeaders http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer backend.Close()
+
+	proxy := routing.NewInferenceProxy()
+	proxy.RegisterBackend("arch-test-model", routing.Backend{
+		Name: "arch-backend", URL: backend.URL, Runtime: "vllm", Healthy: true,
+	})
+
+	body := `{"model":"arch-test-model","messages":[{"role":"user","content":"test"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Cookie", "session=abc")
+	req.Header.Set("Proxy-Authorization", "Basic creds")
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("proxy returned %d, expected 200", w.Code)
+	}
+	if receivedHeaders.Get("Authorization") != "" {
+		t.Error("ARCHITECTURE VIOLATION: Authorization header forwarded to backend")
+	}
+	if receivedHeaders.Get("Cookie") != "" {
+		t.Error("ARCHITECTURE VIOLATION: Cookie header forwarded to backend")
+	}
+	if receivedHeaders.Get("Proxy-Authorization") != "" {
+		t.Error("ARCHITECTURE VIOLATION: Proxy-Authorization header forwarded to backend")
+	}
+}
+
+func TestA52_Security_ProxyReturnsValidJSONErrors(t *testing.T) {
+	claim(t, "A52", "security", "CDD", "All proxy error responses are valid JSON with application/json")
+
+	// Architecture claim: all proxy error responses MUST be valid JSON
+	// with Content-Type application/json.
+	proxy := routing.NewInferenceProxy()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"missing model", `{"messages":[{"role":"user","content":"test"}]}`},
+		{"invalid JSON", `{not valid json`},
+		{"unknown model", `{"model":"nonexistent","messages":[]}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			proxy.ServeHTTP(w, req)
+
+			ct := w.Header().Get("Content-Type")
+			if ct != "application/json" {
+				t.Errorf("ARCHITECTURE VIOLATION: error response Content-Type is %q, expected application/json", ct)
+			}
+
+			var parsed map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
+				t.Errorf("ARCHITECTURE VIOLATION: error response is not valid JSON: %v\nbody: %s", err, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestA53_Security_RateLimiterEvictsStaleEntries(t *testing.T) {
+	claim(t, "A53", "security", "CDD", "Rate limiter evicts stale buckets to prevent memory leaks")
+
+	// Architecture claim: the rate limiter MUST evict stale buckets
+	// to prevent unbounded memory growth.
+	rl := auth.NewRateLimiterWithTTL(100, 200, 100*time.Millisecond)
+	defer rl.Stop()
+
+	for i := 0; i < 100; i++ {
+		rl.Allow(fmt.Sprintf("evict-test-%d", i))
+	}
+
+	if rl.BucketCount() != 100 {
+		t.Fatalf("expected 100 buckets, got %d", rl.BucketCount())
+	}
+
+	time.Sleep(250 * time.Millisecond)
+
+	if count := rl.BucketCount(); count > 0 {
+		t.Errorf("ARCHITECTURE VIOLATION: %d stale buckets not evicted (memory leak)", count)
+	}
+}
+
+func TestA54_Tenant_CheckQuotaIsReadOnly(t *testing.T) {
+	claim(t, "A54", "tenant", "CDD", "CheckQuota does not deduct tokens or budget")
+
+	// Architecture claim: CheckQuota MUST NOT deduct tokens or budget.
+	// Only ConsumeQuota should modify state.
+	e := quota.NewQuotaEnforcer()
+
+	result1, _ := e.CheckQuota(context.Background(), "tenant-1", quota.QuotaCheckRequest{TokensRequested: 100})
+	result2, _ := e.CheckQuota(context.Background(), "tenant-1", quota.QuotaCheckRequest{TokensRequested: 100})
+
+	if result1.RemainingTokens != result2.RemainingTokens {
+		t.Errorf("ARCHITECTURE VIOLATION: CheckQuota changed remaining tokens from %d to %d",
+			result1.RemainingTokens, result2.RemainingTokens)
 	}
 }
 

@@ -9,7 +9,7 @@ func TestDefaultPricingTable(t *testing.T) {
 	pt := DefaultPricingTable()
 
 	gpuTypes := pt.ListGPUTypes()
-	expected := []string{"A100", "B200", "CPU", "H200", "L40", "MI300X"}
+	expected := []string{"A100", "B200", "CPU", "H100", "H200", "L40", "MI300X"}
 	if len(gpuTypes) != len(expected) {
 		t.Fatalf("expected %d GPU types, got %d: %v", len(expected), len(gpuTypes), gpuTypes)
 	}
@@ -28,6 +28,17 @@ func TestDefaultPricingTable(t *testing.T) {
 		if tiers[i] != e {
 			t.Fatalf("tier[%d] = %q, want %q", i, tiers[i], e)
 		}
+	}
+}
+
+func TestDefaultPricingTable_IncludesH100(t *testing.T) {
+	pt := DefaultPricingTable()
+	cost, err := pt.CostPerHour("H100", "on-demand")
+	if err != nil {
+		t.Errorf("H100 should be in default pricing table: %v", err)
+	}
+	if cost <= 0 {
+		t.Error("H100 cost should be positive")
 	}
 }
 
@@ -105,8 +116,8 @@ func TestListGPUTypes(t *testing.T) {
 	pt := DefaultPricingTable()
 
 	types := pt.ListGPUTypes()
-	if len(types) != 6 {
-		t.Fatalf("expected 6 GPU types, got %d: %v", len(types), types)
+	if len(types) != 7 {
+		t.Fatalf("expected 7 GPU types, got %d: %v", len(types), types)
 	}
 
 	// Verify sorted order.
@@ -117,20 +128,20 @@ func TestListGPUTypes(t *testing.T) {
 	}
 
 	// Add a custom GPU and verify it appears.
-	pt.SetPricing(GPUPricing{GPUType: "H100", CostPerHour: 3.80, MemoryGB: 80, PricingTier: "on-demand"})
+	pt.SetPricing(GPUPricing{GPUType: "TPUv5", CostPerHour: 6.00, MemoryGB: 128, PricingTier: "on-demand"})
 	types = pt.ListGPUTypes()
-	if len(types) != 7 {
-		t.Fatalf("expected 7 GPU types after adding H100, got %d: %v", len(types), types)
+	if len(types) != 8 {
+		t.Fatalf("expected 8 GPU types after adding TPUv5, got %d: %v", len(types), types)
 	}
 
-	foundH100 := false
+	foundTPUv5 := false
 	for _, tp := range types {
-		if tp == "H100" {
-			foundH100 = true
+		if tp == "TPUv5" {
+			foundTPUv5 = true
 			break
 		}
 	}
-	if !foundH100 {
-		t.Fatalf("H100 not found in GPU types after SetPricing: %v", types)
+	if !foundTPUv5 {
+		t.Fatalf("TPUv5 not found in GPU types after SetPricing: %v", types)
 	}
 }

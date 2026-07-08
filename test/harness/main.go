@@ -11,23 +11,27 @@ import (
 
 func main() {
 	var (
-		urlFlag      = flag.String("url", "http://localhost:8080", "Base URL of the fleet-controller API")
-		metricsFlag  = flag.String("metrics", "http://localhost:9090", "Metrics endpoint URL")
-		tokenFlag    = flag.String("token", "", "Bearer token for authenticated endpoints")
-		secretFlag   = flag.String("secret", "", "HMAC secret for generating tokens internally")
-		suiteFlag    = flag.String("suite", "smoke", "Test suite(s) to run: smoke|stress|soak|pressure|chaos|redteam|latency|throughput|all")
-		durationFlag = flag.Duration("duration", 5*time.Minute, "Duration for soak tests")
-		outputFlag   = flag.String("output", "test/harness/results/report.json", "Output path for JSON report")
+		urlFlag            = flag.String("url", "http://localhost:8080", "Base URL of the fleet-controller API")
+		metricsFlag        = flag.String("metrics", "http://localhost:9090", "Metrics endpoint URL")
+		tokenFlag          = flag.String("token", "", "Bearer token for authenticated endpoints")
+		secretFlag         = flag.String("secret", "", "HMAC secret for generating tokens internally")
+		suiteFlag          = flag.String("suite", "smoke", "Test suite(s) to run: smoke|stress|soak|pressure|chaos|redteam|latency|throughput|inference|all")
+		durationFlag       = flag.Duration("duration", 5*time.Minute, "Duration for soak tests")
+		outputFlag         = flag.String("output", "test/harness/results/report.json", "Output path for JSON report")
+		inferenceModelFlag  = flag.String("inference-model", "", "Model name for inference tests (skips auto-discovery)")
+		inferenceModelsFlag = flag.String("inference-models", "", "Comma-separated models for multi-model/fairness tests")
 	)
 	flag.Parse()
 
 	cfg := Config{
-		BaseURL:    strings.TrimRight(*urlFlag, "/"),
-		MetricsURL: strings.TrimRight(*metricsFlag, "/"),
-		Token:      *tokenFlag,
-		Secret:     *secretFlag,
-		Duration:   *durationFlag,
-		Output:     *outputFlag,
+		BaseURL:         strings.TrimRight(*urlFlag, "/"),
+		MetricsURL:      strings.TrimRight(*metricsFlag, "/"),
+		Token:           *tokenFlag,
+		Secret:          *secretFlag,
+		Duration:        *durationFlag,
+		Output:          *outputFlag,
+		InferenceModel:  *inferenceModelFlag,
+		InferenceModels: *inferenceModelsFlag,
 	}
 
 	// If --secret is provided but no --token, generate a token internally.
@@ -68,6 +72,12 @@ func main() {
 			result = RunLatency(cfg)
 		case "throughput":
 			result = RunThroughput(cfg)
+		case "inference":
+			result = RunInference(cfg)
+		case "multimodel":
+			result = RunMultiModel(cfg)
+		case "fairness":
+			result = RunFairness(cfg)
 		default:
 			log.Printf("Unknown suite: %s (skipping)", suite)
 			continue
@@ -101,7 +111,7 @@ func main() {
 
 // parseSuites splits the suite flag into individual suite names.
 func parseSuites(s string) []string {
-	allSuites := []string{"smoke", "stress", "soak", "pressure", "chaos", "redteam", "latency", "throughput"}
+	allSuites := []string{"smoke", "stress", "soak", "pressure", "chaos", "redteam", "latency", "throughput", "inference", "multimodel", "fairness"}
 
 	if s == "all" {
 		return allSuites

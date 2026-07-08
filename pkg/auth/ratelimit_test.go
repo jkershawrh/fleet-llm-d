@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -137,5 +138,41 @@ func TestRateLimitMiddlewareWithExemptions_BypassesHealthReadinessAndMetrics(t *
 				}
 			}
 		})
+	}
+}
+
+func TestRateLimiter_EvictsStaleEntries(t *testing.T) {
+	rl := NewRateLimiterWithTTL(100, 200, 100*time.Millisecond)
+	defer rl.Stop()
+	for i := 0; i < 1000; i++ {
+		rl.Allow(fmt.Sprintf("ip:%d.%d.%d.%d", i, i, i, i))
+	}
+	if rl.BucketCount() != 1000 {
+		t.Fatalf("expected 1000 buckets before eviction, got %d", rl.BucketCount())
+	}
+	time.Sleep(250 * time.Millisecond)
+	if count := rl.BucketCount(); count > 0 {
+		t.Errorf("expected 0 buckets after TTL expiry, got %d", count)
+	}
+}
+
+func TestRateLimiter_ActiveBucketsNotEvicted(t *testing.T) {
+	rl := NewRateLimiterWithTTL(100, 200, 500*time.Millisecond)
+	defer rl.Stop()
+	rl.Allow("ip:active")
+	time.Sleep(200 * time.Millisecond)
+	rl.Allow("ip:active") // refresh lastAccess
+	time.Sleep(400 * time.Millisecond)
+	if rl.BucketCount() != 1 {
+		t.Errorf("active bucket should survive eviction, got %d buckets", rl.BucketCount())
+	}
+}
+
+func TestRateLimiter_StopPreventsLeak(t *testing.T) {
+	rl := NewRateLimiterWithTTL(100, 200, 100*time.Millisecond)
+	rl.Stop()
+	// After Stop(), calling Allow should still work (no panic).
+	if !rl.Allow("ip:after-stop") {
+		t.Error("Allow should still work after Stop")
 	}
 }

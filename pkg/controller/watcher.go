@@ -12,6 +12,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // CRDWatcher polls the Kubernetes API for FleetInferencePool CRD changes
@@ -59,7 +60,20 @@ func WithHTTPClient(c *http.Client) CRDWatcherOption {
 
 // NewCRDWatcher creates a new CRDWatcher that polls the Kubernetes API for
 // FleetInferencePool CRD changes and reconciles them via the given Reconciler.
-func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, opts ...CRDWatcherOption) *CRDWatcher {
+// An optional tlsutil.TLSOptions can be passed to configure TLS behavior;
+// when omitted, InsecureSkipVerify is used for backward compatibility.
+func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, tlsOpts ...tlsutil.TLSOptions) *CRDWatcher {
+	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	if len(tlsOpts) > 0 {
+		opts = tlsOpts[0]
+	}
+
+	tlsCfg, err := tlsutil.NewTLSConfig(opts)
+	if err != nil {
+		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", err)
+		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+	}
+
 	w := &CRDWatcher{
 		apiServer:    apiServer,
 		namespace:    namespace,
@@ -69,15 +83,10 @@ func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, o
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // #nosec G402 -- in-cluster self-signed certs
-				},
+				TLSClientConfig: tlsCfg,
 			},
 		},
 		lastSeen: make(map[string]v1alpha1.FleetInferencePoolSpec),
-	}
-	for _, opt := range opts {
-		opt(w)
 	}
 	return w
 }
@@ -132,7 +141,7 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return fmt.Errorf("reading response body: %w", err)
 	}

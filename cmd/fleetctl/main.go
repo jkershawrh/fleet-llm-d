@@ -162,15 +162,12 @@ func main() {
 		}
 	}
 
-	// Suppress unused variable warnings — tlsCA is used for TLS configuration.
-	_ = tlsCA
-
 	if len(cmdArgs) == 0 {
 		fmt.Print(usage)
 		os.Exit(1)
 	}
 
-	client := NewFleetClient(serverURL)
+	client := NewFleetClient(serverURL, tlsCA)
 	if token != "" {
 		client.Token = token
 	}

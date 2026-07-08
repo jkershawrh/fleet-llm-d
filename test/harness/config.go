@@ -16,12 +16,14 @@ import (
 
 // Config holds the connection parameters for the fleet-controller under test.
 type Config struct {
-	BaseURL    string // e.g. http://localhost:8080
-	MetricsURL string // e.g. http://localhost:9090
-	Token      string // Bearer token for authenticated endpoints
-	Secret     string // HMAC secret for generating tokens (redteam)
-	Duration   time.Duration
-	Output     string // path for JSON report
+	BaseURL        string // e.g. http://localhost:8080
+	MetricsURL     string // e.g. http://localhost:9090
+	Token          string // Bearer token for authenticated endpoints
+	Secret         string // HMAC secret for generating tokens (redteam)
+	Duration       time.Duration
+	Output         string // path for JSON report
+	InferenceModel  string // Model name for inference tests (skips auto-discovery)
+	InferenceModels string // Comma-separated model list for multi-model tests
 }
 
 // SuiteResult captures the outcome of one test suite.
