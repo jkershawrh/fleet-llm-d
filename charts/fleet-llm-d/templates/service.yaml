@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-fleet-controller
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: api
+      port: {{ .Values.ports.api }}
+      targetPort: {{ .Values.ports.api }}
+    - name: metrics
+      port: {{ .Values.ports.metrics }}
+      targetPort: {{ .Values.ports.metrics }}

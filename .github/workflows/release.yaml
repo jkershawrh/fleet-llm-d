@@ -117,6 +117,19 @@ jobs:
       - name: Sign fleet-controller image
         run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
 
+      - name: Generate SBOM for fleet-controller
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+          format: cyclonedx-json
+          output-file: sbom-fleet-controller.json
+
+      - name: Upload SBOM for fleet-controller
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-fleet-controller
+          path: sbom-fleet-controller.json
+
       - name: Build and push fleet-agent image
         uses: docker/build-push-action@v6
         with:
@@ -132,6 +145,19 @@ jobs:
       - name: Sign fleet-agent image
         run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
 
+      - name: Generate SBOM for fleet-agent
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
+          format: cyclonedx-json
+          output-file: sbom-fleet-agent.json
+
+      - name: Upload SBOM for fleet-agent
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-fleet-agent
+          path: sbom-fleet-agent.json
+
       - name: Build and push fleet-gateway image
         uses: docker/build-push-action@v6
         with:
@@ -146,6 +172,19 @@ jobs:
 
       - name: Sign fleet-gateway image
         run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-gateway:${{ steps.version.outputs.VERSION }}
+
+      - name: Generate SBOM for fleet-gateway
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-gateway:${{ steps.version.outputs.VERSION }}
+          format: cyclonedx-json
+          output-file: sbom-fleet-gateway.json
+
+      - name: Upload SBOM for fleet-gateway
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-fleet-gateway
+          path: sbom-fleet-gateway.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

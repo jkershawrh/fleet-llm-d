@@ -33,6 +33,7 @@ Available Commands:
   verify      Verify ledger chains
   matrix      Display test matrix status
   login       Generate a bearer token for authentication
+  install     Generate Helm or kubectl install instructions
 `
 
 // printJSON marshals v as indented JSON and prints it to stdout.
@@ -194,6 +195,8 @@ func main() {
 		runMatrix(subArgs, isTable)
 	case "login":
 		runLogin(subArgs)
+	case "install":
+		runInstall(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", command)
 		fmt.Print(usage)

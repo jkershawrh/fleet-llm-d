@@ -76,6 +76,87 @@ func TestResolve_NotFound(t *testing.T) {
 	}
 }
 
+func TestResolver_RejectsUnsignedModel(t *testing.T) {
+	// Serve a valid model manifest and config, but no signature tag.
+	config := ModelPackConfig{
+		Descriptor: ModelDescriptor{Name: "unsigned-model", Family: "test", Version: "v1"},
+		Config:     ModelTechnicalConfig{Architecture: "transformer", Format: "safetensors"},
+	}
+	configBytes, _ := json.Marshal(config)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/models/unsigned-model/manifests/v1":
+			_ = json.NewEncoder(w).Encode(ociManifest{
+				Config: ociDescriptor{
+					MediaType: modelConfigMediaType,
+					Digest:    "sha256:testconfig",
+					Size:      int64(len(configBytes)),
+				},
+			})
+		case "/v2/models/unsigned-model/blobs/sha256:testconfig":
+			w.Header().Set("Content-Type", modelConfigMediaType)
+			_, _ = w.Write(configBytes)
+		default:
+			// No signature tag served — return 404
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	resolver := NewRegistryModelResolver(
+		WithRegistryScheme("http"),
+		WithRequireSignature(true),
+	)
+	ref := strings.TrimPrefix(server.URL, "http://") + "/models/unsigned-model:v1"
+
+	_, err := resolver.Resolve(context.Background(), ref)
+	if err == nil {
+		t.Fatal("should reject unsigned model when RequireSignature is true")
+	}
+	if !strings.Contains(err.Error(), "signature") {
+		t.Errorf("error should mention signature, got: %v", err)
+	}
+}
+
+func TestResolver_AcceptsWhenSignatureNotRequired(t *testing.T) {
+	// Same server as above — valid model, no signature. With RequireSignature
+	// disabled the resolve should succeed without checking signatures.
+	config := ModelPackConfig{
+		Descriptor: ModelDescriptor{Name: "any-model", Family: "test", Version: "v1"},
+		Config:     ModelTechnicalConfig{Architecture: "transformer", Format: "safetensors"},
+	}
+	configBytes, _ := json.Marshal(config)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/models/any-model/manifests/v1":
+			_ = json.NewEncoder(w).Encode(ociManifest{
+				Config: ociDescriptor{
+					MediaType: modelConfigMediaType,
+					Digest:    "sha256:testconfig",
+					Size:      int64(len(configBytes)),
+				},
+			})
+		case "/v2/models/any-model/blobs/sha256:testconfig":
+			w.Header().Set("Content-Type", modelConfigMediaType)
+			_, _ = w.Write(configBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	resolver := NewRegistryModelResolver(WithRegistryScheme("http"))
+	ref := strings.TrimPrefix(server.URL, "http://") + "/models/any-model:v1"
+
+	_, err := resolver.Resolve(context.Background(), ref)
+	if err != nil && strings.Contains(err.Error(), "signature") {
+		t.Error("should not check signatures when RequireSignature is false")
+	}
+	if err != nil {
+		t.Fatalf("Resolve() unexpected error: %v", err)
+	}
+}
+
 func TestResolve_InvalidRef(t *testing.T) {
 	resolver := NewRegistryModelResolver()
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	"github.com/llm-d/fleet-llm-d/pkg/cost"
+	fleetgrpc "github.com/llm-d/fleet-llm-d/pkg/grpc"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
@@ -908,8 +909,10 @@ func setupMetricsServer() *http.ServeMux {
 }
 
 // Run starts the fleet controller HTTP servers and blocks until the context
-// is cancelled or a shutdown signal is received.
-func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authCfg auth.Config, tlsCert, tlsKey, mode string, rateLimiter *auth.RateLimiter, rateLimitExempt []string) error {
+// is cancelled or a shutdown signal is received. When grpcPort is non-zero,
+// a JSON-RPC listener is started alongside the REST API, exposing the
+// FleetService defined in api/proto/fleet/v1/fleet.proto.
+func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort int, authCfg auth.Config, tlsCert, tlsKey, mode string, rateLimiter *auth.RateLimiter, rateLimitExempt []string) error {
 	// Create a context that is cancelled on SIGINT or SIGTERM.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -936,6 +939,47 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort int, authC
 		Handler:      setupMetricsServer(),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
+	}
+
+	// Start gRPC (JSON-RPC) server when grpcPort is configured.
+	if grpcPort > 0 {
+		rpcSvc := fleetgrpc.NewFleetService(
+			func() (interface{}, error) {
+				return fc.ClusterClient.ListClusters(context.Background())
+			},
+			func() (interface{}, error) {
+				if fc.Reconciler != nil {
+					if pools := fc.Reconciler.ListPools(); len(pools) > 0 {
+						return pools, nil
+					}
+				}
+				return fc.PoolRepo.List(context.Background())
+			},
+		)
+		rpcSvc.SetRegisterCluster(func(req fleetgrpc.RegisterClusterRequest) (*fleetgrpc.RegisterClusterResponse, error) {
+			reg := client.ClusterRegistration{
+				ID:     req.ID,
+				Name:   req.Name,
+				Region: req.Region,
+				Labels: req.Labels,
+			}
+			reg, err := client.NormalizeClusterRegistration(reg)
+			if err != nil {
+				return nil, err
+			}
+			if err := fc.ClusterClient.RegisterCluster(context.Background(), reg); err != nil {
+				return nil, err
+			}
+			clustersGauge.Add(1)
+			return &fleetgrpc.RegisterClusterResponse{ID: reg.ID, Status: "registered"}, nil
+		})
+
+		grpcListener, err := fleetgrpc.Serve(fmt.Sprintf(":%d", grpcPort), rpcSvc)
+		if err != nil {
+			return fmt.Errorf("grpc server: %w", err)
+		}
+		defer grpcListener.Close()
+		log.Printf("grpc server listening on :%d", grpcPort)
 	}
 
 	// Start metrics server.
@@ -1040,6 +1084,7 @@ func splitCSV(value string) []string {
 func main() {
 	port := flag.Int("port", 8080, "API server port")
 	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
+	grpcPort := flag.Int("grpc-port", 0, "gRPC (JSON-RPC) server port; 0 disables")
 	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only), inference (inference proxy only)")
 	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http, grpc")
 	ledgerEndpoint := flag.String("ledger-endpoint", "localhost:9092", "ARE ledger endpoint")
@@ -1061,7 +1106,7 @@ func main() {
 	maxInflight := flag.Int("max-inflight", 0, "Max concurrent inference requests per model (0 = disabled)")
 	flag.Parse()
 
-	log.Printf("fleet-controller starting (mode=%s, log-level=%s, ledger-mode=%s, ledger=%s)", *mode, *logLevel, *ledgerMode, *ledgerEndpoint)
+	log.Printf("fleet-controller starting (mode=%s, log-level=%s, ledger-mode=%s, ledger=%s, grpc-port=%d)", *mode, *logLevel, *ledgerMode, *ledgerEndpoint, *grpcPort)
 
 	// Build auth config from environment variable FLEET_AUTH_SECRET.
 	authCfg := auth.ConfigFromEnv()
@@ -1181,7 +1226,7 @@ func main() {
 		log.Printf("rate limiting enabled (rate=%.0f/s, burst=%d)", *rateLimit, *rateBurst)
 	}
 
-	if err := fc.Run(context.Background(), *port, *metricsPort, authCfg, *tlsCert, *tlsKey, *mode, rl, splitCSV(*rateLimitExempt)); err != nil {
+	if err := fc.Run(context.Background(), *port, *metricsPort, *grpcPort, authCfg, *tlsCert, *tlsKey, *mode, rl, splitCSV(*rateLimitExempt)); err != nil {
 		log.Fatal(err)
 	}
 }
