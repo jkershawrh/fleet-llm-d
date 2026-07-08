@@ -20,9 +20,15 @@ spec:
         app.kubernetes.io/component: cache
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 999
       containers:
         - name: redis
           image: redis:7-alpine
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
           ports:
             - name: redis
               containerPort: 6379

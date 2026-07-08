@@ -21,9 +21,13 @@ spec:
         fleet.llm-d.ai/model: granite-3.3-2b
         fleet.llm-d.ai/runtime: vllm
     spec:
+      securityContext:
+        runAsNonRoot: true
       containers:
       - name: vllm
         image: vllm/vllm-openai:latest
+        securityContext:
+          runAsNonRoot: true
         args:
         - "--model=ibm-granite/granite-3.3-2b-instruct"
         - "--device=cpu"
