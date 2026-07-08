@@ -21,9 +21,15 @@ spec:
         app.kubernetes.io/component: database
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 999
       containers:
         - name: postgres
           image: postgres:16
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
           ports:
             - name: postgres
               containerPort: 5432

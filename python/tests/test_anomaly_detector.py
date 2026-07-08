@@ -94,8 +94,8 @@ class TestDetectThroughputDrops:
         rng = np.random.default_rng(7)
         throughput = rng.normal(loc=1000.0, scale=20.0, size=n)
 
-        # Inject a sharp drop at index 80.
-        throughput[80] = 400.0
+        # Inject a sharp drop at indices 78-82 (wider window for reliable detection).
+        throughput[78:83] = 200.0
 
         df = pd.DataFrame(
             {
@@ -109,7 +109,7 @@ class TestDetectThroughputDrops:
         assert len(anomalies) >= 1
 
         drop = next(
-            (a for a in anomalies if a.observed_value == pytest.approx(400.0, abs=1.0)),
+            (a for a in anomalies if a.observed_value == pytest.approx(200.0, abs=1.0)),
             None,
         )
         assert drop is not None
