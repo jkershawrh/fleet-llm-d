@@ -43,6 +43,24 @@ func GenerateToken(secret string, claims Claims) (string, error) {
 	return claimsB64 + "." + sigB64, nil
 }
 
+// RefreshToken validates an existing token and issues a new one with an
+// extended expiry. The subject and role are preserved. Returns an error
+// if the original token is invalid or expired.
+func RefreshToken(secret, token string, newTTL time.Duration) (string, error) {
+	claims, err := ValidateToken(secret, token)
+	if err != nil {
+		return "", fmt.Errorf("cannot refresh: %w", err)
+	}
+
+	newClaims := Claims{
+		Subject:   claims.Subject,
+		Role:      claims.Role,
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(newTTL),
+	}
+	return GenerateToken(secret, newClaims)
+}
+
 // ValidateToken verifies the token signature and checks expiration.
 // Returns the decoded claims on success.
 func ValidateToken(secret, token string) (*Claims, error) {

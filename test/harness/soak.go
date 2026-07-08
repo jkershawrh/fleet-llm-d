@@ -16,6 +16,7 @@ func RunSoak(cfg Config) SuiteResult {
 	start := time.Now()
 	defer func() { sr.Duration = time.Since(start) }()
 
+	// Default 5 minutes; for extended soaks use --duration 24h.
 	duration := cfg.Duration
 	if duration == 0 {
 		duration = 5 * time.Minute
@@ -183,6 +184,12 @@ done:
 
 	check(&sr, "soak:final-error-rate", errRate < 0.1,
 		fmt.Sprintf("total_reqs=%d total_errs=%d error_rate=%.2f%%", reqs, errs, errRate), 0)
+
+	// SLO latency gates.
+	check(&sr, "soak:p95-latency-slo", stats.P95 < 5000.0,
+		fmt.Sprintf("p95=%.0fms (SLO: <5000ms)", stats.P95), 0)
+	check(&sr, "soak:p99-latency-slo", stats.P99 < 10000.0,
+		fmt.Sprintf("p99=%.0fms (SLO: <10000ms)", stats.P99), 0)
 
 	sr.Latencies = stats
 	sr.Extra["total_requests"] = reqs

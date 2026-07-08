@@ -2,6 +2,7 @@ package auth
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,13 @@ type Config struct {
 // (parsed via time.ParseDuration, e.g. "1h", "30m").
 func ConfigFromEnv() Config {
 	secret := os.Getenv("FLEET_AUTH_SECRET")
+
+	// FLEET_AUTH_SECRET_FILE takes precedence (for K8s Secret volume mounts)
+	if secretFile := os.Getenv("FLEET_AUTH_SECRET_FILE"); secretFile != "" {
+		if data, err := os.ReadFile(secretFile); err == nil {
+			secret = strings.TrimSpace(string(data))
+		}
+	}
 
 	ttl := 24 * time.Hour
 	if raw := os.Getenv("FLEET_AUTH_TTL"); raw != "" {

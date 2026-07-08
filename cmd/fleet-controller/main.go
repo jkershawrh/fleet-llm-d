@@ -93,6 +93,9 @@ type FleetController struct {
 	ModelPlaneWatcher    *modelplane.ModelPlaneWatcher
 	ModelPlaneBridge     *modelplane.ComplianceBridge
 
+	// Auth secret for token refresh
+	AuthSecret string
+
 	// Server state
 	ready atomic.Bool
 }
@@ -732,6 +735,30 @@ func (fc *FleetController) handleCostAlerts(w http.ResponseWriter, r *http.Reque
 // ModelPlane handlers
 // ----------------------------------------------------------------------------
 
+// handleRefreshToken issues a new token with an extended expiry for
+// an authenticated caller. The original bearer token must still be valid.
+func (fc *FleetController) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	requestsTotal.Add(1)
+	claims := auth.GetClaims(r)
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "valid token required for refresh")
+		return
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if len(authHeader) < 8 || !strings.HasPrefix(authHeader, "Bearer ") {
+		writeError(w, http.StatusUnauthorized, "missing bearer token")
+		return
+	}
+
+	newToken, err := auth.RefreshToken(fc.AuthSecret, authHeader[7:], 24*time.Hour)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": newToken})
+}
+
 // handleModelPlaneClusters returns the most recently watched ModelPlane clusters.
 func (fc *FleetController) handleModelPlaneClusters(w http.ResponseWriter, _ *http.Request) {
 	requestsTotal.Add(1)
@@ -854,6 +881,9 @@ func (fc *FleetController) setupAPIServer(mode string) *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/cost/projection", fc.handleCostProjection)
 		mux.HandleFunc("GET /api/v1/cost/savings", fc.handleCostSavings)
 		mux.HandleFunc("GET /api/v1/cost/alerts", fc.handleCostAlerts)
+
+		// Auth
+		mux.HandleFunc("POST /api/v1/auth/refresh", fc.handleRefreshToken)
 
 		// ModelPlane integration
 		mux.HandleFunc("GET /api/v1/modelplane/clusters", fc.handleModelPlaneClusters)
@@ -1044,6 +1074,9 @@ func main() {
 		Mode:     ledger.Mode(*ledgerMode),
 		Endpoint: *ledgerEndpoint,
 	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
+
+	// Store auth secret for token refresh endpoint.
+	fc.AuthSecret = authCfg.Secret
 
 	// Configure per-model load shedding if --max-inflight is set.
 	fc.InferenceProxy.SetMaxInflight(*maxInflight)
