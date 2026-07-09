@@ -79,3 +79,6 @@ docs/internal/
 # Built binaries (use make build)
 /fleet-controller
 /harness
+
+# Cluster credentials
+secrets/
