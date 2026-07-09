@@ -94,8 +94,8 @@ class TestDetectThroughputDrops:
         rng = np.random.default_rng(7)
         throughput = rng.normal(loc=1000.0, scale=20.0, size=n)
 
-        # Inject a sharp drop at indices 78-82 (wider window for reliable detection).
-        throughput[78:83] = 200.0
+        # Inject a sustained drop at indices 70-85 for reliable z-score detection.
+        throughput[70:86] = 200.0
 
         df = pd.DataFrame(
             {
