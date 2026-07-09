@@ -72,3 +72,10 @@ deploy/prod-cluster-1/
 # Local model exports (large binaries)
 ovms-models*/
 ovms-tmp*/
+
+# Internal documentation (not for public repos)
+docs/internal/
+
+# Built binaries (use make build)
+/fleet-controller
+/harness

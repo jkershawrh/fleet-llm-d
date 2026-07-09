@@ -1,0 +1,201 @@
+= fleet-llm-d Demo Script
+Jonathan Kershaw
+:toc: left
+:icons: font
+:source-highlighter: highlight.js
+
+== Pre-Demo Checklist
+
+[cols="1,3"]
+|===
+| Check | Action
+
+| Dashboard URL
+| Open `http://localhost:3000` (dev) or the deployed route
+
+| Backend Health
+| `curl http://localhost:8000/health` → `{"status": "ok"}`
+
+| Fleet Controller
+| If live: `curl $FLEET_URL/healthz` → 200
+
+| Browser
+| Full-screen, dark mode, no bookmarks bar
+
+| Infrastructure Panel
+| Click to expand — verify fleet-llm-d connection status
+|===
+
+== Part 1: Presentation (7 slides, ~5 min)
+
+=== Slide 0: Title (~30s)
+
+*Click* to advance. Red Hat × Intel logos centered. Title: **fleet-llm-d — Fleet-Level Inference Orchestration**.
+
+*Say*: "This is fleet-llm-d — fleet-level inference orchestration built on llm-d."
+
+=== Slide 1: The Problem (~45s)
+
+GPU inference: $32/hr. Scarce. Single-cluster. Static scaling.
+
+*Say*: "GPU inference costs $32 per hour per H100. Hardware is scarce. Scaling is static. There's no multi-tenant governance. No audit trail."
+
+=== Slide 2: The Platform (~60s)
+
+7 CRDs. 31 endpoints. Multi-cluster. Multi-tenant.
+
+*Say*: "fleet-llm-d solves this with seven Kubernetes CRDs, 31 API endpoints, a Go control plane, and a Rust data plane. Multi-cluster placement. Multi-tenant governance. SLO-gated rollouts. Cost optimization. Every decision recorded in an immutable ledger."
+
+=== Slide 3: CPU + Intel (~45s)
+
+53× cost reduction. $0.60/hr vs $32/hr.
+
+*Say*: "Intel Xeon 6 Granite Rapids. 256 cores. AMX instructions. OVMS C++ serving INT8 quantized models. $0.60 per hour. That is 53 times cheaper than GPU."
+
+=== Slide 4: The Brain (~45s)
+
+deepfield-fleet: predictive intelligence.
+
+*Say*: "On top of the actuator, we have deepfield-fleet — a predictive intelligence layer. SLO forecasting via linear regression. Event-driven pre-warming from YAML profiles. Intent-driven scaling. A/B provable with ledger receipts."
+
+=== Slide 5: The Proof (~30s)
+
+360 tests. 12 suites. 5 models.
+
+*Say*: "360 tests across 12 suites. 5 CPU models serving. P95 under 5 seconds. HPA scales 1 to 4 replicas. Zero downtime. Every decision in the ledger."
+
+=== Slide 6: CTA (~15s)
+
+"Let me show you the fleet."
+
+*Say*: "Enough slides. Let me show you the fleet."
+
+*Click* the **Next** button → enters manual walkthrough mode.
+
+== Part 2: Walkthrough (8 acts, ~15 min)
+
+=== Act 1: The Cost of Inference (~2 min)
+
+*Shows*: CostComparison component — GPU $32/hr vs CPU $0.60/hr bars.
+
+*Say*: "This is what inference costs today. $32 per hour per H100. $0.60 on Intel Xeon. 53× savings."
+
+*Key point*: Let the cost bars animate.
+
+=== Act 2: The Event Arrives (~2 min)
+
+*Click* "Load Event Profile" → loads Summit Connect profile.
+
+*Shows*: Event countdown, 200 expected users, 5 models.
+
+*Say*: "Red Hat Summit Connect starts in 30 minutes. 200 concurrent users will need inference across 5 Granite models. The event_calendar nanoagent detects the approaching event."
+
+=== Act 3: The Fleet Deploys (~2 min)
+
+*Click* "Check Fleet Health" → shows clusters and models.
+
+*Shows*: FleetArchitectureFlow diagram with animated edges.
+
+*Say*: "fleet-llm-d manages clusters. Here's dev-cluster-1 running Intel Xeon 6. OVMS C++ serves 5 Granite models. The Go control plane coordinates everything through CRDs."
+
+=== Act 4: The Platform (~2 min)
+
+*Shows*: 7 CRD cards — FleetInferencePool, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, KVCacheTransferPolicy, ModelLifecycle.
+
+*Say*: "Seven CRDs define the fleet's desired state. Where models run. How traffic routes. When to scale. Who gets what quota. The control plane reconciles continuously."
+
+=== Act 5: The Brain Predicts (~2 min)
+
+*Click* "Run SLO Forecast" → shows forecast.
+
+*Shows*: SLOGauge with current needle and forecast needle crossing target.
+
+*Click* "Scope Blast Radius" → shows affected models, users, severity score.
+
+*Say*: "The SLO forecaster runs linear regression on the P95 latency trend. At +80 milliseconds per minute, P95 will breach the 5-second SLO in 22 minutes. The consequence scoper calculates blast radius: 5 models, 200 users, severity score 1000. This requires human approval."
+
+=== Act 6: The Intent (~2 min)
+
+*Click* "Emit PreWarm Intent" → shows intent response.
+
+*Shows*: IntentFlow — Predict → Emit → Evaluate → Execute.
+
+*Say*: "The predictive brain emits a PreWarmIntent. Scale granite-4.1-3b to 4 replicas before the event starts. fleet-llm-d evaluates the intent against policy — confidence above threshold, replicas within limits — and executes."
+
+*Key point*: Show the intent_id and ledger_entry_id in the response.
+
+=== Act 7: The Proof (~2 min)
+
+*Click* "Verify Ledger Chains" → shows 5 chains verified.
+
+*Shows*: TestMatrixCompact (360 tests green), LedgerChainView (5 chains valid).
+
+*Say*: "360 tests across 12 suites. All green. Every placement, scaling, routing, lifecycle, and tenant decision recorded in the ARE Ledger. Chains verified. Proof receipts portable."
+
+=== Act 8: The Return (~1 min)
+
+*Shows*: ReplicaTimeline (1→2→4 replicas), A/B comparison.
+
+*Say*: "Every prediction, action, and outcome is recorded. Next time Summit Connect runs, the event profile pre-warms automatically. The system gets smarter each cycle. Predictive, not reactive."
+
+*Click* "Run at Scale →" → enters auto mode.
+
+== Part 3: Scale Run (5 acts, ~5 min)
+
+The auto-orchestrated demo runs via SSE streaming. Click **Next** between acts.
+
+[cols="1,2,2"]
+|===
+| Act | What Happens | Key Metric
+
+| 10× Load
+| 20 concurrent users, 5 models, ramp 2→20 req/s
+| Nanoagent classifications, SLO status
+
+| 50× Load
+| 100 concurrent users, HPA scales 1→2→4 replicas
+| ReplicaTimeline, intent count
+
+| Stress Test
+| 200 concurrent users, burst 4×, load shedding activates
+| 503 count, ShedLoadIntent emitted
+
+| Recovery
+| Load drops, metrics stabilize, learning captured
+| Recovery time, updated event profile
+
+| The Claim
+| Summary screen with headline stats
+| 53× cost, 360 tests, 5 models, <5s P95
+|===
+
+== Part 4: Lab Handoff
+
+*Say*: "Now it's your turn. The Bootstrap Lab lets you try it with fleet evidence — or connect your own Prometheus."
+
+*Click* "Try it with your data →" → enters Bootstrap Lab.
+
+== Fallback Procedures
+
+[cols="1,3"]
+|===
+| Problem | Fix
+
+| Dashboard won't load
+| Check `npm run dev` is running. Check port 3000 is free.
+
+| Backend 500
+| Check `uvicorn app.main:app --reload` is running. Check Python deps.
+
+| Fleet controller unreachable
+| Demo works in simulated mode (no FLEET_URL needed). All fleet endpoints return realistic mock data.
+
+| SSE stream stuck
+| Click Pause, then Resume. If stuck, Stop and restart auto demo.
+
+| Scale run too slow
+| Increase speed: `POST /api/v1/demo/start` with `{"speed": 2.0}`
+
+| Slides won't advance
+| Click anywhere on the slide. Arrow keys also work.
+|===
