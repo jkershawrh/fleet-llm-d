@@ -1,0 +1,163 @@
+= fleet-llm-d Presenter Guide
+Jonathan Kershaw
+:toc: left
+:icons: font
+
+== Before You Start
+
+. Open the dashboard URL in full-screen browser (dark mode)
+. Verify health: Infrastructure Panel → fleet-llm-d connection shows green or "Simulated"
+. Have a glass of water
+
+== Part 1: Presentation Slides
+
+=== Slide 0: Title (30s)
+
+[quote]
+This is fleet-llm-d — fleet-level inference orchestration built on llm-d. Not another chatbot platform. Not another model server. This is the orchestration layer that makes fleet-scale inference governable, affordable, and predictable.
+
+_Pause. Let the logos land._
+
+=== Slide 1: The Problem (45s)
+
+[quote]
+Enterprise inference runs on GPU. Thirty-two dollars per hour per H100. Hardware is scarce — you wait weeks for allocation. Each cluster runs its own models with no coordination. Scaling is reactive — by the time you see the spike, users are already waiting. There's no multi-tenant governance, no cost allocation, no audit trail. Every team runs their own thing.
+
+_Key phrase_: *"$32 per hour. Scarce. Static. Ungoverned."*
+
+=== Slide 2: The Platform (60s)
+
+[quote]
+fleet-llm-d changes this. Seven Kubernetes CRDs define the fleet's desired state — where models run, how traffic routes, when to scale, who gets what quota. Thirty-one API endpoints. A Go control plane that reconciles continuously. A Rust data plane for cross-cluster routing. SLO-gated rollouts that auto-rollback if latency exceeds thresholds. Cost optimization that compares GPU types across tiers. And every single decision — every placement, every scaling event, every routing change — recorded in the ARE Immutable Ledger. Tamper-proof. Chain-verified. Auditable.
+
+_Key phrase_: *"Fleet-level, not cluster-level."*
+
+=== Slide 3: CPU + Intel (45s)
+
+[quote]
+But here's where it gets interesting. Intel Xeon 6 Granite Rapids. Two hundred fifty-six cores. AMX instructions for matrix math — the same acceleration that GPUs use, built into the CPU you already own. OVMS C++ serving INT8 quantized Granite models. Sixty cents per hour. That is fifty-three times cheaper than GPU inference.
+
+_Pause on the "53×" animation._
+
+_Key phrase_: *"53× cheaper. On the hardware you already own."*
+
+=== Slide 4: The Brain (45s)
+
+[quote]
+On top of the actuator sits deepfield-fleet — the predictive intelligence layer. Four fleet nanoagents monitor SLO drift, capacity pressure, queue depth, and event calendars. A microagent runs linear regression on P95 latency to forecast breaches. A macroagent calculates blast radius — affected models times users times severity. When the score crosses the threshold, the system emits a typed intent to fleet-llm-d: pre-warm, scale, shed load, or alert. And fleet-llm-d evaluates the intent against policy before executing. Confidence gates. Replica limits. Human approval for critical actions.
+
+_Key phrase_: *"Predict, don't react."*
+
+=== Slide 5: The Proof (30s)
+
+[quote]
+Three hundred sixty tests across twelve suites. Five CPU models serving on prod-cluster-1 and dev-cluster-1. P95 under five seconds. HPA scaling from one to four replicas under load. Zero downtime during scaling events. Every decision in the ledger.
+
+_Key phrase_: *"Measured. Tested. Auditable."*
+
+=== Slide 6: CTA (15s)
+
+[quote]
+Enough slides. Let me show you the fleet.
+
+_Click "Next" — enters the walkthrough._
+
+== Part 2: Walkthrough (8 Acts)
+
+=== Act 1: The Cost of Inference (~2 min)
+
+[quote]
+This is what inference costs today. The bar on top — H100, thirty-two dollars per hour. The bar below — Intel Xeon 6, sixty cents. Same model, same quality, fifty-three times cheaper. And that's not an estimate — that's measured on prod-cluster-1 with OVMS C++.
+
+_Let the cost bars animate. Don't rush._
+
+=== Act 2: The Event Arrives (~2 min)
+
+_Click "Load Event Profile"._
+
+[quote]
+Red Hat Summit Connect starts in thirty minutes. Two hundred concurrent users will need inference across five Granite models. This is the summit_connect.yaml event profile — a YAML file that tells fleet-llm-d what's coming. The event_calendar nanoagent sees it and fires. Pre-warming begins.
+
+_Point out_: expected users, pre-warm minutes, burst RPS.
+
+=== Act 3: The Fleet Deploys (~2 min)
+
+_Click "Check Fleet Health"._
+
+[quote]
+Here's the fleet. dev-cluster-1 and prod-cluster-1 — both Intel Xeon clusters running OpenShift. Five Granite models deployed via FleetInferencePool CRDs. OVMS C++ serves INT8 quantized inference. The Go control plane coordinates placement, scaling, and routing. The Rust gateway handles cross-cluster traffic.
+
+_Point to the architecture diagram — trace a request from user to model._
+
+=== Act 4: The Platform (~2 min)
+
+[quote]
+Seven CRDs. FleetInferencePool defines _what_ to serve — model name, version, replica count. PlacementPolicy defines _where_ — regulatory constraints, hardware affinity, cost optimization. FleetRoutingPolicy defines _how_ traffic flows — weighted, geographic, or failover. FleetScalingPolicy defines _when_ to scale — GPU utilization, latency, queue depth. TenantProfile defines _who_ gets what — token quotas, GPU budgets, rate limits. KVCacheTransferPolicy handles cross-cluster KV cache migration. ModelLifecycle manages canary rollouts with SLO gates.
+
+_Key phrase_: *"Declarative. Reconciled. Governed."*
+
+=== Act 5: The Brain Predicts (~2 min)
+
+_Click "Run SLO Forecast"._
+
+[quote]
+The SLO forecaster runs linear regression on the P95 latency trend. Current P95: twenty-one hundred milliseconds. At plus eighty milliseconds per minute, the forecast crosses the five-thousand-millisecond SLO in twenty-two minutes. Confidence: eighty-two percent. That's a breach prediction, not a breach.
+
+_Click "Scope Blast Radius"._
+
+[quote]
+Now the consequence scoper calculates the blast radius. Five models affected. Two hundred users impacted. Severity score: one thousand. That crosses the human gate threshold — any action requires approval.
+
+_Point to the SLO gauge — show current vs forecast needles._
+
+=== Act 6: The Intent (~2 min)
+
+_Click "Emit PreWarm Intent"._
+
+[quote]
+The predictive brain emits a PreWarmIntent to fleet-llm-d. Scale granite-4.1-3b to four replicas. Confidence zero-point-eight-five. fleet-llm-d evaluates the intent against policy. Confidence above threshold — check. Replicas within limit — check. Status: executed. And look — a ledger entry ID. That decision is now in the ARE Ledger, tamper-proof, chain-verified.
+
+_Point to the intent flow: Predict → Emit → Evaluate → Execute._
+
+=== Act 7: The Proof (~2 min)
+
+_Click "Verify Ledger Chains"._
+
+[quote]
+Three hundred sixty tests across twelve suites — unit, integration, end-to-end, chaos, performance, security. All green. Five ARE Ledger chains verified: placement, scaling, routing, lifecycle, tenant. Every entry has a SHA-256 hash linking it to the previous entry. Tamper with one, the chain breaks.
+
+_Point to the test matrix — all green cells._
+
+=== Act 8: The Return (~1 min)
+
+[quote]
+Here's the HPA timeline — replicas scaled from one to four under load, then back down during recovery. Every scaling event recorded. Next time Summit Connect runs, the event profile pre-warms automatically. The system captures what it learned. Predictive, not reactive. Governed, not ad-hoc.
+
+_Click "Run at Scale" to enter auto mode._
+
+== Common Audience Questions
+
+=== "Is this just another model server?"
+
+[quote]
+No. fleet-llm-d doesn't serve models — it orchestrates the fleet of model servers. OVMS C++ serves the models. fleet-llm-d manages where they run, how traffic routes, when to scale, who gets what quota, and records every decision.
+
+=== "Why not just use HPA?"
+
+[quote]
+HPA is reactive — it scales after the spike hits. fleet-llm-d's predictive brain scales before the spike. Event profiles pre-warm for known events. SLO forecasting catches trends before they breach. HPA is still there as the safety net.
+
+=== "What if the predictive brain is wrong?"
+
+[quote]
+The policy evaluator is the safety gate. Confidence below threshold? Deferred. Too many replicas? Refused. Critical action? Requires human approval. And every prediction-action-outcome chain is in the ledger, so you can measure accuracy over time.
+
+=== "Does this work with GPUs too?"
+
+[quote]
+Yes. fleet-llm-d manages GPU clusters, CPU clusters, or mixed fleets. The cost engine calculates chargeback across H200, B200, H100, A100, MI300X, L40, and CPU. CPU inference is the cost optimization story — not the only story.
+
+=== "What about multi-cluster?"
+
+[quote]
+That's fleet-llm-d's core design. The Rust gateway routes traffic across clusters. PlacementPolicy spreads models geographically. KVCacheTransferPolicy migrates hot caches between clusters. The fleet controller federates metrics across all clusters.
