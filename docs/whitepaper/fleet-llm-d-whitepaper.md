@@ -210,6 +210,18 @@ Three API endpoints expose ModelPlane state through the fleet controller: `/api/
 
 **Live Integration Proof.** The ModelPlane integration is proven end-to-end with a mock API (`cmd/modelplane-mock/`) deployed on the Demo Cluster OpenShift cluster. The mock serves ModelPlane's CRD types: 3 InferenceClusters, 2 ModelDeployments, 3 ModelEndpoints, and 3 InferenceClasses. The fleet-controller consumes this data live -- `/api/v1/modelplane/clusters` returns 3 clusters and `/api/v1/modelplane/deployments` returns 2 deployments. Cost calculation from ModelPlane InferenceClass GPU pricing is proven: the `granite-fleet` deployment computes to $20.60/hr based on InferenceClass-provided GPU rates. The initial 503 gap (ModelPlane endpoints returning service-unavailable before the mock was deployed) is closed; all three endpoints now return real data. A collaboration proposal for deeper integration has been submitted as [modelplaneai/modelplane#326](https://github.com/modelplaneai/modelplane/issues/326).
 
+### 3.10 Governed Cognitive Loop Integration
+
+fleet-llm-d accepts typed intents from the [governed-cognitive-loop](https://github.com/jkershawrh/governed-cognitive-loop) (GCL), a governed autonomy layer that sits between prediction (deepfield-fleet) and actuation (fleet-llm-d). The GCL derives constraints from evidence, computes actions under hard constraints using deterministic math (numpy), and challenges every proposed action through a falsification gate before committing. Only actions that survive all seven deterministic disconfirmation checks are sent to fleet-llm-d as intents.
+
+fleet-llm-d evaluates received intents against its CRD-defined policies (confidence thresholds, replica limits, human gates for critical actions) before actuating. This creates a two-stage governance model: the GCL governs the decision (constraint satisfaction, falsification), and fleet-llm-d governs the execution (policy compliance, resource availability).
+
+The integration contract consists of six intent types (ScaleIntent, PreWarmIntent, ShedLoadIntent, AlertIntent, MigrateIntent, NoAction), HMAC-SHA256 authentication using a shared secret, and correlation IDs that chain the full decision lifecycle from classification through actuation in the ARE Immutable Ledger.
+
+The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.
+
+**Verified on Oberon.** The GCL is deployed on the same OpenShift cluster as fleet-llm-d. 1,098 GCL ledger entries across 193 correlation chains, all cryptographically valid. 6 scenarios validated: inference fleet spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, and multi-cluster migration. Fleet controller accepted GCL intents with HMAC auth (confirmed in controller logs).
+
 ## 4. Seven Capabilities
 
 ### 4.1 Model Placement
@@ -625,7 +637,7 @@ The Sovereign Cloud pattern (`docs/customer-patterns/sovereign-cloud.md`) deploy
 ### 8.3 Long-Term
 
 - Cross-cloud federation (GKE + EKS + OCP)
-- Agentic workflow orchestration with fleet-level tool routing
+- Agentic workflow orchestration with fleet-level tool routing (the governed-cognitive-loop provides the first governed autonomy layer for this, with falsification-gated intent emission already integrated and verified on Oberon)
 - llm-d-planner integration for fleet-level capacity planning
 - RHACM integration for unified cluster + inference management
 - MoE model support (Qwen3-30B-A3B) for "30B intelligence at 3B speed" on CPU

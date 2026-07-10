@@ -309,6 +309,7 @@ The NUMA result is noteworthy: conventional guidance recommends NUMA affinity fo
 | **Multi-cluster routing** | Architecture proven, networks separate | fleet-llm-d routes across clusters — testable when two clusters share a network |
 | **Predictive scaling** | Designed | Pre-scale based on event schedule, not reactive CPU metrics — eliminates cold-start during peak |
 | **24-hour soak test** | 2-minute soak completed (100% success) | Extended soak proves stability for multi-day events |
+| **Governed autoscaling decisions** | Verified on Oberon (6 scenarios, 24 edge cases) | The governed-cognitive-loop (GCL) governs CPU inference scaling decisions (scale, pre-warm, shed-load) based on evidence from deepfield-fleet classifications. The falsification gate prevents bad scaling actions from reaching fleet-llm-d. |
 
 ---
 
