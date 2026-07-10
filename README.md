@@ -107,6 +107,18 @@ The `modelplane` package (`pkg/modelplane/`) provides six integration points: CR
 
 **Live Integration Proof.** A ModelPlane mock API (`cmd/modelplane-mock/`) is deployed on the Demo Cluster OpenShift cluster, serving 3 InferenceClusters, 2 ModelDeployments, 3 ModelEndpoints, and 3 InferenceClasses. The fleet-controller consumes this data live: `/api/v1/modelplane/clusters` returns 3 clusters and `/api/v1/modelplane/deployments` returns 2 deployments. Cost calculation from ModelPlane InferenceClass GPU pricing is proven end-to-end -- the `granite-fleet` deployment computes to **$20.60/hr**. The initial 503 gap (ModelPlane endpoints returning service-unavailable) is now closed; all three endpoints return real data. A collaboration proposal has been submitted as [modelplaneai/modelplane#326](https://github.com/modelplaneai/modelplane/issues/326).
 
+When integrated with the governed-cognitive-loop and deepfield-fleet, the stack extends to five layers: deepfield-fleet (prediction) -> governed-cognitive-loop (governed autonomy) -> fleet-llm-d (fleet operations) -> ModelPlane (infrastructure) -> llm-d (inference).
+
+### Governed Cognitive Loop
+
+The [governed-cognitive-loop](https://github.com/jkershawrh/governed-cognitive-loop) sits above fleet-llm-d as the governed autonomy layer. It receives classifications from deepfield-fleet, derives constraints from evidence, optimizes under hard constraints, challenges every plan through a falsification gate, and sends typed intents to fleet-llm-d only when the action survives all checks.
+
+fleet-llm-d evaluates received intents against its CRD-defined policies before actuating. The GCL governs the decision; fleet-llm-d governs the execution.
+
+Intent types: `ScaleIntent`, `PreWarmIntent`, `ShedLoadIntent`, `AlertIntent`, `MigrateIntent`. All intents carry HMAC-SHA256 signed authentication tokens and are recorded in the ARE Immutable Ledger under a correlation ID that chains the full decision lifecycle.
+
+Verified: 496 tests, 15/15 EDD rubric, 1,098 ledger entries on Oberon, 6 scenarios covering scale, pre-warm, shed-load, alert, and cross-cluster migration.
+
 ### Cost Model
 
 fleet-llm-d includes a full cost model (`pkg/cost/`) for GPU inference economics:

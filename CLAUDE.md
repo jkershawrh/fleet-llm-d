@@ -55,6 +55,7 @@ Go control plane + Rust data plane. The fleet controller manages CRDs (FleetInfe
 
 - ARE Immutable Ledger (gRPC on port 9092) — compliance audit trail
 - OCI-compatible model registry — ModelPack model metadata source
+- Governed Cognitive Loop (GCL): governed autonomy layer that sends typed intents (ScaleIntent, PreWarmIntent, ShedLoadIntent, AlertIntent, MigrateIntent) to fleet-llm-d via POST /api/v1/intents with HMAC-SHA256 auth. fleet-llm-d evaluates intents against policy before actuating. Repo: https://github.com/jkershawrh/governed-cognitive-loop
 
 ## Conventions
 
