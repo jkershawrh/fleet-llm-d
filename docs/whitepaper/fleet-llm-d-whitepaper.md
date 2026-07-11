@@ -634,12 +634,34 @@ The Sovereign Cloud pattern (`docs/customer-patterns/sovereign-cloud.md`) deploy
 - **Multi-cluster CPU routing** -- Extend fleet-llm-d's cross-cluster routing to heterogeneous CPU/GPU clusters, routing simple queries to CPU and complex queries to GPU based on model requirements and cost optimization.
 - **Event-scale autoscaling** -- Predictive scaling based on event schedules (conference sessions, lab start times) rather than reactive CPU metrics, eliminating cold-start delays during peak load.
 
-### 8.3 Long-Term
+### 8.3 Near-Term: vLLM Semantic Router Integration
+
+The [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) (vLLM-SR) is an upstream Red Hat project that classifies prompts using ModernBERT (13 signal types, sub-millisecond) and routes to the correct model tier. It runs as an Envoy ExtProc filter.
+
+fleet-llm-d extends vLLM-SR from single-cluster to fleet-wide semantic routing. The integration architecture:
+
+1. **vLLM-SR** classifies the prompt (simple/standard/complex) at the Envoy edge
+2. **fleet-llm-d proxy** routes the classified request to the correct cluster (CPU for simple, GPU for complex)
+3. **llm-d EPP** picks the pod within the cluster
+4. **GCL** observes tier distribution and governs tier-level scaling (80% simple traffic -> scale down GPU tier)
+5. **ARE Ledger** records every routing decision with tier, confidence, and model
+
+This enables automatic 5x cost savings (proven by vLLM-SR benchmarks) by routing simple queries to small fast models on CPU instead of expensive GPU models. The GCL ensures the routing decisions are governed: if tier imbalance threatens SLO compliance, the GCL proposes scaling actions.
+
+### 8.4 Near-Term: Centralized Decision-Oriented Metrics
+
+The current Prometheus federation serves dashboards (Grafana) but does not feed decision-making components in real time. The platform needs a centralized metrics plane that feeds the GCL predictor, the fleet-llm-d autoscaler, and the vLLM-SR routing engine with cross-cluster latency, throughput, queue depth, and GPU/CPU utilization.
+
+Phase 1 (immediate): an aggregated metrics API on fleet-llm-d (`GET /api/v1/metrics/aggregated`) that all four systems poll. The GCL's predictor shifts from per-cycle evidence snapshots to continuous metrics-driven predictions. deepfield-fleet's SLO forecaster uses cross-cluster latency instead of single-cluster snapshots.
+
+Phase 2 (production): evolve to an OpenTelemetry Collector hub that per-cluster fleet-agents push OTLP metrics to, with exports to Prometheus (dashboards), fleet-llm-d (autoscaler), and GCL (evidence webhook).
+
+### 8.5 Long-Term
 
 - Cross-cloud federation (GKE + EKS + OCP)
 - Agentic workflow orchestration with fleet-level tool routing (the governed-cognitive-loop provides the first governed autonomy layer for this, with falsification-gated intent emission already integrated and verified on Oberon)
 - llm-d-planner integration for fleet-level capacity planning
-- RHACM integration for unified cluster + inference management
+- RHACM integration for unified cluster + inference management (MaaS of MaaS)
 - MoE model support (Qwen3-30B-A3B) for "30B intelligence at 3B speed" on CPU
 
 ## 9. Appendix
