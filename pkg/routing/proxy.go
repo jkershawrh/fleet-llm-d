@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -49,12 +50,13 @@ type Backend struct {
 
 // InferenceProxy routes inference requests to backend model servers.
 type InferenceProxy struct {
-	mu          sync.RWMutex
-	backends    map[string][]Backend // model -> backends
-	rrIndex     atomic.Uint64        // round-robin counter
-	http        *http.Client
-	inflight    sync.Map // model -> *int64 (atomic counter per model)
-	maxInflight int      // per-model max concurrent requests (0 = disabled)
+	mu              sync.RWMutex
+	backends        map[string][]Backend // model -> backends
+	rrIndex         atomic.Uint64        // round-robin counter
+	http            *http.Client
+	inflight        sync.Map // model -> *int64 (atomic counter per model)
+	maxInflight     int      // per-model max concurrent requests (0 = disabled)
+	SemanticRouter  *SemanticRouter // optional semantic routing
 }
 
 // NewInferenceProxy creates a new InferenceProxy with an HTTP client
@@ -306,11 +308,32 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 	}
 }
 
-// inferenceRequest is a minimal struct to extract the model and stream flag
-// from OpenAI-compatible request bodies.
+// chatMessage represents a single message in an OpenAI chat request.
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// inferenceRequest is a minimal struct to extract the model, stream flag,
+// and messages from OpenAI-compatible request bodies.
 type inferenceRequest struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
+	Model    string        `json:"model"`
+	Stream   bool          `json:"stream"`
+	Messages []chatMessage `json:"messages"`
+	Prompt   string        `json:"prompt"`
+}
+
+// lastUserPrompt extracts the last user message for semantic classification.
+func (r *inferenceRequest) lastUserPrompt() string {
+	if r.Prompt != "" {
+		return r.Prompt
+	}
+	for i := len(r.Messages) - 1; i >= 0; i-- {
+		if r.Messages[i].Role == "user" {
+			return r.Messages[i].Content
+		}
+	}
+	return ""
 }
 
 // ServeHTTP handles /v1/chat/completions and /v1/completions.
@@ -334,6 +357,24 @@ func (p *InferenceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if req.Model == "" {
 		writeProxyError(w, http.StatusBadRequest, "model field is required")
 		return
+	}
+
+	// Semantic routing: if model is "auto", classify the prompt and pick the tier.
+	if req.Model == "auto" && p.SemanticRouter != nil {
+		prompt := req.lastUserPrompt()
+		if prompt != "" {
+			mappedModel, tier, confidence, classifyErr := p.SemanticRouter.Classify(prompt)
+			if classifyErr != nil {
+				log.Printf("semantic routing failed, falling back to default: %v", classifyErr)
+			} else if mappedModel != "" {
+				req.Model = mappedModel
+				w.Header().Set("X-Semantic-Tier", tier)
+				w.Header().Set("X-Semantic-Confidence", fmt.Sprintf("%.2f", confidence))
+				log.Printf("semantic routing: tier=%s model=%s confidence=%.2f", tier, mappedModel, confidence)
+				// Rewrite the body with the resolved model name
+				body = bytes.Replace(body, []byte(`"auto"`), []byte(fmt.Sprintf(`%q`, mappedModel)), 1)
+			}
+		}
 	}
 
 	// Load shedding: reject if too many in-flight requests for this model
