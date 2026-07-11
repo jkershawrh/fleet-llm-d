@@ -140,6 +140,18 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	proxy.RegisterBackend("granite-sovereign", ovmsBackend)
 	proxy.RegisterBackend("granite-3.2-sovereign", ovmsBackend)
 
+	// Semantic routing: classify prompts and route model="auto" to the right tier.
+	// GCL classify-prompt endpoint serves as the classifier.
+	semanticRouterURL := os.Getenv("SEMANTIC_CLASSIFIER_URL")
+	if semanticRouterURL == "" {
+		semanticRouterURL = "http://gcl-app.governed-cognitive-loop.svc:8000"
+	}
+	proxy.SemanticRouter = routing.NewSemanticRouter(semanticRouterURL, map[string]string{
+		"simple":   "granite-3.2-sovereign",
+		"standard": "granite-3.2-sovereign",
+		"complex":  "granite-3.2-sovereign",
+	})
+
 	clusterRepo := postgres.NewInMemoryClusterRepository()
 	clusterClient := client.NewRepositoryClusterClient(clusterRepo)
 	fleetRecorder := ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d")
