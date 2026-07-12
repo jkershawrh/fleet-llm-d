@@ -117,7 +117,7 @@ fleet-llm-d evaluates received intents against its CRD-defined policies before a
 
 Intent types: `ScaleIntent`, `PreWarmIntent`, `ShedLoadIntent`, `AlertIntent`, `MigrateIntent`. All intents carry HMAC-SHA256 signed authentication tokens and are recorded in the ARE Immutable Ledger under a correlation ID that chains the full decision lifecycle.
 
-Verified: 496 tests, 15/15 EDD rubric, 1,098 ledger entries on Oberon, 6 scenarios covering scale, pre-warm, shed-load, alert, and cross-cluster migration.
+Verified: 574 tests, 18/18 EDD rubric, 1,400 ledger entries (1,272 GCL) on Oberon, 6 scenarios covering scale, pre-warm, shed-load, alert, and cross-cluster migration. Semantic routing (prompt classification into simple/standard/complex tiers via classify-prompt endpoint) and centralized platform metrics (GET /api/v1/metrics/platform) are deployed and live.
 
 ### Cost Model
 
@@ -217,16 +217,16 @@ make test-e2e          # End-to-end tests (requires running infrastructure)
 ```
 
 ```bash
-# Architecture proof — 50 claims about how the system works
+# Architecture proof: 50 claims about how the system works
 go test -tags=architecture ./test/architecture/...
 
-# Security tests — auth, rate limiting, webhook validation
+# Security tests: auth, rate limiting, webhook validation
 go test -tags=security ./test/security/...
 
-# Compliance — audit trail completeness
+# Compliance: audit trail completeness
 go test -tags=compliance ./test/compliance/...
 
-# Soak test — sustained load for configurable duration
+# Soak test: sustained load for configurable duration
 ./test/soak/run-soak.sh --duration 7200 --rps 10
 ```
 

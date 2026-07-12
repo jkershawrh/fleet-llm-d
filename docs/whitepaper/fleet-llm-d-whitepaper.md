@@ -4,7 +4,7 @@
 
 **Authors:** Jonathan Kershaw
 **Date:** July 2026
-**Version:** Draft 0.2 — Updated with Intel CPU inference benchmarks
+**Version:** Draft 0.2, updated with Intel CPU inference benchmarks
 
 ---
 
@@ -155,7 +155,7 @@ The ModelPack integration runs as a validation step in the model deployment work
 
 ### 3.8 Compliance & Audit Trail (ARE Immutable Ledger)
 
-fleet-llm-d integrates with the ARE (Agentic Runtime Environment) Immutable Ledger — an **independent, shared compliance platform** that lives outside the fleet-llm-d ecosystem. The ARE ledger is enterprise infrastructure: it runs on its own database, its own compute, and is operated independently. Any platform in the customer's ecosystem can write to it — fleet-llm-d, MaaS, RHACM, agentic frameworks (Kagenti, OpenShell), CI/CD pipelines, security scanning tools, and custom applications. This separation is deliberate: the compliance layer must be independent of the systems it audits to maintain trust.
+fleet-llm-d integrates with the ARE (Agentic Runtime Environment) Immutable Ledger, an **independent, shared compliance platform** that lives outside the fleet-llm-d ecosystem. The ARE ledger is enterprise infrastructure: it runs on its own database, its own compute, and is operated independently. Any platform in the customer's ecosystem can write to it (fleet-llm-d, MaaS, RHACM, agentic frameworks such as Kagenti and OpenShell, CI/CD pipelines, security scanning tools, and custom applications). This separation is deliberate: the compliance layer must be independent of the systems it audits to maintain trust.
 
 fleet-llm-d is one of many writers to the ARE ledger. Every placement decision, deployment event, scaling action, and tenant usage record is written to a hash-chained append-only ledger.
 
@@ -220,7 +220,7 @@ The integration contract consists of six intent types (ScaleIntent, PreWarmInten
 
 The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.
 
-**Verified on Oberon.** The GCL is deployed on the same OpenShift cluster as fleet-llm-d. 1,098 GCL ledger entries across 193 correlation chains, all cryptographically valid. 6 scenarios validated: inference fleet spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, and multi-cluster migration. Fleet controller accepted GCL intents with HMAC auth (confirmed in controller logs).
+**Verified on Oberon.** The GCL is deployed on the same OpenShift cluster as fleet-llm-d. 574 tests, 18/18 EDD rubric. 1,400 GCL ledger entries across correlation chains, all cryptographically valid. 6 scenarios validated: inference fleet spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, and multi-cluster migration. Fleet controller accepted GCL intents with HMAC auth (confirmed in controller logs). Semantic routing (prompt classification into simple/standard/complex tiers) and centralized platform metrics (GET /api/v1/metrics/platform aggregating inference, classification, governance, fleet, and ledger data) are deployed and live.
 
 ## 4. Seven Capabilities
 
