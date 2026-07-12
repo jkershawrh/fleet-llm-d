@@ -218,9 +218,11 @@ fleet-llm-d evaluates received intents against its CRD-defined policies (confide
 
 The integration contract consists of six intent types (ScaleIntent, PreWarmIntent, ShedLoadIntent, AlertIntent, MigrateIntent, NoAction), HMAC-SHA256 authentication using a shared secret, and correlation IDs that chain the full decision lifecycle from classification through actuation in the ARE Immutable Ledger.
 
+The GCL's authority to act is governed by the agent-promotion-line, which dynamically adjusts the GCL's consequence ceiling based on its verified track record in the ARE ledger.
+
 The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.
 
-**Verified on Oberon.** The GCL is deployed on the same OpenShift cluster as fleet-llm-d. 776 tests, 24/24 EDD rubric. 1,400 GCL ledger entries across correlation chains, all cryptographically valid. 6 scenarios validated: inference fleet spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, and multi-cluster migration. Post-commit accountability with outcome verification, decision cooldown, and actuation verification brings composite confidence to 99%. Fleet controller accepted GCL intents with HMAC auth (confirmed in controller logs). Semantic routing (prompt classification into simple/standard/complex tiers) and centralized platform metrics (GET /api/v1/metrics/platform aggregating inference, classification, governance, fleet, and ledger data) are deployed and live.
+**Verified on Oberon.** The GCL is deployed on the same OpenShift cluster as fleet-llm-d. 782 tests, 24/24 EDD rubric. 1,400 GCL ledger entries across correlation chains, all cryptographically valid. 6 scenarios validated: inference fleet spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, and multi-cluster migration. Post-commit accountability with outcome verification, decision cooldown, and actuation verification brings composite confidence to 99%. Fleet controller accepted GCL intents with HMAC auth (confirmed in controller logs). Semantic routing (prompt classification into simple/standard/complex tiers) and centralized platform metrics (GET /api/v1/metrics/platform aggregating inference, classification, governance, fleet, and ledger data) are deployed and live.
 
 ## 4. Seven Capabilities
 
