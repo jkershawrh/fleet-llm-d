@@ -117,7 +117,7 @@ fleet-llm-d evaluates received intents against its CRD-defined policies before a
 
 Intent types: `ScaleIntent`, `PreWarmIntent`, `ShedLoadIntent`, `AlertIntent`, `MigrateIntent`. All intents carry HMAC-SHA256 signed authentication tokens and are recorded in the ARE Immutable Ledger under a correlation ID that chains the full decision lifecycle.
 
-Verified: 776 tests, 24/24 EDD rubric, 1,400 ledger entries (1,272 GCL) on Oberon, 6 scenarios covering scale, pre-warm, shed-load, alert, and cross-cluster migration. Post-commit accountability (outcome verification, decision cooldown, actuation verification) and 99% composite confidence. Semantic routing (prompt classification into simple/standard/complex tiers via classify-prompt endpoint) and centralized platform metrics (GET /api/v1/metrics/platform) are deployed and live.
+Verified: 782 tests, 24/24 EDD rubric, 1,400 ledger entries (1,272 GCL) on Oberon, 6 scenarios covering scale, pre-warm, shed-load, alert, and cross-cluster migration. Post-commit accountability (outcome verification, decision cooldown, actuation verification) and 99% composite confidence. Semantic routing (prompt classification into simple/standard/complex tiers via classify-prompt endpoint) and centralized platform metrics (GET /api/v1/metrics/platform) are deployed and live.
 
 ### Cost Model
 
