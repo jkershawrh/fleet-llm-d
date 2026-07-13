@@ -73,8 +73,21 @@ and agent Services remain internal.
 
 ## External dependencies
 
-- ARE ledger mode defaults to `disabled`. `http` and `grpc` modes require an
-  explicit endpoint; `memory` is intended only for development/test evidence.
+- GCL DecisionPackage admission is disabled until `externalDependencies.gcl`
+  names an existing Secret containing the shared signing key and its key ID.
+  Fleet verifies the producer signature before creating a FleetIntent.
+- The v2 production ingress accepts verified GCL DecisionPackage CloudEvents.
+  Plain `application/json` v2 intents are disabled by default because their
+  provenance is self-asserted. Set `controller.allowOperatorJSONIntents=true`
+  only for explicit development/operator compatibility testing; the equivalent
+  binary flag is `--allow-operator-json-intents` and the direct-process escape
+  hatch is `FLEET_ALLOW_OPERATOR_JSON_INTENTS=true`.
+- Standalone immutable-ledger mode defaults to `disabled`. The currently
+  packaged `http` compatibility mode requires an explicit endpoint. Hub and
+  federated-hub profiles additionally require HTTPS and an existing Secret
+  containing the gateway bearer token. `memory` is development/test evidence
+  only. The ledger-owned gRPC API remains canonical, but this binary does not
+  advertise it until a generated Go client is shipped.
 - PostgreSQL is disabled and, when enabled, reads the full connection URL from
   an existing Secret. No password appears in values or rendered arguments.
 - The event publisher and ModelPlane adapter require explicit endpoints.

@@ -13,6 +13,7 @@ var sha256Pattern = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
 const (
 	MaxIntentParameterProperties = 64
 	MaxIntentParametersBytes     = 64 * 1024
+	FleetAuthorizationAudience   = "fleet-llm-d"
 )
 
 // ValidationError identifies a stable JSON field path for admission clients.
@@ -263,11 +264,37 @@ func ValidateFleetOperationForPhase(spec FleetOperationSpec, phase OperationPhas
 		errs = append(errs, ValidationError{"spec.idempotencyKey", "must not be empty"})
 	}
 	errs = append(errs, ValidateAuthorizationReference(spec.AuthorizationRef)...)
+	if spec.AuthorizationRef != nil {
+		ref := spec.AuthorizationRef
+		if ref.ActionClass != spec.ActionClass {
+			errs = append(errs, ValidationError{"spec.authorizationRef.actionClass", "must match spec.actionClass"})
+		}
+		if spec.PlanDigest != nil && ref.SpecDigest != *spec.PlanDigest {
+			errs = append(errs, ValidationError{"spec.authorizationRef.specDigest", "must match spec.planDigest"})
+		}
+		if ref.IdempotencyKey != spec.IdempotencyKey {
+			errs = append(errs, ValidationError{"spec.authorizationRef.idempotencyKey", "must match spec.idempotencyKey"})
+		}
+	}
 	if phaseRequiresAuthorization(phase) && spec.AuthorizationRef == nil {
 		errs = append(errs, ValidationError{"spec.authorizationRef", "is required at AUTHORIZED and later execution phases"})
 	}
 	if phaseRequiresUnexpiredAuthorization(phase) && spec.AuthorizationRef != nil && !spec.AuthorizationRef.ExpiresAt.After(now) {
 		errs = append(errs, ValidationError{"spec.authorizationRef.expiresAt", "must be in the future"})
+	}
+	return errs
+}
+
+// ValidateFleetOperationResourceForPhase adds object-identity binding to the
+// spec-only lifecycle checks. Kubernetes assigns metadata.uid after creation,
+// so the binding is enforced whenever that stable identity is available.
+func ValidateFleetOperationResourceForPhase(operation FleetOperation, phase OperationPhase, now time.Time) []error {
+	errs := ValidateFleetOperationForPhase(operation.Spec, phase, now)
+	if operation.Spec.AuthorizationRef == nil || strings.TrimSpace(operation.Metadata.UID) == "" {
+		return errs
+	}
+	if operation.Spec.AuthorizationRef.ObjectUID != operation.Metadata.UID {
+		errs = append(errs, ValidationError{"spec.authorizationRef.objectUid", "must match metadata.uid"})
 	}
 	return errs
 }
@@ -303,7 +330,8 @@ func ValidateAuthorizationReference(ref *AuthorizationReference) []error {
 	}
 	var errs []error
 	required := []struct{ field, value string }{
-		{"grantId", ref.GrantID}, {"actionClass", ref.ActionClass}, {"specDigest", ref.SpecDigest},
+		{"grantId", ref.GrantID}, {"subject", ref.Subject}, {"actionClass", ref.ActionClass},
+		{"objectUid", ref.ObjectUID}, {"specDigest", ref.SpecDigest},
 		{"audience", ref.Audience}, {"idempotencyKey", ref.IdempotencyKey},
 	}
 	for _, item := range required {
@@ -313,6 +341,9 @@ func ValidateAuthorizationReference(ref *AuthorizationReference) []error {
 	}
 	if ref.SpecDigest != "" && !sha256Pattern.MatchString(ref.SpecDigest) {
 		errs = append(errs, ValidationError{"authorizationRef.specDigest", "must be a 64-character SHA-256 digest"})
+	}
+	if ref.Audience != "" && ref.Audience != FleetAuthorizationAudience {
+		errs = append(errs, ValidationError{"authorizationRef.audience", "must be fleet-llm-d"})
 	}
 	if ref.ExpiresAt.IsZero() {
 		errs = append(errs, ValidationError{"authorizationRef.expiresAt", "must be set"})

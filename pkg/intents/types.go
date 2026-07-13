@@ -61,8 +61,9 @@ type EvidenceDigest struct {
 	MediaType string `json:"media_type,omitempty"`
 }
 
-// ProposerAuthority is the agent-promotion attestation presented by the
-// decision producer. ARE still makes the final execution decision.
+// ProposerAuthority is optional, non-authoritative provenance presented by a
+// decision producer. Fleet admission and approval policy makes the execution
+// decision; a ledger receipt is never an execution credential.
 type ProposerAuthority struct {
 	Subject      string     `json:"subject"`
 	AuthorityRef string     `json:"authority_ref"`
@@ -121,30 +122,75 @@ type OperationTransition struct {
 }
 
 type OperationLedgerReceipt struct {
-	EntryID    string               `json:"entry_id"`
-	ChainHash  string               `json:"chain_hash"`
-	Sequence   int64                `json:"sequence"`
-	RecordedAt time.Time            `json:"recorded_at"`
-	Purpose    LedgerReceiptPurpose `json:"purpose"`
+	EntryID       string               `json:"entry_id"`
+	EntryHash     string               `json:"entry_hash"`
+	EntryType     string               `json:"entry_type"`
+	ChainPosition int64                `json:"chain_position"`
+	WrittenTS     int64                `json:"written_ts"`
+	InputHash     string               `json:"input_hash"`
+	Purpose       LedgerReceiptPurpose `json:"purpose"`
 }
 
 type LedgerReceiptPurpose string
 
 const (
-	ReceiptPurposeAdmission     LedgerReceiptPurpose = "admission"
-	ReceiptPurposeAuthorization LedgerReceiptPurpose = "authorization"
-	ReceiptPurposeOutcome       LedgerReceiptPurpose = "outcome"
+	ReceiptPurposeAdmission             LedgerReceiptPurpose = "admission"
+	ReceiptPurposeAuthorizationDecision LedgerReceiptPurpose = "authorization_decision"
+	ReceiptPurposeOutcome               LedgerReceiptPurpose = "outcome"
 )
+
+const (
+	// AuthorizationAudienceFleetController is the only audience accepted by
+	// the fleet operation service for an infrastructure execution grant.
+	AuthorizationAudienceFleetController = "fleet-llm-d"
+
+	// LedgerEntryTypeAuthorizationDecision and LedgerEntryTypeOutcome bind a
+	// receipt purpose to the producer-owned immutable-ledger entry type. A
+	// caller cannot relabel an unrelated proof as execution evidence.
+	LedgerEntryTypeAuthorizationDecision = "fleet.operation.authorization_decision"
+	LedgerEntryTypeOutcome               = "fleet.operation.verified"
+)
+
+// AuthorizationReference is the Fleet-owned execution decision bound to one
+// operation plan. Immutable-ledger receipts can prove this decision was
+// recorded, but they never substitute for this authorization.
+type AuthorizationReference struct {
+	GrantID        string    `json:"grant_id"`
+	Subject        string    `json:"subject"`
+	ActionClass    string    `json:"action_class"`
+	ObjectUID      string    `json:"object_uid"`
+	SpecDigest     string    `json:"spec_digest"`
+	Audience       string    `json:"audience"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	BreakGlass     bool      `json:"break_glass,omitempty"`
+	IncidentRef    string    `json:"incident_ref,omitempty"`
+}
+
+// ProviderReference identifies the provider that owns actuation for an
+// operation plan. It mirrors the v1beta1 FleetOperation provider reference in
+// the REST/domain projection.
+type ProviderReference struct {
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	Generation int64  `json:"generation,omitempty"`
+}
 
 // FleetOperation is the REST projection of the v1beta1 FleetOperation CRD.
 type FleetOperation struct {
 	ID               string                   `json:"id"`
+	ObjectUID        string                   `json:"object_uid,omitempty"`
 	IntentID         string                   `json:"intent_id"`
 	CorrelationID    string                   `json:"correlation_id"`
 	IdempotencyKey   string                   `json:"idempotency_key,omitempty"`
+	ActionClass      string                   `json:"action_class"`
 	State            OperationState           `json:"state"`
 	PlanDigest       string                   `json:"plan_digest,omitempty"`
-	AuthorizationRef string                   `json:"authorization_ref,omitempty"`
+	Provider         *ProviderReference       `json:"provider,omitempty"`
+	ObservedDigest   string                   `json:"observed_digest,omitempty"`
+	AuthorizationRef *AuthorizationReference  `json:"authorization_ref,omitempty"`
 	LedgerEntryID    string                   `json:"ledger_entry_id,omitempty"`
 	LedgerReceipts   []OperationLedgerReceipt `json:"ledger_receipts,omitempty"`
 	CreatedAt        time.Time                `json:"created_at"`

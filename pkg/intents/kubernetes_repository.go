@@ -173,6 +173,25 @@ func (r *KubernetesRepository) UpdateOperation(ctx context.Context, operation Fl
 	if err := r.request(ctx, http.MethodGet, path, nil, &resource); err != nil {
 		return err
 	}
+	// Planning and authorization are controller-owned desired state. They are
+	// populated after the operation is first created, so persist them through
+	// the main resource endpoint before advancing observed status.
+	if strings.TrimSpace(operation.ActionClass) != "" {
+		resource.Spec.ActionClass = operation.ActionClass
+	}
+	if strings.TrimSpace(operation.PlanDigest) != "" {
+		planDigest := operation.PlanDigest
+		resource.Spec.PlanDigest = &planDigest
+	}
+	if operation.Provider != nil {
+		resource.Spec.Provider = providerToResource(operation.Provider)
+	}
+	if operation.AuthorizationRef != nil {
+		resource.Spec.AuthorizationRef = authorizationToResource(operation.AuthorizationRef)
+	}
+	if err := r.request(ctx, http.MethodPut, path, resource, &resource); err != nil {
+		return fmt.Errorf("update FleetOperation desired state: %w", err)
+	}
 	resource.Status = mergedOperationStatus(resource.Status, operation)
 	if err := r.request(ctx, http.MethodPut, path+"/status", resource, &resource); err != nil {
 		return fmt.Errorf("update FleetOperation status: %w", err)
@@ -187,7 +206,16 @@ func mergedOperationStatus(existing v1beta1.FleetOperationStatus, operation Flee
 	next := operationStatus(operation)
 	next.CommonStatus = existing.CommonStatus
 	next.CorrelationID = operation.CorrelationID
-	next.Result = existing.Result
+	if existing.Result != nil {
+		result := *existing.Result
+		next.Result = &result
+	}
+	if strings.TrimSpace(operation.ObservedDigest) != "" {
+		if next.Result == nil {
+			next.Result = &v1beta1.OperationResult{}
+		}
+		next.Result.ObservedDigest = operation.ObservedDigest
+	}
 	next.CompensationRef = existing.CompensationRef
 	return next
 }
@@ -317,6 +345,12 @@ func toIntentResource(intent FleetIntent, operation FleetOperation) (v1beta1.Fle
 }
 
 func toOperationResource(operation FleetOperation, intentResource v1beta1.FleetIntent) (v1beta1.FleetOperation, error) {
+	action := firstNonEmpty(operation.ActionClass, intentResource.Spec.ActionClass)
+	var planDigest *string
+	if strings.TrimSpace(operation.PlanDigest) != "" {
+		digest := operation.PlanDigest
+		planDigest = &digest
+	}
 	return v1beta1.FleetOperation{
 		TypeMeta: v1beta1.TypeMeta{APIVersion: v1beta1.APIVersion, Kind: "FleetOperation"},
 		Metadata: v1beta1.ObjectMeta{
@@ -330,10 +364,13 @@ func toOperationResource(operation FleetOperation, intentResource v1beta1.FleetI
 			},
 		},
 		Spec: v1beta1.FleetOperationSpec{
-			IntentRef:      v1beta1.LocalObjectReference{Name: intentResource.Metadata.Name},
-			ActionClass:    intentResource.Spec.ActionClass,
-			TargetRef:      intentResource.Spec.TargetRef,
-			IdempotencyKey: operation.IdempotencyKey,
+			IntentRef:        v1beta1.LocalObjectReference{Name: intentResource.Metadata.Name},
+			ActionClass:      action,
+			TargetRef:        intentResource.Spec.TargetRef,
+			PlanDigest:       planDigest,
+			Provider:         providerToResource(operation.Provider),
+			AuthorizationRef: authorizationToResource(operation.AuthorizationRef),
+			IdempotencyKey:   operation.IdempotencyKey,
 		},
 		Status: operationStatus(operation),
 	}, nil
@@ -345,39 +382,55 @@ func operationStatus(operation FleetOperation) v1beta1.FleetOperationStatus {
 		transitions = append(transitions, v1beta1.OperationTransition{
 			Sequence: transition.Sequence, Phase: v1beta1.OperationPhase(transition.State), At: transition.At,
 			Reason: firstNonEmpty(transition.Reason, "state transition"), Message: transition.Actor,
+			LedgerEntryID: transition.LedgerEntryID,
 		})
 	}
 	receipts := make([]v1beta1.LedgerReceipt, 0, len(operation.LedgerReceipts))
 	for _, receipt := range operation.LedgerReceipts {
 		receipts = append(receipts, v1beta1.LedgerReceipt{
-			EntryID: receipt.EntryID, ChainHash: receipt.ChainHash, Sequence: receipt.Sequence, RecordedAt: receipt.RecordedAt,
+			EntryID: receipt.EntryID, EntryHash: receipt.EntryHash, EntryType: receipt.EntryType,
+			ChainPosition: receipt.ChainPosition, WrittenTS: receipt.WrittenTS, InputHash: receipt.InputHash,
 			Purpose: string(receipt.Purpose),
 		})
 	}
-	return v1beta1.FleetOperationStatus{
+	status := v1beta1.FleetOperationStatus{
 		CommonStatus: v1beta1.CommonStatus{CorrelationID: operation.CorrelationID},
 		Phase:        v1beta1.OperationPhase(operation.State), Transitions: transitions, LedgerReceipts: receipts,
 	}
+	if strings.TrimSpace(operation.ObservedDigest) != "" {
+		status.Result = &v1beta1.OperationResult{ObservedDigest: operation.ObservedDigest}
+	}
+	return status
 }
 
 func operationFromResource(resource v1beta1.FleetOperation) FleetOperation {
 	operation := FleetOperation{
 		ID:             originalResourceID(resource.Metadata, originalIDAnnotation, resource.Metadata.Name),
+		ObjectUID:      resource.Metadata.UID,
 		IntentID:       originalResourceID(resource.Metadata, originalIntentIDAnnotation, resource.Spec.IntentRef.Name),
 		CorrelationID:  resource.Status.CorrelationID,
-		IdempotencyKey: resource.Spec.IdempotencyKey, State: OperationState(resource.Status.Phase),
+		IdempotencyKey: resource.Spec.IdempotencyKey, ActionClass: resource.Spec.ActionClass, State: OperationState(resource.Status.Phase),
 		CreatedAt: timeOrZero(resource.Metadata.CreationTimestamp), UpdatedAt: timeOrZero(resource.Metadata.CreationTimestamp),
+	}
+	if strings.TrimSpace(operation.ObjectUID) == "" {
+		operation.ObjectUID = operation.ID
 	}
 	if resource.Spec.PlanDigest != nil {
 		operation.PlanDigest = *resource.Spec.PlanDigest
 	}
+	if resource.Spec.Provider != nil {
+		operation.Provider = providerFromResource(resource.Spec.Provider)
+	}
 	if resource.Spec.AuthorizationRef != nil {
-		operation.AuthorizationRef = resource.Spec.AuthorizationRef.GrantID
+		operation.AuthorizationRef = authorizationFromResource(resource.Spec.AuthorizationRef)
+	}
+	if resource.Status.Result != nil {
+		operation.ObservedDigest = resource.Status.Result.ObservedDigest
 	}
 	for _, transition := range resource.Status.Transitions {
 		operation.Transitions = append(operation.Transitions, OperationTransition{
 			Sequence: transition.Sequence, State: OperationState(transition.Phase), At: transition.At,
-			Reason: transition.Reason, Actor: transition.Message,
+			Reason: transition.Reason, Actor: transition.Message, LedgerEntryID: transition.LedgerEntryID,
 		})
 		if transition.At.After(operation.UpdatedAt) {
 			operation.UpdatedAt = transition.At
@@ -385,12 +438,55 @@ func operationFromResource(resource v1beta1.FleetOperation) FleetOperation {
 	}
 	for _, receipt := range resource.Status.LedgerReceipts {
 		operation.LedgerReceipts = append(operation.LedgerReceipts, OperationLedgerReceipt{
-			EntryID: receipt.EntryID, ChainHash: receipt.ChainHash, Sequence: receipt.Sequence, RecordedAt: receipt.RecordedAt,
+			EntryID: receipt.EntryID, EntryHash: receipt.EntryHash, EntryType: receipt.EntryType,
+			ChainPosition: receipt.ChainPosition, WrittenTS: receipt.WrittenTS, InputHash: receipt.InputHash,
 			Purpose: LedgerReceiptPurpose(receipt.Purpose),
 		})
 		operation.LedgerEntryID = receipt.EntryID
 	}
 	return operation
+}
+
+func authorizationToResource(ref *AuthorizationReference) *v1beta1.AuthorizationReference {
+	if ref == nil {
+		return nil
+	}
+	return &v1beta1.AuthorizationReference{
+		GrantID: ref.GrantID, Subject: ref.Subject, ActionClass: ref.ActionClass, ObjectUID: ref.ObjectUID,
+		SpecDigest: ref.SpecDigest, Audience: ref.Audience, ExpiresAt: ref.ExpiresAt,
+		IdempotencyKey: ref.IdempotencyKey, BreakGlass: ref.BreakGlass, IncidentRef: ref.IncidentRef,
+	}
+}
+
+func providerToResource(ref *ProviderReference) *v1beta1.ProviderReference {
+	if ref == nil {
+		return nil
+	}
+	return &v1beta1.ProviderReference{
+		Type: ref.Type, Name: ref.Name, Namespace: ref.Namespace,
+		ExternalID: ref.ExternalID, Generation: ref.Generation,
+	}
+}
+
+func providerFromResource(ref *v1beta1.ProviderReference) *ProviderReference {
+	if ref == nil {
+		return nil
+	}
+	return &ProviderReference{
+		Type: ref.Type, Name: ref.Name, Namespace: ref.Namespace,
+		ExternalID: ref.ExternalID, Generation: ref.Generation,
+	}
+}
+
+func authorizationFromResource(ref *v1beta1.AuthorizationReference) *AuthorizationReference {
+	if ref == nil {
+		return nil
+	}
+	return &AuthorizationReference{
+		GrantID: ref.GrantID, Subject: ref.Subject, ActionClass: ref.ActionClass, ObjectUID: ref.ObjectUID,
+		SpecDigest: ref.SpecDigest, Audience: ref.Audience, ExpiresAt: ref.ExpiresAt,
+		IdempotencyKey: ref.IdempotencyKey, BreakGlass: ref.BreakGlass, IncidentRef: ref.IncidentRef,
+	}
 }
 
 func intentFromResource(resource v1beta1.FleetIntent) FleetIntent {

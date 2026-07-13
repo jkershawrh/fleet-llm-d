@@ -86,9 +86,19 @@ fleet-llm-d defines seven CRDs that drive all fleet behavior declaratively:
 
 fleet-llm-d consumes [ModelPack](https://github.com/model-spec) artifacts -- OCI-packaged models with structured metadata -- as its canonical model format. The `modelpack` package resolves model references, validates signatures, and extracts hardware requirements used by the placement solver.
 
-### ARE Immutable Ledger
+### Standalone Immutable Ledger
 
-The ARE Immutable Ledger is an **independent shared compliance platform** that runs on a separate network (`are-ledger-net`) with its own PostgreSQL instance. fleet-llm-d publishes audit events -- placement decisions, scaling actions, model deployments -- to the ledger through the `are-gateway`. The ledger provides tamper-evident records for regulatory and sovereign compliance. The `ledger` package in fleet-llm-d handles event submission and verification.
+[are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger) is the
+independent audit spine for this ecosystem. It stores hash-chained fleet, GCL,
+and DeepField evidence and issues portable proof receipts. Receipts prove that
+an entry was recorded; they are not credentials and never authorize a fleet
+mutation. The ledger-owned `are.ledger.v1.ImmutableLedgerService` gRPC contract
+is canonical. `pkg/ledger` also implements the repository's optional `/api/*`
+REST gateway for explicit compatibility/development deployments.
+The controller fails startup if `grpc` is selected today; it will advertise
+that mode only after the ledger-owned protobuf is consumed through a generated,
+pinned Go client. It never falls back to in-memory receipts for a configured
+external-ledger failure.
 
 ### ModelPlane Integration
 
@@ -109,14 +119,19 @@ fleet-llm-d sits on top of [ModelPlane](https://github.com/modelplane) as the op
   └──────────────────────────────────────────┘
 ```
 
-The `modelplane` package (`pkg/modelplane/`) provides six integration points: CRD consumption (reading ModelDeployment and ModelCluster resources), policy injection (annotating ModelDeployments with fleet placement decisions), cost integration (feeding GPU pricing into fleet cost projections), compliance bridge (forwarding ModelPlane events to the ARE ledger), routing integration (using ModelCluster health for traffic decisions), and scaling integration (coordinating fleet autoscaling with ModelPlane resource limits). Three API endpoints expose ModelPlane state: `/api/v1/modelplane/clusters`, `/api/v1/modelplane/deployments`, and `/api/v1/modelplane/cost/{deployment}`.
+The `modelplane` package (`pkg/modelplane/`) provides six integration points: CRD consumption (reading ModelDeployment and ModelCluster resources), policy injection (annotating ModelDeployments with fleet placement decisions), cost integration (feeding GPU pricing into fleet cost projections), compliance bridge (forwarding ModelPlane events to the standalone immutable ledger), routing integration (using ModelCluster health for traffic decisions), and scaling integration (coordinating fleet autoscaling with ModelPlane resource limits). Three API endpoints expose ModelPlane state: `/api/v1/modelplane/clusters`, `/api/v1/modelplane/deployments`, and `/api/v1/modelplane/cost/{deployment}`.
 
 **Prototype evidence.** The checked-in demo used `cmd/modelplane-mock/` to
 exercise the watcher and cost paths with CRD-shaped fixtures. That proves the
 mock contract path only. It is not evidence of the pinned, official ModelPlane
 provider, Gateway API ownership, or observed multi-cluster actuation.
 
-When integrated with the governed-cognitive-loop and deepfield-fleet, the stack extends to five layers: deepfield-fleet (prediction) -> governed-cognitive-loop (governed autonomy) -> fleet-llm-d (fleet operations) -> ModelPlane (infrastructure) -> llm-d (inference).
+The core ecosystem spine is `deepfield-fleet -> governed-cognitive-loop ->
+fleet-llm-d -> are-immutable-ledger`: DeepField owns observations and
+forecasts, GCL owns signed and falsified proposals, fleet owns admission,
+authorization, desired/observed state, and actuation, and the ledger owns
+tamper-evident evidence. ModelPlane and llm-d remain infrastructure and
+within-cluster inference providers below the fleet boundary.
 
 ### Governed Cognitive Loop
 
@@ -124,12 +139,19 @@ The [governed-cognitive-loop](https://github.com/jkershawrh/governed-cognitive-l
 
 fleet-llm-d evaluates received intents against its CRD-defined policies before actuating. The GCL governs the decision; fleet-llm-d governs the execution.
 
-The restored GCL repository currently contains a legacy `/api/v1/intents`
-adapter using HMAC. That compatibility path is not the target trust model and
-does not establish verified execution. The v2 `DecisionPackage`,
-agent-promotion attestation, governance-strata transaction, ARE grant, and
-receipt-backed outcome loop remain subject to their published conformance
-contracts and executable evidence.
+GCL submits signed, expiry-bounded `DecisionPackage` proposals to the v2 intent
+boundary. A submission acknowledgement is not execution. Fleet admission and
+approval policy determines whether an operation may actuate, while the
+standalone immutable ledger records admission and outcome evidence without
+granting authority.
+
+Production v2 admission fails closed unless the request is a verified
+`application/cloudevents+json` GCL DecisionPackage. The unsigned
+`application/json` shape is self-asserted development/operator compatibility
+only and is disabled by default. It can be enabled deliberately with
+`--allow-operator-json-intents` or
+`FLEET_ALLOW_OPERATOR_JSON_INTENTS=true`; Helm exposes the same switch as
+`controller.allowOperatorJSONIntents` and defaults it to `false`.
 
 ### Cost Model
 
@@ -151,7 +173,7 @@ Six API endpoints: `/api/v1/cost/pricing`, `/api/v1/cost/tokenomics/{model}`, `/
 - **Network Policies**: Default-deny with explicit allowlists per component
 - **Container Hardening**: UBI base images, non-root (UID 65534), read-only filesystem, drop ALL capabilities
 - **Webhook Validation**: Admission webhook rejects invalid CRD specs
-- **Audit Trail**: Auth failures and RBAC denials recorded to ARE ledger
+- **Audit Trail**: Auth failures and RBAC denials recorded as evidence in the standalone immutable ledger
 
 ## Quick Start
 

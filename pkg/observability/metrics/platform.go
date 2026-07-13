@@ -26,17 +26,17 @@ type InferenceMetrics struct {
 }
 
 type ModelMetricsDetail struct {
-	Replicas    int     `json:"replicas"`
-	LatencyP50  float64 `json:"latency_p50_ms"`
-	LatencyP95  float64 `json:"latency_p95_ms"`
-	Throughput  float64 `json:"throughput_rps"`
-	Status      string  `json:"status"`
+	Replicas   int     `json:"replicas"`
+	LatencyP50 float64 `json:"latency_p50_ms"`
+	LatencyP95 float64 `json:"latency_p95_ms"`
+	Throughput float64 `json:"throughput_rps"`
+	Status     string  `json:"status"`
 }
 
 type ClassificationMetrics struct {
-	TotalClassifications int                       `json:"total_classifications"`
-	Agents               map[string]AgentMetrics   `json:"agents"`
-	TopClasses           []string                  `json:"top_classes"`
+	TotalClassifications int                     `json:"total_classifications"`
+	Agents               map[string]AgentMetrics `json:"agents"`
+	TopClasses           []string                `json:"top_classes"`
 }
 
 type AgentMetrics struct {
@@ -45,18 +45,18 @@ type AgentMetrics struct {
 }
 
 type GovernanceMetrics struct {
-	TotalCycles        int                `json:"total_cycles"`
-	Committed          int                `json:"committed"`
-	Rejected           int                `json:"rejected"`
-	RejectionReasons   map[string]int     `json:"rejection_reasons"`
-	ActionDistribution map[string]int     `json:"action_distribution"`
+	TotalCycles        int            `json:"total_cycles"`
+	Committed          int            `json:"committed"`
+	Rejected           int            `json:"rejected"`
+	RejectionReasons   map[string]int `json:"rejection_reasons"`
+	ActionDistribution map[string]int `json:"action_distribution"`
 }
 
 type FleetOperationsMetrics struct {
-	Clusters      int                    `json:"clusters"`
-	Pools         int                    `json:"pools"`
-	Tenants       int                    `json:"tenants"`
-	Routing       *RoutingMetrics        `json:"routing,omitempty"`
+	Clusters int             `json:"clusters"`
+	Pools    int             `json:"pools"`
+	Tenants  int             `json:"tenants"`
+	Routing  *RoutingMetrics `json:"routing,omitempty"`
 }
 
 type RoutingMetrics struct {
@@ -64,10 +64,10 @@ type RoutingMetrics struct {
 }
 
 type LedgerMetrics struct {
-	TotalEntries int                `json:"total_entries"`
-	GCLEntries   int                `json:"gcl_entries"`
-	ChainsValid  bool               `json:"chains_valid"`
-	Sources      map[string]int     `json:"sources"`
+	TotalEntries int            `json:"total_entries"`
+	GCLEntries   int            `json:"gcl_entries"`
+	ChainsValid  bool           `json:"chains_valid"`
+	Sources      map[string]int `json:"sources"`
 }
 
 // PlatformCollector aggregates metrics from all platform systems.
@@ -75,6 +75,7 @@ type PlatformCollector struct {
 	GCLURL       string
 	DeepfieldURL string
 	LedgerURL    string
+	LedgerToken  string
 	ClustersFunc func() int
 	PoolsFunc    func() int
 	TenantsFunc  func() int
@@ -125,7 +126,7 @@ func (pc *PlatformCollector) Collect(ctx context.Context) *PlatformMetrics {
 		}
 	}()
 
-	// ARE Ledger metrics
+	// Standalone immutable-ledger metrics
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -154,9 +155,9 @@ func (pc *PlatformCollector) collectGovernance(ctx context.Context, client *http
 	}
 
 	var cycles []struct {
-		Committed             bool    `json:"committed"`
-		ActionType            *string `json:"action_type"`
-		FalsificationVerdict  *string `json:"falsification_verdict"`
+		Committed            bool    `json:"committed"`
+		ActionType           *string `json:"action_type"`
+		FalsificationVerdict *string `json:"falsification_verdict"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&cycles); err != nil {
 		return nil
@@ -226,7 +227,10 @@ func (pc *PlatformCollector) collectClassification(ctx context.Context, client *
 		}
 	}
 
-	type kv struct{ k string; v int }
+	type kv struct {
+		k string
+		v int
+	}
 	var sorted []kv
 	for k, v := range classCounts {
 		sorted = append(sorted, kv{k, v})
@@ -239,7 +243,9 @@ func (pc *PlatformCollector) collectClassification(ctx context.Context, client *
 		}
 	}
 	for i, s := range sorted {
-		if i >= 5 { break }
+		if i >= 5 {
+			break
+		}
 		cls.TopClasses = append(cls.TopClasses, s.k)
 	}
 	return cls
@@ -252,7 +258,7 @@ func (pc *PlatformCollector) collectLedger(ctx context.Context, client *http.Cli
 
 	ldg := &LedgerMetrics{}
 
-	resp, err := client.Get(pc.LedgerURL + "/api/summary")
+	resp, err := authenticatedGet(ctx, client, pc.LedgerURL+"/api/summary", pc.LedgerToken)
 	if err != nil {
 		log.Printf("platform metrics: ledger unreachable: %v", err)
 		return nil
@@ -270,7 +276,7 @@ func (pc *PlatformCollector) collectLedger(ctx context.Context, client *http.Cli
 		}
 	}
 
-	resp2, err := client.Get(pc.LedgerURL + "/api/verify")
+	resp2, err := authenticatedGet(ctx, client, pc.LedgerURL+"/api/verify", pc.LedgerToken)
 	if err == nil {
 		defer resp2.Body.Close()
 		if resp2.StatusCode == 200 {
@@ -283,6 +289,17 @@ func (pc *PlatformCollector) collectLedger(ctx context.Context, client *http.Cli
 		}
 	}
 	return ldg
+}
+
+func authenticatedGet(ctx context.Context, client *http.Client, target, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return client.Do(req)
 }
 
 func safeCallInt(f func() int) int {

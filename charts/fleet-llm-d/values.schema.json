@@ -30,11 +30,12 @@
     },
     "controller": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "image", "mode", "ports", "service", "serviceAccount", "resources"],
+      "required": ["enabled", "replicaCount", "image", "mode", "allowOperatorJSONIntents", "ports", "service", "serviceAccount", "resources"],
       "properties": {
         "enabled": {"type": "boolean"},
         "replicaCount": {"const": 1},
         "mode": {"type": "string", "enum": ["all", "control", "inference"]},
+        "allowOperatorJSONIntents": {"type": "boolean", "default": false},
         "image": {"$ref": "#/definitions/image"},
         "ports": {
           "type": "object",
@@ -114,14 +115,26 @@
     },
     "externalDependencies": {
       "type": "object",
-      "required": ["ledger", "postgres", "eventPublisher", "modelPlane"],
+      "required": ["gcl", "ledger", "postgres", "eventPublisher", "modelPlane"],
       "properties": {
+        "gcl": {
+          "type": "object",
+          "required": ["enabled", "existingSecret", "secretKey", "keyID"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "existingSecret": {"type": "string"},
+            "secretKey": {"type": "string", "minLength": 1},
+            "keyID": {"type": "string", "minLength": 1}
+          }
+        },
         "ledger": {
           "type": "object",
-          "required": ["mode", "endpoint"],
+          "required": ["mode", "endpoint", "existingSecret", "secretKey"],
           "properties": {
-            "mode": {"type": "string", "enum": ["disabled", "memory", "http", "grpc"]},
-            "endpoint": {"type": "string"}
+            "mode": {"type": "string", "enum": ["disabled", "memory", "http"]},
+            "endpoint": {"type": "string"},
+            "existingSecret": {"type": "string"},
+            "secretKey": {"type": "string", "minLength": 1}
           }
         },
         "postgres": {"$ref": "#/definitions/externalSecretDependency"},
@@ -131,6 +144,24 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "externalDependencies": {
+            "properties": {"gcl": {"properties": {"enabled": {"const": true}}}}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "externalDependencies": {
+            "properties": {
+              "gcl": {"properties": {"existingSecret": {"type": "string", "minLength": 1}}}
+            }
+          }
+        }
+      }
+    },
     {
       "if": {"properties": {"profile": {"const": "standalone-dev"}}},
       "then": {
@@ -158,6 +189,32 @@
           "controller": {"properties": {"enabled": {"const": false}}},
           "gateway": {"properties": {"enabled": {"const": false}}},
           "agent": {"properties": {"enabled": {"const": true}}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": {"enum": ["hub", "federated-hub"]},
+          "externalDependencies": {
+            "properties": {
+              "ledger": {"properties": {"mode": {"const": "http"}}}
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "externalDependencies": {
+            "properties": {
+              "ledger": {
+                "properties": {
+                  "endpoint": {"type": "string", "pattern": "^https://"},
+                  "existingSecret": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
         }
       }
     }

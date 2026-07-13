@@ -46,6 +46,7 @@ spec:
             - --port={{ .Values.controller.ports.api }}
             - --metrics-port={{ .Values.controller.ports.metrics }}
             - --mode={{ .Values.controller.mode }}
+            - --allow-operator-json-intents={{ .Values.controller.allowOperatorJSONIntents }}
             - --ledger-mode={{ .Values.externalDependencies.ledger.mode }}
             - --kube-api=https://kubernetes.default.svc
             - --namespace={{ .Release.Namespace }}
@@ -55,8 +56,8 @@ spec:
             {{- if .Values.controller.grpc.enabled }}
             - --grpc-port={{ .Values.controller.ports.grpc }}
             {{- end }}
-            {{- if or (eq .Values.externalDependencies.ledger.mode "http") (eq .Values.externalDependencies.ledger.mode "grpc") }}
-            - --ledger-endpoint={{ required "externalDependencies.ledger.endpoint is required for http/grpc ledger mode" .Values.externalDependencies.ledger.endpoint }}
+            {{- if eq .Values.externalDependencies.ledger.mode "http" }}
+            - --ledger-endpoint={{ required "externalDependencies.ledger.endpoint is required for http ledger mode" .Values.externalDependencies.ledger.endpoint }}
             {{- end }}
             {{- if .Values.externalDependencies.postgres.enabled }}
             - --pg-url=$(FLEET_POSTGRES_URL)
@@ -74,7 +75,7 @@ spec:
             {{- range .Values.controller.extraArgs }}
             - {{ . | quote }}
             {{- end }}
-          {{- if or .Values.auth.enabled .Values.externalDependencies.postgres.enabled .Values.externalDependencies.semanticClassifier.endpoint .Values.externalDependencies.platformMetrics.gclURL .Values.externalDependencies.platformMetrics.deepfieldURL .Values.externalDependencies.platformMetrics.ledgerGatewayURL .Values.controller.extraEnv }}
+          {{- if or .Values.auth.enabled .Values.externalDependencies.gcl.enabled .Values.externalDependencies.postgres.enabled (and (eq .Values.externalDependencies.ledger.mode "http") (or .Values.externalDependencies.ledger.existingSecret (ne .Values.profile "standalone-dev"))) .Values.externalDependencies.semanticClassifier.endpoint .Values.externalDependencies.platformMetrics.gclURL .Values.externalDependencies.platformMetrics.deepfieldURL .Values.externalDependencies.platformMetrics.ledgerGatewayURL .Values.controller.extraEnv }}
           env:
             {{- if .Values.auth.enabled }}
             - name: FLEET_AUTH_SECRET
@@ -84,12 +85,30 @@ spec:
                   key: {{ .Values.auth.secretKey }}
                   optional: false
             {{- end }}
+            {{- if .Values.externalDependencies.gcl.enabled }}
+            - name: GCL_DECISION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "externalDependencies.gcl.existingSecret is required when GCL DecisionPackage admission is enabled" .Values.externalDependencies.gcl.existingSecret }}
+                  key: {{ .Values.externalDependencies.gcl.secretKey }}
+                  optional: false
+            - name: GCL_DECISION_SIGNING_KEY_ID
+              value: {{ .Values.externalDependencies.gcl.keyID | quote }}
+            {{- end }}
             {{- if .Values.externalDependencies.postgres.enabled }}
             - name: FLEET_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ required "externalDependencies.postgres.existingSecret is required when PostgreSQL is enabled" .Values.externalDependencies.postgres.existingSecret }}
                   key: {{ .Values.externalDependencies.postgres.secretKey }}
+                  optional: false
+            {{- end }}
+            {{- if and (eq .Values.externalDependencies.ledger.mode "http") (or .Values.externalDependencies.ledger.existingSecret (ne .Values.profile "standalone-dev")) }}
+            - name: LEDGER_GATEWAY_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "externalDependencies.ledger.existingSecret is required for http ledger mode outside standalone-dev" .Values.externalDependencies.ledger.existingSecret }}
+                  key: {{ .Values.externalDependencies.ledger.secretKey }}
                   optional: false
             {{- end }}
             {{- with .Values.externalDependencies.semanticClassifier.endpoint }}

@@ -126,19 +126,22 @@ const (
 )
 
 type OperationTransition struct {
-	Sequence int64               `json:"sequence"`
-	Phase    OperationPhase      `json:"phase"`
-	At       time.Time           `json:"at"`
-	Reason   string              `json:"reason"`
-	Message  string              `json:"message,omitempty"`
-	Evidence []EvidenceReference `json:"evidence,omitempty"`
+	Sequence      int64               `json:"sequence"`
+	Phase         OperationPhase      `json:"phase"`
+	At            time.Time           `json:"at"`
+	Reason        string              `json:"reason"`
+	Message       string              `json:"message,omitempty"`
+	Evidence      []EvidenceReference `json:"evidence,omitempty"`
+	LedgerEntryID string              `json:"ledgerEntryId,omitempty"`
 }
 type LedgerReceipt struct {
-	EntryID    string    `json:"entryId"`
-	ChainHash  string    `json:"chainHash"`
-	Sequence   int64     `json:"sequence"`
-	RecordedAt time.Time `json:"recordedAt"`
-	Purpose    string    `json:"purpose"`
+	EntryID       string `json:"entryId"`
+	EntryHash     string `json:"entryHash"`
+	EntryType     string `json:"entryType"`
+	ChainPosition int64  `json:"chainPosition"`
+	WrittenTS     int64  `json:"writtenTs"`
+	InputHash     string `json:"inputHash"`
+	Purpose       string `json:"purpose"`
 }
 type OperationResult struct {
 	ProviderOperationID string              `json:"providerOperationId,omitempty"`

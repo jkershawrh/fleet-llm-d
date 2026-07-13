@@ -53,6 +53,9 @@ controller:
     tag: ""
     pullPolicy: IfNotPresent
   mode: control
+  # Unsigned JSON v2 intents are an explicit development/operator
+  # compatibility surface. Production ingress uses verified GCL CloudEvents.
+  allowOperatorJSONIntents: false
   ports:
     api: 8080
     metrics: 9091
@@ -179,11 +182,20 @@ podDisruptionBudget:
     minAvailable: 1
 
 # External systems are opt-in. The chart does not install PostgreSQL, Redis,
-# Kafka, ARE, GCL, DeepField, ModelPlane, or Prometheus subcharts.
+# Kafka, the standalone immutable ledger, GCL, DeepField, ModelPlane, or
+# Prometheus subcharts.
 externalDependencies:
+  gcl:
+    enabled: false
+    existingSecret: ""
+    secretKey: decision-signing-key
+    keyID: gcl-decision-v1
   ledger:
     mode: disabled
     endpoint: ""
+    # Optional bearer token for the immutable-ledger REST compatibility gateway.
+    existingSecret: ""
+    secretKey: api-token
   postgres:
     enabled: false
     existingSecret: fleet-postgres

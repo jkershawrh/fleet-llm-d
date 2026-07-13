@@ -341,9 +341,9 @@ func TestHealthProbes(t *testing.T) {
 	}
 }
 
-// TestPostEndpointsAcceptJSON verifies that every POST endpoint in the spec
-// accepts a JSON request body (does not return 415 Unsupported Media Type).
-func TestPostEndpointsAcceptJSON(t *testing.T) {
+// TestPostEndpointMediaTypes verifies that JSON remains supported by the
+// ordinary REST surface while unsigned v2 intent JSON fails closed by default.
+func TestPostEndpointMediaTypes(t *testing.T) {
 	requireServer(t)
 	endpoints := parseOpenAPISpec(t)
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -368,6 +368,12 @@ func TestPostEndpointsAcceptJSON(t *testing.T) {
 			defer resp.Body.Close()
 			io.Copy(io.Discard, resp.Body)
 
+			if ep.Path == "/api/v2/intents" {
+				if resp.StatusCode != http.StatusUnsupportedMediaType {
+					t.Errorf("POST %s returned %d; unsigned JSON should be disabled", ep.Path, resp.StatusCode)
+				}
+				return
+			}
 			if resp.StatusCode == http.StatusUnsupportedMediaType {
 				t.Errorf("POST %s returned 415; JSON should be accepted", ep.Path)
 			}

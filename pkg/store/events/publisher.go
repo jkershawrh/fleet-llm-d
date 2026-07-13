@@ -149,7 +149,8 @@ type LedgerAwarePublisher struct {
 	recorder *ledger.FleetRecorder
 }
 
-// NewLedgerAwarePublisher creates a publisher that records to both the event bus and the ARE ledger.
+// NewLedgerAwarePublisher creates a publisher that records to both the event
+// bus and the standalone immutable ledger.
 func NewLedgerAwarePublisher(inner EventPublisher, recorder *ledger.FleetRecorder) *LedgerAwarePublisher {
 	return &LedgerAwarePublisher{inner: inner, recorder: recorder}
 }
@@ -164,7 +165,7 @@ func (p *LedgerAwarePublisher) Publish(ctx context.Context, event FleetEvent) er
 		return fmt.Errorf("marshal CloudEvent: %w", err)
 	}
 	if p.recorder == nil {
-		return fmt.Errorf("required ARE ledger recorder is not configured")
+		return fmt.Errorf("required immutable-ledger recorder is not configured")
 	}
 	if _, err := p.recorder.RecordDecision(ctx, ledger.FleetDecision{
 		Type:           event.Type,

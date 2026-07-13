@@ -68,11 +68,12 @@ spec:
                 heartbeatTtl: {type: string}
                 authorizationRef:
                   type: object
-                  required: [grantId, actionClass, specDigest, audience, expiresAt, idempotencyKey]
+                  required: [grantId, subject, actionClass, objectUid, specDigest, audience, expiresAt, idempotencyKey]
                   properties:
                     grantId: {type: string, minLength: 1}
+                    subject: {type: string, minLength: 1}
                     actionClass: {type: string, minLength: 1}
-                    objectUid: {type: string}
+                    objectUid: {type: string, minLength: 1}
                     specDigest:
                       type: string
                       pattern: "^[a-fA-F0-9]{64}$"
@@ -82,7 +83,9 @@ spec:
                     breakGlass: {type: boolean, default: false}
                     incidentRef: {type: string}
                   x-kubernetes-validations:
-                    - rule: "!self.breakGlass || has(self.incidentRef)"
+                    - rule: "self.audience == 'fleet-llm-d'"
+                      message: audience must be fleet-llm-d
+                    - rule: "!has(self.breakGlass) || !self.breakGlass || (has(self.incidentRef) && size(self.incidentRef) > 0)"
                       message: incidentRef is required for break-glass grants
             status:
               type: object
