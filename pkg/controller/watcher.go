@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
@@ -27,6 +28,7 @@ type CRDWatcher struct {
 
 	mu       sync.Mutex
 	lastSeen map[string]v1alpha1.FleetInferencePoolSpec // keyed by metadata.name
+	ready    atomic.Bool
 }
 
 // k8sPoolList represents the Kubernetes API list response for FleetInferencePool CRDs.
@@ -35,7 +37,7 @@ type k8sPoolList struct {
 }
 
 type k8sPoolItem struct {
-	Metadata k8sMetadata                    `json:"metadata"`
+	Metadata k8sMetadata                     `json:"metadata"`
 	Spec     v1alpha1.FleetInferencePoolSpec `json:"spec"`
 }
 
@@ -60,19 +62,20 @@ func WithHTTPClient(c *http.Client) CRDWatcherOption {
 
 // NewCRDWatcher creates a new CRDWatcher that polls the Kubernetes API for
 // FleetInferencePool CRD changes and reconciles them via the given Reconciler.
-// An optional tlsutil.TLSOptions can be passed to configure TLS behavior;
-// when omitted, InsecureSkipVerify is used for backward compatibility.
+// An optional tlsutil.TLSOptions can be passed to configure TLS behavior.
+// Verification is enabled by default; insecure mode requires explicit opt-in.
 func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, tlsOpts ...tlsutil.TLSOptions) *CRDWatcher {
-	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	opts := tlsutil.TLSOptions{}
 	if len(tlsOpts) > 0 {
 		opts = tlsOpts[0]
 	}
 
 	tlsCfg, err := tlsutil.NewTLSConfig(opts)
 	if err != nil {
-		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", err)
-		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+		log.Printf("failed to build configured TLS trust: %v", err)
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
+	tlsCfg.MinVersion = tls.VersionTLS13
 
 	w := &CRDWatcher{
 		apiServer:    apiServer,
@@ -88,7 +91,39 @@ func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, t
 		},
 		lastSeen: make(map[string]v1alpha1.FleetInferencePoolSpec),
 	}
+	reconciler.SetPlacementPolicyResolver(w.getPlacementPolicy)
 	return w
+}
+
+type k8sPlacementPolicy struct {
+	Spec v1alpha1.PlacementPolicySpec `json:"spec"`
+}
+
+func (w *CRDWatcher) getPlacementPolicy(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error) {
+	if ref == "" {
+		return v1alpha1.PlacementPolicySpec{}, fmt.Errorf("placement policy reference is required")
+	}
+	url := fmt.Sprintf("%s/apis/fleet.llm-d.ai/v1alpha1/namespaces/%s/placementpolicies/%s",
+		w.apiServer, w.namespace, ref)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return v1alpha1.PlacementPolicySpec{}, fmt.Errorf("creating placement policy request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.token)
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return v1alpha1.PlacementPolicySpec{}, fmt.Errorf("fetching placement policy: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return v1alpha1.PlacementPolicySpec{}, fmt.Errorf("placement policy %q returned %d: %s", ref, resp.StatusCode, string(body))
+	}
+	var resource k8sPlacementPolicy
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&resource); err != nil {
+		return v1alpha1.PlacementPolicySpec{}, fmt.Errorf("decoding placement policy %q: %w", ref, err)
+	}
+	return resource.Spec, nil
 }
 
 // Start begins polling the Kubernetes API for CRD changes. It performs an
@@ -125,7 +160,8 @@ func (w *CRDWatcher) Start(ctx context.Context) error {
 // pollOnce fetches the current list of FleetInferencePool CRDs from the
 // Kubernetes API, compares them with the last-seen state, and calls the
 // reconciler for any additions, modifications, or deletions.
-func (w *CRDWatcher) pollOnce(ctx context.Context) error {
+func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
+	defer func() { w.ready.Store(err == nil) }()
 	url := fmt.Sprintf("%s/apis/fleet.llm-d.ai/v1alpha1/namespaces/%s/fleetinferencepools",
 		w.apiServer, w.namespace)
 
@@ -169,6 +205,10 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) error {
 	defer w.mu.Unlock()
 
 	var added, modified, deleted int
+	nextSeen := make(map[string]v1alpha1.FleetInferencePoolSpec, len(w.lastSeen)+len(current))
+	for name, spec := range w.lastSeen {
+		nextSeen[name] = spec
+	}
 
 	// Detect additions and modifications.
 	for name, spec := range current {
@@ -177,7 +217,9 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) error {
 			added++
 			if err := w.reconciler.ReconcilePool(ctx, spec); err != nil {
 				log.Printf("reconcile (add) %q failed: %v", name, err)
+				continue
 			}
+			nextSeen[name] = spec
 			continue
 		}
 
@@ -190,7 +232,9 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) error {
 			modified++
 			if err := w.reconciler.ReconcilePool(ctx, spec); err != nil {
 				log.Printf("reconcile (modify) %q failed: %v", name, err)
+				continue
 			}
+			nextSeen[name] = spec
 		}
 	}
 
@@ -200,16 +244,25 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) error {
 			deleted++
 			if err := w.reconciler.DeletePool(ctx, name); err != nil {
 				log.Printf("reconcile (delete) %q failed: %v", name, err)
+				continue
 			}
+			delete(nextSeen, name)
 		}
 	}
 
-	w.lastSeen = current
+	w.lastSeen = nextSeen
 
 	log.Printf("polled %d pools, %d added, %d modified, %d deleted",
 		len(current), added, modified, deleted)
 
 	return nil
+}
+
+// Ready reports whether the most recent Kubernetes API poll completed. It is
+// used by the controller readiness probe so a missing CRD/API dependency cannot
+// be hidden behind a live HTTP process.
+func (w *CRDWatcher) Ready() bool {
+	return w.ready.Load()
 }
 
 // specsChanged returns true if the two specs differ. Comparison is done by

@@ -61,8 +61,16 @@ func testClusterLister(ctx context.Context) ([]solver.ClusterInfo, error) {
 	}, nil
 }
 
-func TestReconcilePool_NewPool(t *testing.T) {
+func newObservedTestReconciler() *Reconciler {
 	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
+	r.SetActualClusterObserver(func(_ context.Context, _ v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error) {
+		return append([]string(nil), desired...), nil
+	})
+	return r
+}
+
+func TestReconcilePool_NewPool(t *testing.T) {
+	r := newObservedTestReconciler()
 
 	pool := testPool("llama-3")
 	if err := r.ReconcilePool(context.Background(), pool); err != nil {
@@ -87,8 +95,51 @@ func TestReconcilePool_NewPool(t *testing.T) {
 	}
 }
 
-func TestReconcilePool_UpdatePool(t *testing.T) {
+func TestReconcilePool_DoesNotClaimRunningWithoutObservedState(t *testing.T) {
 	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
+	if err := r.ReconcilePool(context.Background(), testPool("unobserved")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := r.GetPoolState("unobserved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != v1alpha1.FleetPhasePlacing {
+		t.Fatalf("phase = %s, want %s until provider state is observed", state.Phase, v1alpha1.FleetPhasePlacing)
+	}
+	if len(state.ActualClusters) != 0 {
+		t.Fatalf("actual clusters must not be inferred from desired placement: %v", state.ActualClusters)
+	}
+}
+
+type policyCapturingSolver struct {
+	policy v1alpha1.PlacementPolicySpec
+}
+
+func (s *policyCapturingSolver) Solve(_ context.Context, _ v1alpha1.FleetInferencePoolSpec, _ []solver.ClusterInfo, policy v1alpha1.PlacementPolicySpec) ([]solver.PlacementDecision, error) {
+	s.policy = policy
+	return []solver.PlacementDecision{{ClusterID: "cluster-1", Replicas: 1}}, nil
+}
+
+func TestReconcilePool_ResolvesReferencedPlacementPolicy(t *testing.T) {
+	capturing := &policyCapturingSolver{}
+	r := NewReconciler(capturing, testClusterLister)
+	r.SetPlacementPolicyResolver(func(_ context.Context, ref string) (v1alpha1.PlacementPolicySpec, error) {
+		if ref != "default" {
+			t.Fatalf("policy ref = %q, want default", ref)
+		}
+		return v1alpha1.PlacementPolicySpec{Constraints: []v1alpha1.PlacementConstraint{{Type: "region", Rule: "us-east-1"}}}, nil
+	})
+	if err := r.ReconcilePool(context.Background(), testPool("policy-aware")); err != nil {
+		t.Fatal(err)
+	}
+	if len(capturing.policy.Constraints) != 1 || capturing.policy.Constraints[0].Rule != "us-east-1" {
+		t.Fatalf("solver did not receive resolved policy: %#v", capturing.policy)
+	}
+}
+
+func TestReconcilePool_UpdatePool(t *testing.T) {
+	r := newObservedTestReconciler()
 
 	pool := testPool("llama-3")
 	if err := r.ReconcilePool(context.Background(), pool); err != nil {
@@ -115,7 +166,7 @@ func TestReconcilePool_UpdatePool(t *testing.T) {
 }
 
 func TestDeletePool(t *testing.T) {
-	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
+	r := newObservedTestReconciler()
 
 	pool := testPool("llama-3")
 	if err := r.ReconcilePool(context.Background(), pool); err != nil {
@@ -138,7 +189,7 @@ func TestDeletePool(t *testing.T) {
 }
 
 func TestListPools(t *testing.T) {
-	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
+	r := newObservedTestReconciler()
 
 	pool1 := testPool("llama-3")
 	pool2 := testPool("mistral-7b")
@@ -168,7 +219,7 @@ func TestListPools(t *testing.T) {
 }
 
 func TestWatchEndpoint_Added(t *testing.T) {
-	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
+	r := newObservedTestReconciler()
 	srv := httptest.NewServer(r.WatchEndpoint())
 	defer srv.Close()
 
@@ -201,7 +252,7 @@ func TestWatchEndpoint_Added(t *testing.T) {
 }
 
 func TestWatchEndpoint_Deleted(t *testing.T) {
-	r := NewReconciler(solver.NewConstraintSolver(), testClusterLister)
+	r := newObservedTestReconciler()
 
 	// Pre-populate a pool so we can delete it.
 	pool := testPool("llama-3")
@@ -255,7 +306,7 @@ func TestReconcilePool_DoesNotBlockReads(t *testing.T) {
 	}
 	fastReconciler := NewReconciler(solver.NewConstraintSolver(), fastLister)
 	pool := v1alpha1.FleetInferencePoolSpec{
-		Model: v1alpha1.ModelSpec{Name: "seed-model", Source: "test"},
+		Model:     v1alpha1.ModelSpec{Name: "seed-model", Source: "test"},
 		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
@@ -270,7 +321,7 @@ func TestReconcilePool_DoesNotBlockReads(t *testing.T) {
 
 	// Start a slow reconcile in background
 	go r.ReconcilePool(context.Background(), v1alpha1.FleetInferencePoolSpec{
-		Model: v1alpha1.ModelSpec{Name: "slow-model", Source: "test"},
+		Model:     v1alpha1.ModelSpec{Name: "slow-model", Source: "test"},
 		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
@@ -313,7 +364,7 @@ func TestReconcilePool_OnChangeCalledOutsideLock(t *testing.T) {
 	})
 
 	pool := v1alpha1.FleetInferencePoolSpec{
-		Model: v1alpha1.ModelSpec{Name: "test-model", Source: "test"},
+		Model:     v1alpha1.ModelSpec{Name: "test-model", Source: "test"},
 		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{

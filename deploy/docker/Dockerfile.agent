@@ -9,7 +9,7 @@ FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 RUN microdnf install -y ca-certificates && microdnf clean all
 COPY --from=builder /src/target/release/fleet-agent /fleet-agent
 USER 65534:65534
-EXPOSE 8080 9090
+EXPOSE 8080 8090 9090
 LABEL org.opencontainers.image.source="https://github.com/llm-d/fleet-llm-d" \
       org.opencontainers.image.description="fleet-llm-d per-cluster agent" \
       org.opencontainers.image.licenses="Apache-2.0"

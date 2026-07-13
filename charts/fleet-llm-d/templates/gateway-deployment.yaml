@@ -1,0 +1,107 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-gateway
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  {{- if not .Values.gateway.autoscaling.enabled }}
+  replicas: {{ .Values.gateway.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        {{- toYaml .Values.gateway.podAnnotations | nindent 8 }}
+      labels:
+        app.kubernetes.io/name: fleet-gateway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: gateway
+        app.kubernetes.io/part-of: fleet-llm-d
+        {{- with .Values.gateway.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ default (printf "%s-gateway" (include "fleet-llm-d.fullname" .)) .Values.gateway.serviceAccount.name }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: fleet-gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ default .Chart.AppVersion .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: FLEET_CONTROL_PLANE_URL
+              value: {{- if .Values.gateway.controlPlaneURL }} {{ .Values.gateway.controlPlaneURL | quote }}{{- else if .Values.controller.enabled }} {{ printf "http://%s-controller.%s.svc.cluster.local:%v" (include "fleet-llm-d.fullname" .) .Release.Namespace .Values.controller.ports.api | quote }}{{- else }} {{ required "gateway.controlPlaneURL is required when gateway is enabled without the controller" .Values.gateway.controlPlaneURL | quote }}{{- end }}
+            - name: FLEET_GATEWAY_PORT
+              value: {{ .Values.gateway.ports.proxy | quote }}
+            - name: FLEET_HEALTH_PORT
+              value: {{ .Values.gateway.ports.health | quote }}
+            - name: FLEET_METRICS_PORT
+              value: {{ .Values.gateway.ports.metrics | quote }}
+            - name: FLEET_HEALTH_INTERVAL
+              value: {{ .Values.gateway.healthIntervalSeconds | quote }}
+            - name: FLEET_LB_STRATEGY
+              value: {{ .Values.gateway.loadBalancingStrategy | quote }}
+            {{- with .Values.gateway.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.gateway.ports.proxy }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.gateway.ports.health }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.gateway.ports.metrics }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -20,7 +20,7 @@ spec:
   versions:
     - name: v1alpha1
       served: true
-      storage: true
+      storage: false
       additionalPrinterColumns:
         - name: Protocol
           type: string
@@ -187,3 +187,132 @@ spec:
                         Maximum total size of retained post-transfer cache
                         data on the source cluster (e.g. "10Gi"). Oldest
                         entries are evicted first.
+    - name: v1beta1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                provider:
+                  type: string
+                  enum: [LlmDNative, FleetTransfer]
+                  default: LlmDNative
+                transport:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    protocol:
+                      type: string
+                      enum: [GRPC, NIXL]
+                      default: GRPC
+                    fallbackPolicy:
+                      type: string
+                      enum: [Deny, GRPC]
+                      default: Deny
+                authorizationRef:
+                  type: object
+                  required:
+                    - grantId
+                    - actionClass
+                    - specDigest
+                    - audience
+                    - expiresAt
+                    - idempotencyKey
+                  properties:
+                    grantId:
+                      type: string
+                      minLength: 1
+                    actionClass:
+                      type: string
+                      minLength: 1
+                    objectUid:
+                      type: string
+                    specDigest:
+                      type: string
+                      pattern: "^[a-fA-F0-9]{64}$"
+                    audience:
+                      type: string
+                      minLength: 1
+                    expiresAt:
+                      type: string
+                      format: date-time
+                    idempotencyKey:
+                      type: string
+                      minLength: 1
+                    breakGlass:
+                      type: boolean
+                      default: false
+                    incidentRef:
+                      type: string
+                  x-kubernetes-validations:
+                    - rule: "!self.breakGlass || has(self.incidentRef)"
+                      message: incidentRef is required for break-glass grants
+              x-kubernetes-validations:
+                - rule: "!has(self.transport) || !has(self.transport.protocol) || self.transport.protocol != 'NIXL' || self.provider == 'FleetTransfer'"
+                  message: NIXL requires the FleetTransfer provider
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - reason
+                      - lastTransitionTime
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                specDigest:
+                  type: string
+                  pattern: "^[a-fA-F0-9]{64}$"
+                providerRefs:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, name]
+                    x-kubernetes-preserve-unknown-fields: true
+                freshness:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                correlationId:
+                  type: string
+                lastSuccessfulReconciliation:
+                  type: string
+                  format: date-time

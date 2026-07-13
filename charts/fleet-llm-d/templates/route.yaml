@@ -1,17 +1,25 @@
-{{- if .Values.route.enabled }}
+{{- if and .Values.gateway.enabled .Values.route.enabled }}
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: {{ .Release.Name }}-fleet-controller
+  name: {{ include "fleet-llm-d.fullname" . }}-gateway
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/component: gateway
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   {{- if .Values.route.host }}
   host: {{ .Values.route.host }}
   {{- end }}
   to:
     kind: Service
-    name: {{ .Release.Name }}-fleet-controller
+    name: {{ include "fleet-llm-d.fullname" . }}-gateway
   port:
-    targetPort: api
+    targetPort: proxy
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect

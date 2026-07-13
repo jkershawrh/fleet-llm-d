@@ -109,6 +109,15 @@ impl LocalProxy {
 
         let app = Router::new()
             .route("/healthz", get(|| async { "ok" }))
+            .route(
+                "/readyz",
+                get(|| async {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "agent synchronization and upstream forwarding are not configured",
+                    )
+                }),
+            )
             .fallback(any(proxy_request))
             .with_state(self.clone());
 

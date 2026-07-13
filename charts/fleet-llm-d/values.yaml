@@ -1,44 +1,208 @@
-replicaCount: 1
+# The default is deliberately a one-controller development profile. The
+# controller does not yet implement leader election, so no profile scales it
+# above one replica or describes it as HA.
+profile: standalone-dev
 
-image:
-  repository: quay.io/fleet-llm-d/fleet-controller
-  tag: latest
-  pullPolicy: Always
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
 
-mode: all  # all, control, inference
+clusterIdentity:
+  # Set clusterId directly or create existingConfigMap/key before installing.
+  # The ConfigMap reference is non-optional so a missing identity fails closed.
+  clusterId: ""
+  existingConfigMap: fleet-cluster-identity
+  key: cluster-id
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+rbac:
+  create: true
 
 auth:
-  enabled: true
-  secretName: fleet-auth
+  # This is compatibility HMAC authentication, not production OIDC/workload
+  # identity. It remains opt-in until gateway/agent token presentation exists.
+  enabled: false
+  existingSecret: fleet-auth
   secretKey: FLEET_AUTH_SECRET
 
-rateLimit:
-  requestsPerSecond: 100
-  burst: 200
+controller:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/llm-d/fleet-controller
+    tag: ""
+    pullPolicy: IfNotPresent
+  mode: control
+  ports:
+    api: 8080
+    metrics: 9091
+    grpc: 9092
+  grpc:
+    enabled: false
+  service:
+    type: ClusterIP
+    annotations: {}
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  rateLimit:
+    requestsPerSecond: 100
+    burst: 200
+  loadShedding:
+    maxInflight: 0
+  backends: []
+  extraArgs: []
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-loadShedding:
-  maxInflight: 0  # 0 = disabled
+gateway:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/llm-d/fleet-gateway
+    tag: ""
+    pullPolicy: IfNotPresent
+  ports:
+    proxy: 8080
+    health: 8081
+    metrics: 9090
+  controlPlaneURL: ""
+  healthIntervalSeconds: 10
+  loadBalancingStrategy: weighted
+  service:
+    type: ClusterIP
+    annotations: {}
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-backends: []
-  # - model: granite-2b-cpu
-  #   url: http://backend.namespace.svc:80
-  #   runtime: openvino
+agent:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/llm-d/fleet-agent
+    tag: ""
+    pullPolicy: IfNotPresent
+  ports:
+    agent: 8080
+    proxy: 8090
+    metrics: 9090
+  controlPlaneURL: ""
+  controlPlaneConfigMap:
+    existingConfigMap: fleet-control-plane
+    key: url
+  # Empty preserves the binary default. Set this to the real, TLS-protected
+  # Prometheus endpoint for production metrics reporting.
+  localPrometheusURL: ""
+  service:
+    type: ClusterIP
+    annotations: {}
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-ports:
-  api: 8080
-  metrics: 9091
+podDisruptionBudget:
+  controller:
+    enabled: false
+    minAvailable: 1
+  gateway:
+    enabled: false
+    minAvailable: 1
+  agent:
+    enabled: false
+    minAvailable: 1
 
-resources:
-  requests:
-    cpu: 500m
-    memory: 256Mi
-  limits:
-    cpu: "2"
-    memory: 1Gi
-
-service:
-  type: ClusterIP
+# External systems are opt-in. The chart does not install PostgreSQL, Redis,
+# Kafka, ARE, GCL, DeepField, ModelPlane, or Prometheus subcharts.
+externalDependencies:
+  ledger:
+    mode: disabled
+    endpoint: ""
+  postgres:
+    enabled: false
+    existingSecret: fleet-postgres
+    secretKey: url
+  eventPublisher:
+    enabled: false
+    endpoint: ""
+  modelPlane:
+    enabled: false
+    endpoint: ""
+    namespace: default
+  semanticClassifier:
+    endpoint: ""
+  platformMetrics:
+    gclURL: ""
+    deepfieldURL: ""
+    ledgerGatewayURL: ""
 
 route:
   enabled: false
   host: ""
+  annotations: {}

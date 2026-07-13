@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,11 +32,15 @@ func (s *stubSolver) Solve(_ context.Context, pool v1alpha1.FleetInferencePoolSp
 // newTestReconciler creates a Reconciler with a stub solver and a static
 // cluster list for testing.
 func newTestReconciler() *Reconciler {
-	return NewReconciler(&stubSolver{}, func(_ context.Context) ([]solver.ClusterInfo, error) {
+	r := NewReconciler(&stubSolver{}, func(_ context.Context) ([]solver.ClusterInfo, error) {
 		return []solver.ClusterInfo{
 			{ID: "cluster-1", Name: "test-cluster"},
 		}, nil
 	})
+	r.SetActualClusterObserver(func(_ context.Context, _ v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error) {
+		return append([]string(nil), desired...), nil
+	})
+	return r
 }
 
 func TestCRDWatcher_PollsForResources(t *testing.T) {
@@ -98,6 +103,9 @@ func TestCRDWatcher_PollsForResources(t *testing.T) {
 	if err := w.pollOnce(ctx); err != nil {
 		t.Fatalf("pollOnce returned error: %v", err)
 	}
+	if !w.Ready() {
+		t.Fatal("watcher must be ready after a successful Kubernetes API poll")
+	}
 
 	// Verify the pool was reconciled.
 	state, err := reconciler.GetPoolState("llama-3-70b")
@@ -141,6 +149,40 @@ func TestCRDWatcher_HandlesEmptyResponse(t *testing.T) {
 	}
 }
 
+func TestNewCRDWatcher_VerifiesTLSByDefault(t *testing.T) {
+	w := NewCRDWatcher("https://kubernetes.example", "default", "token", newTestReconciler())
+	transport, ok := w.httpClient.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil {
+		t.Fatal("watcher transport has no TLS configuration")
+	}
+	if transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("TLS verification must be enabled by default")
+	}
+	if transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("minimum TLS version = %d, want TLS 1.3", transport.TLSClientConfig.MinVersion)
+	}
+}
+
+func TestCRDWatcher_FetchesReferencedPlacementPolicy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/fleet.llm-d.ai/v1alpha1/namespaces/default/placementpolicies/prod" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(k8sPlacementPolicy{Spec: v1alpha1.PlacementPolicySpec{
+			Constraints: []v1alpha1.PlacementConstraint{{Type: "region", Rule: "us-east-1"}},
+		}})
+	}))
+	defer srv.Close()
+	w := &CRDWatcher{apiServer: srv.URL, namespace: "default", token: "token", httpClient: srv.Client()}
+	policy, err := w.getPlacementPolicy(context.Background(), "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Constraints) != 1 || policy.Constraints[0].Rule != "us-east-1" {
+		t.Fatalf("unexpected policy: %#v", policy)
+	}
+}
+
 func TestCRDWatcher_HandlesAPIError(t *testing.T) {
 	reconciler := newTestReconciler()
 
@@ -163,6 +205,9 @@ func TestCRDWatcher_HandlesAPIError(t *testing.T) {
 	err := w.pollOnce(ctx)
 	if err == nil {
 		t.Fatal("expected error for 500 response, got nil")
+	}
+	if w.Ready() {
+		t.Fatal("watcher must not be ready after a failed Kubernetes API poll")
 	}
 
 	// The error message should mention the unexpected status code.
@@ -219,6 +264,61 @@ func TestCRDWatcher_DetectsDeletion(t *testing.T) {
 	_, err := reconciler.GetPoolState("old-model")
 	if err == nil {
 		t.Error("expected pool to be deleted, but GetPoolState returned no error")
+	}
+}
+
+func TestCRDWatcher_RetriesFailedAddition(t *testing.T) {
+	poolList := k8sPoolList{Items: []k8sPoolItem{{
+		Metadata: k8sMetadata{Name: "retry-pool", Namespace: "default", ResourceVersion: "1"},
+		Spec: v1alpha1.FleetInferencePoolSpec{
+			Model:     v1alpha1.ModelSpec{Name: "retry-model", Source: "registry.example.com/retry"},
+			Placement: v1alpha1.PlacementRef{PolicyRef: "missing-policy"},
+		},
+	}}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/apis/fleet.llm-d.ai/v1alpha1/namespaces/default/placementpolicies/missing-policy" {
+			http.Error(w, "policy unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(poolList)
+	}))
+	defer srv.Close()
+
+	reconciler := newTestReconciler()
+	w := NewCRDWatcher(srv.URL, "default", "token", reconciler)
+	w.httpClient = srv.Client()
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := w.pollOnce(context.Background()); err != nil {
+			t.Fatalf("poll %d returned transport error: %v", attempt+1, err)
+		}
+		if _, acknowledged := w.lastSeen["retry-pool"]; acknowledged {
+			t.Fatalf("failed addition was acknowledged on attempt %d", attempt+1)
+		}
+	}
+}
+
+func TestCRDWatcher_RetriesFailedDeletion(t *testing.T) {
+	poolSpec := v1alpha1.FleetInferencePoolSpec{Model: v1alpha1.ModelSpec{Name: "missing-model"}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(k8sPoolList{})
+	}))
+	defer srv.Close()
+
+	w := &CRDWatcher{
+		apiServer:  srv.URL,
+		namespace:  "default",
+		token:      "token",
+		reconciler: newTestReconciler(),
+		httpClient: srv.Client(),
+		lastSeen:   map[string]v1alpha1.FleetInferencePoolSpec{"missing-pool": poolSpec},
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := w.pollOnce(context.Background()); err != nil {
+			t.Fatalf("poll %d returned transport error: %v", attempt+1, err)
+		}
+		if _, pending := w.lastSeen["missing-pool"]; !pending {
+			t.Fatalf("failed deletion was forgotten on attempt %d", attempt+1)
+		}
 	}
 }
 

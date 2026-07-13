@@ -66,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let config = FleetGatewayConfig::parse();
     info!(
         gateway_port = config.gateway_port,
+        health_port = config.health_port,
         metrics_port = config.metrics_port,
         lb_strategy = %config.lb_strategy,
         "starting fleet-gateway"
@@ -80,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn tasks
     let health_checker_for_task = health_checker.clone();
-    let health_handle = tokio::spawn(async move {
+    let health_checker_handle = tokio::spawn(async move {
         info!("health checker task started");
         health_checker_for_task.run().await
     });
@@ -97,10 +98,17 @@ async fn main() -> anyhow::Result<()> {
         run_metrics_server(metrics_port).await
     });
 
+    let health_port = config.health_port;
+    let health_server_handle = tokio::spawn(async move {
+        info!("health server task started");
+        run_health_server(health_port).await
+    });
+
     tokio::select! {
-        result = health_handle => info!(?result, "health checker exited"),
+        result = health_checker_handle => info!(?result, "health checker exited"),
         result = gateway_handle => info!(?result, "gateway server exited"),
         result = metrics_handle => info!(?result, "metrics server exited"),
+        result = health_server_handle => info!(?result, "health server exited"),
     }
 
     Ok(())
@@ -170,10 +178,22 @@ async fn bootstrap_runtime_contracts(
 }
 
 async fn run_gateway_server(port: u16) -> anyhow::Result<()> {
+    let app = Router::new().fallback(any(gateway_unavailable));
+    serve(port, app).await
+}
+
+async fn run_health_server(port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route("/readyz", get(|| async { "ready" }))
-        .fallback(any(gateway_unavailable));
+        .route(
+            "/readyz",
+            get(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "routing snapshot is not configured",
+                )
+            }),
+        );
     serve(port, app).await
 }
 

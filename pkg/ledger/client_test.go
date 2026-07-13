@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -108,5 +109,24 @@ func TestNewLedgerClientWithConfig_Modes(t *testing.T) {
 				t.Fatal("expected non-nil client")
 			}
 		})
+	}
+}
+
+func TestDisabledLedgerNeverFabricatesEvidence(t *testing.T) {
+	client, err := NewLedgerClientWithConfig(Config{Mode: ModeDisabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := client.RecordDecision(context.Background(), FleetDecision{Type: "fleet.scale"}); receipt != nil || !errors.Is(err, ErrLedgerDisabled) {
+		t.Fatalf("RecordDecision() = (%#v, %v), want nil ErrLedgerDisabled", receipt, err)
+	}
+	if verification, err := client.VerifyDecisionChain(context.Background(), "fleet.scale"); verification == nil || verification.Valid || !errors.Is(err, ErrLedgerDisabled) {
+		t.Fatalf("VerifyDecisionChain() = (%#v, %v), want invalid ErrLedgerDisabled", verification, err)
+	}
+	if proof, err := client.IssueProofReceipt(context.Background(), FleetDecision{Type: "fleet.scale"}); proof != nil || !errors.Is(err, ErrLedgerDisabled) {
+		t.Fatalf("IssueProofReceipt() = (%#v, %v), want nil ErrLedgerDisabled", proof, err)
+	}
+	if verification, err := client.VerifyProof(context.Background(), "hash", "fleet.scale"); verification == nil || verification.Valid || !errors.Is(err, ErrLedgerDisabled) {
+		t.Fatalf("VerifyProof() = (%#v, %v), want invalid ErrLedgerDisabled", verification, err)
 	}
 }

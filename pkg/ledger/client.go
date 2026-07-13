@@ -2,11 +2,17 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrLedgerDisabled is returned whenever a caller asks for durable evidence
+// while no ledger backend is configured. Disabled mode must never fabricate a
+// receipt or report a chain as valid.
+var ErrLedgerDisabled = errors.New("immutable ledger is disabled")
 
 // LedgerClient provides fleet-llm-d integration with the ARE Immutable Ledger.
 type LedgerClient interface {
@@ -78,23 +84,23 @@ func NewLedgerClientWithConfig(cfg Config) (LedgerClient, error) {
 type disabledLedgerClient struct{}
 
 func (disabledLedgerClient) RecordDecision(_ context.Context, _ FleetDecision) (*LedgerReceipt, error) {
-	return &LedgerReceipt{EntryID: "disabled", EntryHash: "disabled", Timestamp: time.Now()}, nil
+	return nil, ErrLedgerDisabled
 }
 
 func (disabledLedgerClient) VerifyDecisionChain(_ context.Context, decisionType string) (*ChainVerification, error) {
-	return &ChainVerification{Valid: true, ChainType: decisionType, VerifiedAt: time.Now()}, nil
+	return &ChainVerification{Valid: false, ChainType: decisionType, VerifiedAt: time.Now()}, ErrLedgerDisabled
 }
 
 func (disabledLedgerClient) QueryDecisions(_ context.Context, _ DecisionQuery) ([]FleetDecision, error) {
-	return nil, nil
+	return nil, ErrLedgerDisabled
 }
 
 func (disabledLedgerClient) IssueProofReceipt(_ context.Context, decision FleetDecision) (*ProofReceipt, error) {
-	return &ProofReceipt{EntryHash: "disabled", EntryType: decision.Type, Timestamp: time.Now(), InputHash: decision.InputHash}, nil
+	return nil, ErrLedgerDisabled
 }
 
 func (disabledLedgerClient) VerifyProof(_ context.Context, _ string, entryType string) (*ProofVerification, error) {
-	return &ProofVerification{Valid: true, EntryType: entryType}, nil
+	return &ProofVerification{Valid: false, EntryType: entryType}, ErrLedgerDisabled
 }
 
 // InMemoryLedgerClient stores entries in memory for testing.

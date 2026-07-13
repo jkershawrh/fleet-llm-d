@@ -58,7 +58,7 @@ func Evaluate(ctx context.Context, intent FleetIntent, policy PolicyConfig) Inte
 
 	return IntentResponse{
 		IntentID: intent.ID,
-		Status:   StatusExecuted,
-		Reason:   "policy checks passed",
+		Status:   StatusAccepted,
+		Reason:   "policy checks passed; awaiting governance and observed actuation",
 	}
 }
