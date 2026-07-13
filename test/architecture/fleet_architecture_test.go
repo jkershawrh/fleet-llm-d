@@ -1,6 +1,7 @@
 //go:build architecture
 
-// Package architecture proves 54 architectural claims about fleet-llm-d.
+// Package architecture exercises local, in-process contract checks for
+// fleet-llm-d. Passing this suite is not live-cluster or promotion evidence.
 // Each test function maps to a specific claim (A01-A54).
 // A failing test means the architecture is broken, not just a bug.
 package architecture
@@ -21,11 +22,11 @@ import (
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
-	"github.com/llm-d/fleet-llm-d/pkg/cost"
-	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
+	"github.com/llm-d/fleet-llm-d/pkg/cost"
+	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
@@ -242,7 +243,7 @@ func TestA02_Reconciler_ComputesPlacementViaSolver(t *testing.T) {
 }
 
 func TestA03_Reconciler_PhaseTransitions(t *testing.T) {
-	claim(t, "A03", "reconciliation", "TDD", "Pool transitions Pending -> Placing -> Running")
+	claim(t, "A03", "reconciliation", "TDD", "Pool remains Placing until provider observation, then becomes Running")
 
 	w := newTestWorld(t)
 	ctx := context.Background()
@@ -254,9 +255,9 @@ func TestA03_Reconciler_PhaseTransitions(t *testing.T) {
 	}
 
 	// Track phases observed through onChange.
-	var observedPhase v1alpha1.FleetPhase
+	var observedPhases []v1alpha1.FleetPhase
 	w.Reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
-		observedPhase = pool.Phase
+		observedPhases = append(observedPhases, pool.Phase)
 	})
 
 	pool := makePool("phase-model", "huggingface", 2)
@@ -264,19 +265,33 @@ func TestA03_Reconciler_PhaseTransitions(t *testing.T) {
 		t.Fatalf("ReconcilePool: %v", err)
 	}
 
-	// After reconcile: pool should be Running.
+	// A placement decision is desired state, not evidence that the provider
+	// applied it. Without an observer the pool must remain Placing.
 	state, err := w.Reconciler.GetPoolState("phase-model")
 	if err != nil {
 		t.Fatalf("GetPoolState: %v", err)
 	}
-	if state.Phase != v1alpha1.FleetPhaseRunning {
-		t.Fatalf("expected phase Running, got %s", state.Phase)
+	if state.Phase != v1alpha1.FleetPhasePlacing {
+		t.Fatalf("expected phase Placing before provider observation, got %s", state.Phase)
 	}
 
-	// onChange was called with the final Running phase (which proves the
-	// state machine traversed Pending -> Placing -> Running).
-	if observedPhase != v1alpha1.FleetPhaseRunning {
-		t.Fatalf("onChange observed phase %s, expected Running", observedPhase)
+	// Once the selected targets are independently observed, a subsequent
+	// reconciliation may report Running.
+	w.Reconciler.SetActualClusterObserver(func(_ context.Context, _ v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error) {
+		return append([]string(nil), desired...), nil
+	})
+	if err := w.Reconciler.ReconcilePool(ctx, pool); err != nil {
+		t.Fatalf("ReconcilePool with provider observation: %v", err)
+	}
+	state, err = w.Reconciler.GetPoolState("phase-model")
+	if err != nil {
+		t.Fatalf("GetPoolState after observation: %v", err)
+	}
+	if state.Phase != v1alpha1.FleetPhaseRunning {
+		t.Fatalf("expected phase Running after provider observation, got %s", state.Phase)
+	}
+	if len(observedPhases) != 2 || observedPhases[0] != v1alpha1.FleetPhasePlacing || observedPhases[1] != v1alpha1.FleetPhaseRunning {
+		t.Fatalf("onChange phases = %v, want [Placing Running]", observedPhases)
 	}
 }
 
@@ -2056,7 +2071,7 @@ func TestA54_Tenant_CheckQuotaIsReadOnly(t *testing.T) {
 // ===========================================================================
 
 func TestA55_IntentConsumerAcceptsPreWarm(t *testing.T) {
-	claim(t, "A55", "predictive-brain", "CDD", "Intent consumer accepts valid PreWarm intent")
+	claim(t, "A55", "predictive-brain", "CDD", "Intent admission accepts valid PreWarm intent without claiming execution")
 
 	intent := intents.FleetIntent{
 		ID:             "arch-test-1",
@@ -2069,20 +2084,21 @@ func TestA55_IntentConsumerAcceptsPreWarm(t *testing.T) {
 	}
 
 	resp := intents.Evaluate(context.Background(), intent, intents.DefaultPolicyConfig())
-	if resp.Status != intents.StatusExecuted {
-		t.Fatalf("ARCHITECTURE VIOLATION: valid intent refused: %s", resp.Reason)
+	if resp.Status != intents.StatusAccepted {
+		t.Fatalf("ARCHITECTURE VIOLATION: valid intent was not accepted: status=%s reason=%s", resp.Status, resp.Reason)
 	}
 }
 
 // ===========================================================================
-// TestMain: run all tests and print the architectural proof matrix.
+// TestMain runs all tests and prints the local contract coverage matrix.
 // ===========================================================================
 
 func TestMain(m *testing.M) {
 	code := m.Run()
 
 	fmt.Println()
-	fmt.Println("=== ARCHITECTURAL PROOF MATRIX ===")
+	fmt.Println("=== LOCAL ARCHITECTURE CONTRACT COVERAGE ===")
+	fmt.Println("In-process checks only; not live-provider or promotion evidence.")
 
 	matrixMu.Lock()
 	results := make([]ClaimResult, len(matrixResults))

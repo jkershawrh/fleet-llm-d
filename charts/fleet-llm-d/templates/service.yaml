@@ -1,16 +1,107 @@
+{{- if .Values.controller.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-fleet-controller
+  name: {{ include "fleet-llm-d.fullname" . }}-controller
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/component: controller
+  {{- with .Values.controller.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  type: {{ .Values.service.type }}
+  type: {{ .Values.controller.service.type }}
   selector:
     app.kubernetes.io/name: fleet-controller
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: api
-      port: {{ .Values.ports.api }}
-      targetPort: {{ .Values.ports.api }}
+      port: {{ .Values.controller.ports.api }}
+      targetPort: api
+      protocol: TCP
     - name: metrics
-      port: {{ .Values.ports.metrics }}
-      targetPort: {{ .Values.ports.metrics }}
+      port: {{ .Values.controller.ports.metrics }}
+      targetPort: metrics
+      protocol: TCP
+    {{- if .Values.controller.grpc.enabled }}
+    - name: grpc
+      port: {{ .Values.controller.ports.grpc }}
+      targetPort: grpc
+      protocol: TCP
+    {{- end }}
+{{- end }}
+{{- if .Values.gateway.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-gateway
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/component: gateway
+  {{- with .Values.gateway.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.gateway.service.type }}
+  selector:
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: proxy
+      port: {{ .Values.gateway.ports.proxy }}
+      targetPort: proxy
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-gateway-observability
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: health
+      port: {{ .Values.gateway.ports.health }}
+      targetPort: health
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.gateway.ports.metrics }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}
+{{- if .Values.agent.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-agent
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-agent
+    app.kubernetes.io/component: agent
+  {{- with .Values.agent.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.agent.service.type }}
+  selector:
+    app.kubernetes.io/name: fleet-agent
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: proxy
+      port: {{ .Values.agent.ports.proxy }}
+      targetPort: proxy
+      protocol: TCP
+{{- end }}

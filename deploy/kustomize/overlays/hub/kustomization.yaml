@@ -14,7 +14,8 @@ patches:
       metadata:
         name: fleet-controller
       spec:
-        replicas: 3
+        # One active controller until leader election is implemented.
+        replicas: 1
         template:
           spec:
             containers:
@@ -23,6 +24,3 @@ patches:
                   limits:
                     cpu: "4"
                     memory: 4Gi
-                env:
-                  - name: ARE_LEDGER_ENDPOINT
-                    value: "http://are-ledger.fleet-llm-d.svc.cluster.local:8080"

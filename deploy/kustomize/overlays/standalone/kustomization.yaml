@@ -25,3 +25,24 @@ patches:
                   limits:
                     cpu: "1"
                     memory: 1Gi
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: fleet-gateway
+    patch: |
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: fleet-gateway
+      spec:
+        minReplicas: 1
+        maxReplicas: 3
+  - target:
+      kind: Deployment
+      name: fleet-gateway
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: fleet-gateway
+      spec:
+        replicas: 1

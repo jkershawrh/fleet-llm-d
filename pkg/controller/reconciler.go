@@ -30,7 +30,9 @@ type Reconciler struct {
 	pools    map[string]*FleetPoolState
 	solver   solver.ConstraintSolver
 	clusters func(ctx context.Context) ([]solver.ClusterInfo, error) // function to list available clusters
-	onChange func(pool *FleetPoolState)                               // callback when state changes
+	policies func(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error)
+	observe  func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error)
+	onChange func(pool *FleetPoolState) // callback when state changes
 }
 
 // NewReconciler creates a Reconciler with the given constraint solver and
@@ -40,7 +42,36 @@ func NewReconciler(s solver.ConstraintSolver, clusterLister func(ctx context.Con
 		pools:    make(map[string]*FleetPoolState),
 		solver:   s,
 		clusters: clusterLister,
+		policies: func(context.Context, string) (v1alpha1.PlacementPolicySpec, error) {
+			return v1alpha1.PlacementPolicySpec{}, nil
+		},
+		observe: func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) ([]string, error) {
+			return nil, nil
+		},
 	}
+}
+
+// SetClusterLister replaces the cluster observation source. It is used when
+// production persistence is wired after controller construction.
+func (r *Reconciler) SetClusterLister(fn func(context.Context) ([]solver.ClusterInfo, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clusters = fn
+}
+
+// SetPlacementPolicyResolver configures authoritative policy resolution.
+func (r *Reconciler) SetPlacementPolicyResolver(fn func(context.Context, string) (v1alpha1.PlacementPolicySpec, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.policies = fn
+}
+
+// SetActualClusterObserver configures provider observation. Desired placement
+// is never treated as actual capacity when no observer is configured.
+func (r *Reconciler) SetActualClusterObserver(fn func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) ([]string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.observe = fn
 }
 
 // SetOnChange registers a callback that is invoked whenever a pool's state
@@ -62,7 +93,13 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	name := pool.Model.Name
 
 	// 1. Fetch clusters OUTSIDE the lock (potentially slow network call).
-	clusters, err := r.clusters(ctx)
+	r.mu.RLock()
+	clusterLister := r.clusters
+	policyResolver := r.policies
+	actualObserver := r.observe
+	r.mu.RUnlock()
+
+	clusters, err := clusterLister(ctx)
 	if err != nil {
 		r.mu.Lock()
 		if state, exists := r.pools[name]; exists {
@@ -73,7 +110,10 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	}
 
 	// 2. Run solver (CPU-only, no I/O).
-	policy := v1alpha1.PlacementPolicySpec{}
+	policy, err := policyResolver(ctx, pool.Placement.PolicyRef)
+	if err != nil {
+		return fmt.Errorf("resolving placement policy %q: %w", pool.Placement.PolicyRef, err)
+	}
 	decisions, err := r.solver.Solve(ctx, pool, clusters, policy)
 	if err != nil {
 		r.mu.Lock()
@@ -88,21 +128,23 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	for _, d := range decisions {
 		desired = append(desired, d.ClusterID)
 	}
+	actual, observeErr := actualObserver(ctx, pool, desired)
 
 	// 3. Acquire lock for state mutation only.
 	r.mu.Lock()
 	state, exists := r.pools[name]
 	if !exists {
 		state = &FleetPoolState{
-			Name:  name,
-			Model: pool.Model.Name,
+			Name:   name,
+			Model:  pool.Model.Name,
 			Source: pool.Model.Source,
 		}
 		r.pools[name] = state
 	}
 
-	state.Phase = v1alpha1.FleetPhaseRunning
+	state.Phase = phaseForObservation(desired, actual, pool.Placement.MinClusters, observeErr)
 	state.DesiredClusters = desired
+	state.ActualClusters = append([]string(nil), actual...)
 	state.LastReconciled = time.Now()
 
 	// Copy state and onChange ref for use outside the lock.
@@ -120,6 +162,36 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	}
 
 	return nil
+}
+
+func phaseForObservation(desired, actual []string, minClusters int, observeErr error) v1alpha1.FleetPhase {
+	if observeErr != nil {
+		return v1alpha1.FleetPhaseDegraded
+	}
+	if len(desired) == 0 {
+		return v1alpha1.FleetPhaseFailed
+	}
+	if minClusters <= 0 {
+		minClusters = 1
+	}
+	actualSet := make(map[string]struct{}, len(actual))
+	for _, cluster := range actual {
+		actualSet[cluster] = struct{}{}
+	}
+	allDesiredObserved := true
+	for _, cluster := range desired {
+		if _, ok := actualSet[cluster]; !ok {
+			allDesiredObserved = false
+			break
+		}
+	}
+	if allDesiredObserved && len(actual) >= minClusters {
+		return v1alpha1.FleetPhaseRunning
+	}
+	if len(actual) > 0 {
+		return v1alpha1.FleetPhaseDegraded
+	}
+	return v1alpha1.FleetPhasePlacing
 }
 
 // DeletePool removes the named pool from the reconciler's state. It returns

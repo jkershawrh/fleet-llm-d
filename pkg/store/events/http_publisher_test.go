@@ -54,8 +54,8 @@ func TestHTTPEventPublisher_FallbackOnFailure(t *testing.T) {
 		Timestamp: time.Now(),
 		Source:    "test",
 	})
-	if err != nil {
-		t.Fatalf("publish should not fail (fallback): %v", err)
+	if err == nil {
+		t.Fatal("publish must surface remote delivery failure for outbox retry")
 	}
 	if !localReceived {
 		t.Error("local subscriber should have received event despite HTTP failure")

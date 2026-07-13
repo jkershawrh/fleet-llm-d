@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "profile",
+    "clusterIdentity",
+    "controller",
+    "gateway",
+    "agent",
+    "podDisruptionBudget",
+    "externalDependencies"
+  ],
+  "properties": {
+    "profile": {
+      "type": "string",
+      "enum": ["hub", "spoke", "standalone-dev", "federated-hub"]
+    },
+    "clusterIdentity": {
+      "type": "object",
+      "required": ["clusterId", "existingConfigMap", "key"],
+      "properties": {
+        "clusterId": {"type": "string"},
+        "existingConfigMap": {"type": "string"},
+        "key": {"type": "string", "minLength": 1}
+      },
+      "anyOf": [
+        {"properties": {"clusterId": {"type": "string", "minLength": 1}}},
+        {"properties": {"existingConfigMap": {"type": "string", "minLength": 1}}}
+      ]
+    },
+    "controller": {
+      "type": "object",
+      "required": ["enabled", "replicaCount", "image", "mode", "ports", "service", "serviceAccount", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicaCount": {"const": 1},
+        "mode": {"type": "string", "enum": ["all", "control", "inference"]},
+        "image": {"$ref": "#/definitions/image"},
+        "ports": {
+          "type": "object",
+          "required": ["api", "metrics", "grpc"],
+          "properties": {
+            "api": {"$ref": "#/definitions/port"},
+            "metrics": {"$ref": "#/definitions/port"},
+            "grpc": {"$ref": "#/definitions/port"}
+          }
+        },
+        "service": {"$ref": "#/definitions/service"},
+        "serviceAccount": {"$ref": "#/definitions/serviceAccount"},
+        "resources": {"type": "object"}
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "required": ["enabled", "replicaCount", "image", "ports", "service", "serviceAccount", "autoscaling", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "image": {"$ref": "#/definitions/image"},
+        "ports": {
+          "type": "object",
+          "required": ["proxy", "health", "metrics"],
+          "properties": {
+            "proxy": {"$ref": "#/definitions/port"},
+            "health": {"$ref": "#/definitions/port"},
+            "metrics": {"$ref": "#/definitions/port"}
+          }
+        },
+        "service": {"$ref": "#/definitions/service"},
+        "serviceAccount": {"$ref": "#/definitions/serviceAccount"},
+        "autoscaling": {
+          "type": "object",
+          "required": ["enabled", "minReplicas", "maxReplicas"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "minReplicas": {"type": "integer", "minimum": 1},
+            "maxReplicas": {"type": "integer", "minimum": 1}
+          }
+        },
+        "loadBalancingStrategy": {"type": "string", "enum": ["weighted", "latency", "cost"]},
+        "resources": {"type": "object"}
+      }
+    },
+    "agent": {
+      "type": "object",
+      "required": ["enabled", "replicaCount", "image", "ports", "service", "serviceAccount", "controlPlaneConfigMap", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "replicaCount": {"type": "integer", "minimum": 1},
+        "image": {"$ref": "#/definitions/image"},
+        "ports": {
+          "type": "object",
+          "required": ["agent", "proxy", "metrics"],
+          "properties": {
+            "agent": {"$ref": "#/definitions/port"},
+            "proxy": {"$ref": "#/definitions/port"},
+            "metrics": {"$ref": "#/definitions/port"}
+          }
+        },
+        "service": {"$ref": "#/definitions/service"},
+        "serviceAccount": {"$ref": "#/definitions/serviceAccount"},
+        "controlPlaneConfigMap": {"$ref": "#/definitions/configMapReference"},
+        "resources": {"type": "object"}
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "required": ["controller", "gateway", "agent"],
+      "properties": {
+        "controller": {"$ref": "#/definitions/pdb"},
+        "gateway": {"$ref": "#/definitions/pdb"},
+        "agent": {"$ref": "#/definitions/pdb"}
+      }
+    },
+    "externalDependencies": {
+      "type": "object",
+      "required": ["ledger", "postgres", "eventPublisher", "modelPlane"],
+      "properties": {
+        "ledger": {
+          "type": "object",
+          "required": ["mode", "endpoint"],
+          "properties": {
+            "mode": {"type": "string", "enum": ["disabled", "memory", "http", "grpc"]},
+            "endpoint": {"type": "string"}
+          }
+        },
+        "postgres": {"$ref": "#/definitions/externalSecretDependency"},
+        "eventPublisher": {"$ref": "#/definitions/externalEndpointDependency"},
+        "modelPlane": {"$ref": "#/definitions/externalEndpointDependency"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"profile": {"const": "standalone-dev"}}},
+      "then": {
+        "properties": {
+          "controller": {"properties": {"enabled": {"const": true}}},
+          "gateway": {"properties": {"enabled": {"const": true}}},
+          "agent": {"properties": {"enabled": {"const": true}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"profile": {"enum": ["hub", "federated-hub"]}}},
+      "then": {
+        "properties": {
+          "controller": {"properties": {"enabled": {"const": true}}},
+          "gateway": {"properties": {"enabled": {"const": true}}},
+          "agent": {"properties": {"enabled": {"const": false}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"profile": {"const": "spoke"}}},
+      "then": {
+        "properties": {
+          "controller": {"properties": {"enabled": {"const": false}}},
+          "gateway": {"properties": {"enabled": {"const": false}}},
+          "agent": {"properties": {"enabled": {"const": true}}}
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"]},
+        "annotations": {"type": "object"}
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["create", "name"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "name": {"type": "string"},
+        "annotations": {"type": "object"}
+      }
+    },
+    "configMapReference": {
+      "type": "object",
+      "required": ["existingConfigMap", "key"],
+      "properties": {
+        "existingConfigMap": {"type": "string", "minLength": 1},
+        "key": {"type": "string", "minLength": 1}
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "minAvailable": {
+          "oneOf": [
+            {"type": "integer", "minimum": 0},
+            {"type": "string", "pattern": "^[0-9]+%$"}
+          ]
+        }
+      }
+    },
+    "externalSecretDependency": {
+      "type": "object",
+      "required": ["enabled", "existingSecret", "secretKey"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "existingSecret": {"type": "string"},
+        "secretKey": {"type": "string", "minLength": 1}
+      }
+    },
+    "externalEndpointDependency": {
+      "type": "object",
+      "required": ["enabled", "endpoint"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "endpoint": {"type": "string"}
+      }
+    }
+  }
+}

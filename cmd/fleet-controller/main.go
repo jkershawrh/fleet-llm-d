@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"expvar"
 	"flag"
 	"fmt"
@@ -18,13 +19,13 @@ import (
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
-	"github.com/llm-d/fleet-llm-d/pkg/cost"
-	fleetgrpc "github.com/llm-d/fleet-llm-d/pkg/grpc"
-	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
+	"github.com/llm-d/fleet-llm-d/pkg/cost"
+	fleetgrpc "github.com/llm-d/fleet-llm-d/pkg/grpc"
+	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/kvcache/transfer"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
@@ -79,6 +80,9 @@ type FleetController struct {
 	// Ledger integration
 	FleetRecorder *ledger.FleetRecorder
 
+	// IntentService owns honest asynchronous intent/operation semantics.
+	IntentService *intents.Service
+
 	// Inference proxy
 	InferenceProxy *routing.InferenceProxy
 
@@ -92,8 +96,8 @@ type FleetController struct {
 	RolloutRepo postgres.RolloutRepository
 
 	// ModelPlane integration
-	ModelPlaneWatcher    *modelplane.ModelPlaneWatcher
-	ModelPlaneBridge     *modelplane.ComplianceBridge
+	ModelPlaneWatcher *modelplane.ModelPlaneWatcher
+	ModelPlaneBridge  *modelplane.ComplianceBridge
 
 	// Auth secret for token refresh
 	AuthSecret string
@@ -106,8 +110,8 @@ type FleetController struct {
 // initialized using their default constructors. The backendVLLM and backendOVMS
 // parameters specify the base URLs for the default inference backends. The
 // kubeAPI and namespace parameters are optional; when kubeAPI is non-empty a
-// CRDWatcher is created that polls the Kubernetes API for FleetInferencePool
-// changes.
+// CRDWatcher polls FleetInferencePool resources and FleetIntent/FleetOperation
+// CRDs become the authoritative intent repository.
 func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
 	return NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
 }
@@ -175,6 +179,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 
 	// Create CRDWatcher if Kubernetes API is configured.
 	var crdWatcher *controller.CRDWatcher
+	var intentRepository intents.Repository = intents.NewMemoryRepository()
 	if kubeAPI != "" {
 		if namespace == "" {
 			namespace = "default"
@@ -182,9 +187,10 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		// Read service account token for in-cluster auth.
 		token := ""
 		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-			token = string(data)
+			token = strings.TrimSpace(string(data))
 		}
 		crdWatcher = controller.NewCRDWatcher(kubeAPI, namespace, token, reconciler)
+		intentRepository = intents.NewKubernetesRepository(kubeAPI, namespace, token, nil)
 	}
 
 	return &FleetController{
@@ -205,11 +211,12 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		MetricsFederator:     metrics.NewMetricsFederator(),
 		TransferOrchestrator: transfer.NewTransferOrchestrator(),
 		ClusterClient:        clusterClient,
-		EventPublisher:       events.NewEventPublisher(),
+		EventPublisher:       events.NewLedgerAwarePublisher(events.NewEventPublisher(), fleetRecorder),
 		PricingTable:         cost.DefaultPricingTable(),
 		Reconciler:           reconciler,
 		CRDWatcher:           crdWatcher,
 		FleetRecorder:        fleetRecorder,
+		IntentService:        intents.NewService(intentRepository, intents.DefaultPolicyConfig()),
 		InferenceProxy:       proxy,
 		ClusterRepo:          clusterRepo,
 		PoolRepo:             postgres.NewInMemoryFleetPoolRepository(),
@@ -245,6 +252,10 @@ func (fc *FleetController) handleHealthz(w http.ResponseWriter, _ *http.Request)
 func (fc *FleetController) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	if !fc.ready.Load() {
 		writeError(w, http.StatusServiceUnavailable, "not ready")
+		return
+	}
+	if fc.CRDWatcher != nil && !fc.CRDWatcher.Ready() {
+		writeError(w, http.StatusServiceUnavailable, "Kubernetes fleet API is not ready")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
@@ -540,8 +551,8 @@ func (fc *FleetController) handleVerifyChains(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, results)
 }
 
-// handleIntent receives a typed intent from the predictive brain, evaluates it
-// against policy, and records the decision to the ARE ledger.
+// handleIntent is the v1 compatibility adapter. Non-terminal work is reported
+// as deferred; "executed" is reserved for a verified SUCCEEDED operation.
 func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Add(1)
 	var intent intents.FleetIntent
@@ -550,21 +561,149 @@ func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp := intents.Evaluate(r.Context(), intent, intents.DefaultPolicyConfig())
-
-	// Record to ledger
-	if fc.FleetRecorder != nil {
-		receipt, _ := fc.FleetRecorder.RecordDecision(r.Context(), ledger.FleetDecision{
-			Type:          "fleet.intent." + string(intent.Type),
-			CorrelationID: intent.ID,
-			Content:       []byte(intent.Justification),
-		})
-		if receipt != nil {
-			resp.LedgerEntryID = receipt.EntryID
-		}
+	submission, err := fc.submitIntent(r.Context(), intent)
+	if err != nil {
+		errorsTotal.Add(1)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-
+	resp := intents.IntentResponse{IntentID: submission.IntentID, Reason: submission.Reason}
+	switch submission.State {
+	case intents.StateSucceeded:
+		resp.Status = intents.StatusExecuted
+	case intents.StateRejected, intents.StateExpired:
+		resp.Status = intents.StatusRefused
+	default:
+		resp.Status = intents.StatusDeferred
+	}
+	if operation, getErr := fc.IntentService.GetOperation(r.Context(), submission.OperationID); getErr == nil {
+		resp.LedgerEntryID = operation.LedgerEntryID
+	}
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Link", "</api/v2/intents>; rel=successor-version")
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (fc *FleetController) submitIntent(ctx context.Context, intent intents.FleetIntent) (intents.SubmissionResponse, error) {
+	submission, err := fc.IntentService.Submit(ctx, intent)
+	if err != nil {
+		return intents.SubmissionResponse{}, err
+	}
+	if fc.FleetRecorder == nil {
+		return submission, nil
+	}
+	receipt, err := fc.FleetRecorder.RecordDecision(ctx, ledger.FleetDecision{
+		Type:          "fleet.intent." + string(intent.Type),
+		CorrelationID: submission.CorrelationID,
+		Content:       []byte(intent.Justification),
+	})
+	if err != nil || receipt == nil {
+		// Admission is durable, but the lifecycle cannot progress to AUTHORIZED
+		// without a receipt. The operation remains non-terminal for retry.
+		return submission, nil
+	}
+	_, _ = fc.IntentService.AttachLedgerReceipt(ctx, submission.OperationID, intents.OperationLedgerReceipt{
+		EntryID: receipt.EntryID, ChainHash: receipt.EntryHash, Sequence: receipt.ChainPosition, RecordedAt: receipt.Timestamp,
+		Purpose: intents.ReceiptPurposeAdmission,
+	})
+	return submission, nil
+}
+
+func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.Request) {
+	requestsTotal.Add(1)
+	var intent intents.FleetIntent
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&intent); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
+		return
+	}
+	if err := intents.ValidateGovernedIntent(intent, time.Now().UTC()); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	submission, err := fc.submitIntent(r.Context(), intent)
+	if err != nil {
+		errorsTotal.Add(1)
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	status := http.StatusAccepted
+	if submission.State == intents.StateRejected || submission.State == intents.StateExpired {
+		status = http.StatusUnprocessableEntity
+	}
+	w.Header().Set("Location", submission.StatusURL)
+	writeJSON(w, status, submission)
+}
+
+func (fc *FleetController) handleGetIntentV2(w http.ResponseWriter, r *http.Request) {
+	intent, err := fc.IntentService.GetIntent(r.Context(), r.PathValue("id"))
+	if errors.Is(err, intents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "intent not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, intent)
+}
+
+func (fc *FleetController) handleGetOperationV2(w http.ResponseWriter, r *http.Request) {
+	operation, err := fc.IntentService.GetOperation(r.Context(), r.PathValue("id"))
+	if errors.Is(err, intents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "operation not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, operation)
+}
+
+func requestActor(r *http.Request) string {
+	if claims := auth.GetClaims(r); claims != nil && strings.TrimSpace(claims.Subject) != "" {
+		return claims.Subject
+	}
+	// This fallback is reachable only when authentication is disabled for a
+	// standalone development profile. Never derive audit identity from a
+	// client-controlled header.
+	return "unauthenticated-development"
+}
+
+func (fc *FleetController) handleApproveOperationV2(w http.ResponseWriter, r *http.Request) {
+	operation, err := fc.IntentService.Approve(r.Context(), r.PathValue("id"), requestActor(r))
+	if errors.Is(err, intents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "operation not found")
+		return
+	}
+	if errors.Is(err, intents.ErrInvalidTransition) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, operation)
+}
+
+func (fc *FleetController) handleCancelOperationV2(w http.ResponseWriter, r *http.Request) {
+	operation, err := fc.IntentService.Cancel(r.Context(), r.PathValue("id"), requestActor(r))
+	if errors.Is(err, intents.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "operation not found")
+		return
+	}
+	if errors.Is(err, intents.ErrInvalidTransition) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, operation)
 }
 
 // ----------------------------------------------------------------------------
@@ -966,6 +1105,11 @@ func (fc *FleetController) setupAPIServer(mode string) *http.ServeMux {
 	// Intents (predictive brain)
 	if mode == "all" || mode == "control" || mode == "inference" {
 		mux.HandleFunc("POST /api/v1/intents", fc.handleIntent)
+		mux.HandleFunc("POST /api/v2/intents", fc.handleSubmitIntentV2)
+		mux.HandleFunc("GET /api/v2/intents/{id}", fc.handleGetIntentV2)
+		mux.HandleFunc("GET /api/v2/operations/{id}", fc.handleGetOperationV2)
+		mux.HandleFunc("POST /api/v2/operations/{id}/approve", fc.handleApproveOperationV2)
+		mux.HandleFunc("POST /api/v2/operations/{id}/cancel", fc.handleCancelOperationV2)
 	}
 
 	return mux
@@ -1163,7 +1307,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
 	backendVLLM := flag.String("backend-vllm", "http://vllm-cpu.fleet-llm-d.svc:8000", "Base URL for the vLLM inference backend")
 	backendOVMS := flag.String("backend-ovms", "http://ovms-granite-external.fleet-llm-d.svc:8080", "Base URL for the OVMS inference backend")
-	kubeAPI := flag.String("kube-api", "", "Kubernetes API server URL (enables CRD watching when set)")
+	kubeAPI := flag.String("kube-api", "", "Kubernetes API server URL (enables CRD watching and authoritative intent persistence when set)")
 	namespace := flag.String("namespace", "default", "Kubernetes namespace to watch for FleetInferencePool CRDs")
 	pgURL := flag.String("pg-url", "", "PostgreSQL connection string (e.g. postgres://user:pass@host:5432/fleet?sslmode=disable). When set, uses PostgreSQL instead of in-memory stores")
 	eventEndpoint := flag.String("event-endpoint", "", "HTTP endpoint for publishing fleet events (e.g. http://kafka-bridge:8080/topics/fleet-events). When set, events are also POSTed to this URL")
@@ -1236,6 +1380,7 @@ func main() {
 
 		fc.ClusterRepo = postgres.NewPGClusterRepository(pgClient)
 		fc.ClusterClient = client.NewRepositoryClusterClient(fc.ClusterRepo)
+		fc.Reconciler.SetClusterLister(fc.ClusterClient.ListClusters)
 		fc.PoolRepo = postgres.NewPGFleetPoolRepository(pgClient)
 		fc.TenantRepo = postgres.NewPGTenantRepository(pgClient)
 		fc.RolloutRepo = postgres.NewPGRolloutRepository(pgClient)
@@ -1249,7 +1394,7 @@ func main() {
 
 	// Override event publisher with HTTP publisher when --event-endpoint is set.
 	if *eventEndpoint != "" {
-		fc.EventPublisher = events.NewHTTPEventPublisher(*eventEndpoint)
+		fc.EventPublisher = events.NewLedgerAwarePublisher(events.NewHTTPEventPublisher(*eventEndpoint), fc.FleetRecorder)
 		log.Printf("event publishing enabled (endpoint=%s)", *eventEndpoint)
 	}
 

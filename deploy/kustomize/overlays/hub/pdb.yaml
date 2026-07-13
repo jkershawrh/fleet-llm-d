@@ -8,8 +8,24 @@ metadata:
     app.kubernetes.io/component: controller
     app.kubernetes.io/part-of: fleet-llm-d
 spec:
-  minAvailable: 2
+  minAvailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: fleet-controller
       app.kubernetes.io/component: controller
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fleet-gateway
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-gateway
+      app.kubernetes.io/component: gateway

@@ -1,0 +1,133 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: fleetclusters.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: FleetCluster
+    listKind: FleetClusterList
+    plural: fleetclusters
+    singular: fleetcluster
+    shortNames: [fc]
+    categories: [fleet-llm-d]
+  scope: Namespaced
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Provider
+          type: string
+          jsonPath: .spec.infrastructureProvider
+        - name: Connected
+          type: boolean
+          jsonPath: .status.connected
+        - name: Fresh
+          type: boolean
+          jsonPath: .status.freshness.stale
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion: {type: string}
+            kind: {type: string}
+            metadata: {type: object}
+            spec:
+              type: object
+              required: [clusterId, trustDomain, providerRef]
+              properties:
+                clusterId: {type: string, minLength: 1}
+                trustDomain: {type: string, minLength: 1}
+                infrastructureProvider:
+                  type: string
+                  enum: [ModelPlane, DirectAgent]
+                  default: ModelPlane
+                providerRef:
+                  type: object
+                  required: [type, name]
+                  x-kubernetes-preserve-unknown-fields: true
+                capabilities:
+                  type: array
+                  items: {type: string}
+                  x-kubernetes-list-type: set
+                endpoints:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, url]
+                    x-kubernetes-preserve-unknown-fields: true
+                heartbeatTtl: {type: string}
+                authorizationRef:
+                  type: object
+                  required: [grantId, actionClass, specDigest, audience, expiresAt, idempotencyKey]
+                  properties:
+                    grantId: {type: string, minLength: 1}
+                    actionClass: {type: string, minLength: 1}
+                    objectUid: {type: string}
+                    specDigest:
+                      type: string
+                      pattern: "^[a-fA-F0-9]{64}$"
+                    audience: {type: string, minLength: 1}
+                    expiresAt: {type: string, format: date-time}
+                    idempotencyKey: {type: string, minLength: 1}
+                    breakGlass: {type: boolean, default: false}
+                    incidentRef: {type: string}
+                  x-kubernetes-validations:
+                    - rule: "!self.breakGlass || has(self.incidentRef)"
+                      message: incidentRef is required for break-glass grants
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, lastTransitionTime]
+                    properties:
+                      type: {type: string}
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      observedGeneration: {type: integer, format: int64}
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string, format: date-time}
+                specDigest:
+                  type: string
+                  pattern: "^[a-fA-F0-9]{64}$"
+                providerRefs:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, name]
+                    x-kubernetes-preserve-unknown-fields: true
+                freshness:
+                  type: object
+                  properties:
+                    observedAt: {type: string, format: date-time}
+                    validUntil: {type: string, format: date-time}
+                    stale: {type: boolean}
+                correlationId: {type: string}
+                lastSuccessfulReconciliation: {type: string, format: date-time}
+                connected: {type: boolean}
+                capacity:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                lastHeartbeat: {type: string, format: date-time}
