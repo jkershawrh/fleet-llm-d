@@ -108,7 +108,7 @@ class AnomalyDetector:
     def detect_throughput_drops(
         self,
         metrics: pd.DataFrame,
-        window: int = 5,
+        window: int = 30,
     ) -> list[Anomaly]:
         """Detect sudden throughput drops using a rolling window.
 
@@ -156,18 +156,16 @@ class AnomalyDetector:
                         )
                 continue
 
-            rolling_mean = (
-                pd.Series(values).rolling(window=window, min_periods=1).mean().values
-            )
-            rolling_std = (
-                pd.Series(values).rolling(window=window, min_periods=1).std(ddof=1).values
-            )
+            series = pd.Series(values)
+            rolling_mean = series.rolling(window=window, min_periods=window).mean().shift(1).values
+            rolling_std = series.rolling(window=window, min_periods=window).std(ddof=1).shift(1).values
 
             for idx in range(len(values)):
-                std = rolling_std[idx]
-                if std is None or np.isnan(std) or std == 0:
+                rm = rolling_mean[idx]
+                rs = rolling_std[idx]
+                if rm is None or np.isnan(rm) or rs is None or np.isnan(rs) or rs == 0:
                     continue
-                z = (values[idx] - rolling_mean[idx]) / std
+                z = (values[idx] - rm) / rs
                 if z < -self.sensitivity:
                     row = group.iloc[idx]
                     anomalies.append(
