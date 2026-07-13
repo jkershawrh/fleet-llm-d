@@ -1,5 +1,7 @@
 """Tests for fleet_analytics.anomaly_detector."""
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 
 import numpy as np
