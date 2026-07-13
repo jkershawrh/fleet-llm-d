@@ -11,10 +11,16 @@ fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet o
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
 [![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/Tests-500%2B_passing-brightgreen.svg)](#testing)
-[![Architecture](https://img.shields.io/badge/Arch_Proofs-50%2F50-blue.svg)](#architectural-proof)
+[![Architecture](https://img.shields.io/badge/Arch_Tests-55%2F55-blue.svg)](#architectural-proof)
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](#testing)
 
 ---
+
+> **Maturity notice:** this repository currently has contract, unit, and
+> prototype integration evidence. It is **not** promoted to Blue or Gold under
+> the current evidence rubric. Historical mock/demo results below are retained
+> as development evidence and do not prove assembled ModelPlane, llm-d,
+> multi-cluster, security-audit, or 72-hour-soak behavior.
 
 ## Why fleet-llm-d
 
@@ -52,13 +58,13 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 
 | # | Capability | Description | Status |
 |---|-----------|-------------|--------|
-| 1 | **Model Placement** | Solver and scorer assign models to clusters based on GPU topology, locality, and policy constraints. | Active |
-| 2 | **Cross-Cluster Routing** | Balancer and policy engine route inference requests across clusters with latency-aware load distribution. | Active |
-| 3 | **Fleet Autoscaling** | Collector and optimizer scale model replicas across the fleet using aggregated metrics from all clusters. | Active |
-| 4 | **Multi-Cluster Observability** | Unified metrics pipeline aggregates per-cluster Prometheus data into fleet-wide dashboards and alerts. | Active |
-| 5 | **Tenant Governance** | Metering and quota enforcement give platform teams per-tenant controls over GPU-hours and throughput. | Active |
-| 6 | **Lifecycle Management** | Rollout controller orchestrates model version upgrades across clusters with the 5-stage production gate model. | Active |
-| 7 | **KV Cache State Transfer** | Transfers KV cache state between clusters during migration, rescheduling, or failover to minimize cold-start latency. | Active |
+| 1 | **Model Placement** | Solver and scorer assign models to clusters based on GPU topology, locality, and policy constraints. | Contract/unit evidence |
+| 2 | **Cross-Cluster Routing** | Balancer and policy engine route inference requests across clusters with latency-aware load distribution. | Contract/unit evidence |
+| 3 | **Fleet Autoscaling** | Collector and optimizer scale model replicas across the fleet using aggregated metrics from all clusters. | Contract/unit evidence |
+| 4 | **Multi-Cluster Observability** | Unified metrics pipeline aggregates per-cluster Prometheus data into fleet-wide dashboards and alerts. | Partial prototype |
+| 5 | **Tenant Governance** | Metering and quota enforcement give platform teams per-tenant controls over GPU-hours and throughput. | Contract/unit evidence |
+| 6 | **Lifecycle Management** | Rollout controller orchestrates model version upgrades across clusters with the 5-stage production gate model. | Contract/unit evidence |
+| 7 | **KV Cache State Transfer** | Transfers KV cache state between clusters during migration, rescheduling, or failover to minimize cold-start latency. | In-process prototype only |
 
 ### Custom Resource Definitions
 
@@ -80,9 +86,19 @@ fleet-llm-d defines seven CRDs that drive all fleet behavior declaratively:
 
 fleet-llm-d consumes [ModelPack](https://github.com/model-spec) artifacts -- OCI-packaged models with structured metadata -- as its canonical model format. The `modelpack` package resolves model references, validates signatures, and extracts hardware requirements used by the placement solver.
 
-### ARE Immutable Ledger
+### Standalone Immutable Ledger
 
-The ARE Immutable Ledger is an **independent shared compliance platform** that runs on a separate network (`are-ledger-net`) with its own PostgreSQL instance. fleet-llm-d publishes audit events -- placement decisions, scaling actions, model deployments -- to the ledger through the `are-gateway`. The ledger provides tamper-evident records for regulatory and sovereign compliance. The `ledger` package in fleet-llm-d handles event submission and verification.
+[are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger) is the
+independent audit spine for this ecosystem. It stores hash-chained fleet, GCL,
+and DeepField evidence and issues portable proof receipts. Receipts prove that
+an entry was recorded; they are not credentials and never authorize a fleet
+mutation. The ledger-owned `are.ledger.v1.ImmutableLedgerService` gRPC contract
+is canonical. `pkg/ledger` also implements the repository's optional `/api/*`
+REST gateway for explicit compatibility/development deployments.
+The controller fails startup if `grpc` is selected today; it will advertise
+that mode only after the ledger-owned protobuf is consumed through a generated,
+pinned Go client. It never falls back to in-memory receipts for a configured
+external-ledger failure.
 
 ### ModelPlane Integration
 
@@ -103,11 +119,19 @@ fleet-llm-d sits on top of [ModelPlane](https://github.com/modelplane) as the op
   └──────────────────────────────────────────┘
 ```
 
-The `modelplane` package (`pkg/modelplane/`) provides six integration points: CRD consumption (reading ModelDeployment and ModelCluster resources), policy injection (annotating ModelDeployments with fleet placement decisions), cost integration (feeding GPU pricing into fleet cost projections), compliance bridge (forwarding ModelPlane events to the ARE ledger), routing integration (using ModelCluster health for traffic decisions), and scaling integration (coordinating fleet autoscaling with ModelPlane resource limits). Three API endpoints expose ModelPlane state: `/api/v1/modelplane/clusters`, `/api/v1/modelplane/deployments`, and `/api/v1/modelplane/cost/{deployment}`.
+The `modelplane` package (`pkg/modelplane/`) provides six integration points: CRD consumption (reading ModelDeployment and ModelCluster resources), policy injection (annotating ModelDeployments with fleet placement decisions), cost integration (feeding GPU pricing into fleet cost projections), compliance bridge (forwarding ModelPlane events to the standalone immutable ledger), routing integration (using ModelCluster health for traffic decisions), and scaling integration (coordinating fleet autoscaling with ModelPlane resource limits). Three API endpoints expose ModelPlane state: `/api/v1/modelplane/clusters`, `/api/v1/modelplane/deployments`, and `/api/v1/modelplane/cost/{deployment}`.
 
-**Live Integration Proof.** A ModelPlane mock API (`cmd/modelplane-mock/`) is deployed on the Demo Cluster OpenShift cluster, serving 3 InferenceClusters, 2 ModelDeployments, 3 ModelEndpoints, and 3 InferenceClasses. The fleet-controller consumes this data live: `/api/v1/modelplane/clusters` returns 3 clusters and `/api/v1/modelplane/deployments` returns 2 deployments. Cost calculation from ModelPlane InferenceClass GPU pricing is proven end-to-end -- the `granite-fleet` deployment computes to **$20.60/hr**. The initial 503 gap (ModelPlane endpoints returning service-unavailable) is now closed; all three endpoints return real data. A collaboration proposal has been submitted as [modelplaneai/modelplane#326](https://github.com/modelplaneai/modelplane/issues/326).
+**Prototype evidence.** The checked-in demo used `cmd/modelplane-mock/` to
+exercise the watcher and cost paths with CRD-shaped fixtures. That proves the
+mock contract path only. It is not evidence of the pinned, official ModelPlane
+provider, Gateway API ownership, or observed multi-cluster actuation.
 
-When integrated with the governed-cognitive-loop and deepfield-fleet, the stack extends to five layers: deepfield-fleet (prediction) -> governed-cognitive-loop (governed autonomy) -> fleet-llm-d (fleet operations) -> ModelPlane (infrastructure) -> llm-d (inference).
+The core ecosystem spine is `deepfield-fleet -> governed-cognitive-loop ->
+fleet-llm-d -> are-immutable-ledger`: DeepField owns observations and
+forecasts, GCL owns signed and falsified proposals, fleet owns admission,
+authorization, desired/observed state, and actuation, and the ledger owns
+tamper-evident evidence. ModelPlane and llm-d remain infrastructure and
+within-cluster inference providers below the fleet boundary.
 
 ### Governed Cognitive Loop
 
@@ -115,9 +139,19 @@ The [governed-cognitive-loop](https://github.com/jkershawrh/governed-cognitive-l
 
 fleet-llm-d evaluates received intents against its CRD-defined policies before actuating. The GCL governs the decision; fleet-llm-d governs the execution.
 
-Intent types: `ScaleIntent`, `PreWarmIntent`, `ShedLoadIntent`, `AlertIntent`, `MigrateIntent`. All intents carry HMAC-SHA256 signed authentication tokens and are recorded in the ARE Immutable Ledger under a correlation ID that chains the full decision lifecycle.
+GCL submits signed, expiry-bounded `DecisionPackage` proposals to the v2 intent
+boundary. A submission acknowledgement is not execution. Fleet admission and
+approval policy determines whether an operation may actuate, while the
+standalone immutable ledger records admission and outcome evidence without
+granting authority.
 
-Verified: 782 tests, 24/24 EDD rubric, 1,400 ledger entries (1,272 GCL) on Oberon, 6 scenarios covering scale, pre-warm, shed-load, alert, and cross-cluster migration. Post-commit accountability (outcome verification, decision cooldown, actuation verification) and 99% composite confidence. Semantic routing (prompt classification into simple/standard/complex tiers via classify-prompt endpoint) and centralized platform metrics (GET /api/v1/metrics/platform) are deployed and live.
+Production v2 admission fails closed unless the request is a verified
+`application/cloudevents+json` GCL DecisionPackage. The unsigned
+`application/json` shape is self-asserted development/operator compatibility
+only and is disabled by default. It can be enabled deliberately with
+`--allow-operator-json-intents` or
+`FLEET_ALLOW_OPERATOR_JSON_INTENTS=true`; Helm exposes the same switch as
+`controller.allowOperatorJSONIntents` and defaults it to `false`.
 
 ### Cost Model
 
@@ -135,11 +169,11 @@ Six API endpoints: `/api/v1/cost/pricing`, `/api/v1/cost/tokenomics/{model}`, `/
 - **Authentication**: HMAC-SHA256 bearer tokens with role-based access (admin, operator, viewer, tenant)
 - **Rate Limiting**: Per-IP and per-tenant token bucket middleware
 - **TLS**: Optional HTTPS via `--tls-cert` and `--tls-key` flags
-- **RBAC**: 3 Kubernetes ClusterRoles (fleet-controller, fleet-viewer, fleet-tenant-admin)
+- **RBAC**: Least-privilege controller and agent roles plus fleet-viewer and fleet-tenant-admin roles
 - **Network Policies**: Default-deny with explicit allowlists per component
 - **Container Hardening**: UBI base images, non-root (UID 65534), read-only filesystem, drop ALL capabilities
 - **Webhook Validation**: Admission webhook rejects invalid CRD specs
-- **Audit Trail**: Auth failures and RBAC denials recorded to ARE ledger
+- **Audit Trail**: Auth failures and RBAC denials recorded as evidence in the standalone immutable ledger
 
 ## Quick Start
 
@@ -185,9 +219,14 @@ Ready-to-apply CRD examples for specific deployment patterns:
 
 | Mode | Description | Details |
 |------|-------------|---------|
-| **Hub** | RHACM-style hub with 3-replica HA control plane managing spoke clusters. | See [`deploy/kustomize/overlays/hub/`](deploy/kustomize/overlays/hub/) |
-| **Standalone** | Single-node deployment for development, CI, or small-scale production. | See [`deploy/kustomize/overlays/standalone/`](deploy/kustomize/overlays/standalone/) |
+| **Hub** | RHACM-style hub managing spoke clusters; one active controller is enforced until leader election exists. | See [`deploy/kustomize/overlays/hub/`](deploy/kustomize/overlays/hub/) |
+| **Standalone** | Single-node development/CI deployment with convenience dependencies; not a production default. | See [`deploy/kustomize/overlays/standalone/`](deploy/kustomize/overlays/standalone/) |
 | **Federated** | Peer-to-peer mesh where multiple fleet-controllers coordinate as equals. | See [`deploy/kustomize/overlays/federated/`](deploy/kustomize/overlays/federated/) |
+
+The [Kustomize deployment guide](deploy/kustomize/README.md) and
+[Helm chart guide](charts/fleet-llm-d/README.md) document the controller,
+gateway, and agent port contracts, required cluster identity, disruption
+budgets, and production-safe external dependency configuration.
 
 ## Dashboard
 
@@ -232,7 +271,9 @@ go test -tags=compliance ./test/compliance/...
 
 ### Architectural Proof
 
-50 architectural claims are proven by tests in `test/architecture/`:
+55 architectural assertions are exercised by tests in `test/architecture/`.
+These tests are design evidence; they do not by themselves prove assembled
+runtime behavior:
 
 | Category | Claims | Method | What's Proven |
 |---|---|---|---|
@@ -250,7 +291,9 @@ go test -tags=compliance ./test/compliance/...
 
 ### Test Harness (Demo Cluster)
 
-The fleet-llm-d test harness runs 9 suites against the fleet-controller deployed on the Demo Cluster OpenShift cluster, validating behavior under real-world conditions.
+The historical demo harness recorded nine suites against one OpenShift demo
+deployment. Those results remain useful regression data, but they are not the
+required hub-plus-two-spoke release-candidate gate.
 
 | Suite | Result | Highlights |
 |-------|--------|------------|
@@ -272,11 +315,11 @@ See [`test/harness/`](test/harness/) for the harness source and [`test/benchmark
 
 | Stage | Gate | Criteria | Status |
 |-------|------|----------|--------|
-| 0 | **Red** | Interfaces defined, tests written (failing) | Passed |
-| 1 | **Yellow** | Unit + BDD + contract tests pass | Passed |
-| 2 | **Green** | Integration + soak tests pass, benchmarks within 2x | Passed |
-| 3 | **Blue** | Multi-cloud E2E, benchmarks meet target, 72hr soak, rubric ≥80 | Passed (83.45) |
-| 4 | **Gold** | Full production validation, soak, security audit, rubric ≥90 | **Achieved (90.35)** |
+| 0 | **Red** | Interfaces defined and executable tests authored | Passed |
+| 1 | **Yellow** | Unit, BDD, and contract tests pass | Passed for the current development slice |
+| 2 | **Green** | Three-cluster Kind integration passes for the capability | Not yet evidenced |
+| 3 | **Blue** | Real hub + two OpenShift spokes, performance, and chaos gates pass | Not yet evidenced |
+| 4 | **Gold** | All seven capabilities, 72-hour soak, signed external evidence, and no critical security findings | Not promoted |
 
 See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubric.yaml`](test/matrix/rubric.yaml).
 

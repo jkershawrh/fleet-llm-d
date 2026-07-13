@@ -1,0 +1,24 @@
+profile: spoke
+
+controller:
+  enabled: false
+
+gateway:
+  enabled: false
+  autoscaling:
+    enabled: false
+
+agent:
+  enabled: true
+  replicaCount: 1
+  # Set controlPlaneURL directly or create the non-optional
+  # agent.controlPlaneConfigMap in the release namespace.
+  controlPlaneURL: ""
+
+podDisruptionBudget:
+  controller:
+    enabled: false
+  gateway:
+    enabled: false
+  agent:
+    enabled: false

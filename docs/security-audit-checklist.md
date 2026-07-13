@@ -33,7 +33,7 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 | Multi-cluster access control scoping | Not Started | Validate that users/service accounts can only access clusters explicitly granted by their role bindings. Test cross-cluster escalation paths in Federated mode. |
 | API endpoint authorization matrix | Not Started | Document and verify the authorization policy for each of the 15 REST endpoints. Confirm role-based access (admin, operator, viewer) is enforced server-side, not just in UI. |
 | fleetctl CLI authorization scoping | Not Started | Ensure CLI commands respect the authenticated user's RBAC permissions. Verify that cluster-admin operations require explicit elevated credentials. |
-| Namespace-level isolation in Hub mode | Not Started | Confirm that the 3-replica HA fleet-controller restricts operations to the fleet namespace and tenant-scoped sub-namespaces. Audit for namespace escape vectors. |
+| Namespace-level isolation in Hub mode | Not Started | Confirm that the single active fleet-controller restricts operations to the fleet namespace and tenant-scoped sub-namespaces. Leader election is required before any multi-replica HA claim. Audit for namespace escape vectors. |
 | Gateway routing authorization | Not Started | Verify fleet-gateway enforces authorization on cross-cluster routing decisions. Confirm that RoutingPolicy CRDs cannot be modified by non-admin tenants. |
 | Admission webhook enforcement | Not Started | Validate that a validating admission webhook rejects CRD mutations from unauthorized service accounts. Test bypass scenarios (dry-run, server-side apply). |
 

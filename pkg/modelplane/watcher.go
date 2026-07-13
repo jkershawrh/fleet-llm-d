@@ -34,19 +34,20 @@ type ModelPlaneWatcher struct {
 }
 
 // NewModelPlaneWatcher creates a new watcher that polls the ModelPlane API.
-// An optional tlsutil.TLSOptions can be passed to configure TLS behavior;
-// when omitted, InsecureSkipVerify is used for backward compatibility.
+// An optional tlsutil.TLSOptions can be passed to configure TLS behavior.
+// Verification is enabled by default; insecure mode requires explicit opt-in.
 func NewModelPlaneWatcher(apiServer, namespace, token string, tlsOpts ...tlsutil.TLSOptions) *ModelPlaneWatcher {
-	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	opts := tlsutil.TLSOptions{}
 	if len(tlsOpts) > 0 {
 		opts = tlsOpts[0]
 	}
 
 	tlsCfg, err := tlsutil.NewTLSConfig(opts)
 	if err != nil {
-		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", err)
-		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+		log.Printf("failed to build configured ModelPlane TLS trust: %v", err)
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
+	tlsCfg.MinVersion = tls.VersionTLS13
 
 	return &ModelPlaneWatcher{
 		apiServer: apiServer,

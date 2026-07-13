@@ -9,7 +9,8 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 )
 
-// ComplianceBridge records ModelPlane resource events to the ARE immutable ledger.
+// ComplianceBridge records ModelPlane resource events to the standalone
+// immutable ledger.
 type ComplianceBridge struct {
 	recorder *ledger.FleetRecorder
 }

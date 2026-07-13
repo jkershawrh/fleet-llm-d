@@ -270,7 +270,7 @@ spec:
               containerPort: 8080
               protocol: TCP
             - name: metrics
-              containerPort: 9090
+              containerPort: 9091
               protocol: TCP
           livenessProbe:
             httpGet:
@@ -312,8 +312,8 @@ spec:
       targetPort: 8080
       protocol: TCP
     - name: metrics
-      port: 9090
-      targetPort: 9090
+      port: 9091
+      targetPort: 9091
       protocol: TCP
 EOF
 
@@ -491,7 +491,7 @@ print_summary() {
   echo -e "  ${BOLD}Controller:${NC}    ${CONTROLLER_IMAGE}"
   echo -e "  ${BOLD}API Route:${NC}     https://${route_url}"
   echo -e "  ${BOLD}Health:${NC}        https://${route_url}/healthz"
-  echo -e "  ${BOLD}Metrics:${NC}       http://fleet-controller.${NAMESPACE}.svc:9090/metrics  (cluster-internal)"
+  echo -e "  ${BOLD}Metrics:${NC}       http://fleet-controller.${NAMESPACE}.svc:9091/metrics  (cluster-internal)"
   if [[ -n "$LEDGER_URL" ]]; then
     echo -e "  ${BOLD}ARE Ledger:${NC}    ${LEDGER_URL}"
   fi

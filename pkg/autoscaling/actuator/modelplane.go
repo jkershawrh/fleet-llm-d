@@ -24,19 +24,20 @@ type ModelPlaneActuator struct {
 
 // NewModelPlaneActuator creates a new actuator that patches ModelDeployment
 // replica counts through the ModelPlane API server.
-// An optional tlsutil.TLSOptions can be passed to configure TLS behavior;
-// when omitted, InsecureSkipVerify is used for backward compatibility.
+// An optional tlsutil.TLSOptions can be passed to configure TLS behavior.
+// Verification is enabled by default; insecure mode requires explicit opt-in.
 func NewModelPlaneActuator(apiServer, token string, tlsOpts ...tlsutil.TLSOptions) *ModelPlaneActuator {
-	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	opts := tlsutil.TLSOptions{}
 	if len(tlsOpts) > 0 {
 		opts = tlsOpts[0]
 	}
 
 	tlsCfg, err := tlsutil.NewTLSConfig(opts)
 	if err != nil {
-		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", err)
-		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+		log.Printf("failed to build configured ModelPlane TLS trust: %v", err)
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
+	tlsCfg.MinVersion = tls.VersionTLS13
 
 	return &ModelPlaneActuator{
 		apiServer: apiServer,

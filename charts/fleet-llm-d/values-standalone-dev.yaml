@@ -1,0 +1,23 @@
+profile: standalone-dev
+
+controller:
+  enabled: true
+  replicaCount: 1
+
+gateway:
+  enabled: true
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+
+agent:
+  enabled: true
+  replicaCount: 1
+
+podDisruptionBudget:
+  controller:
+    enabled: false
+  gateway:
+    enabled: false
+  agent:
+    enabled: false

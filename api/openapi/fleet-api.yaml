@@ -1,11 +1,12 @@
 openapi: "3.1.0"
 info:
   title: fleet-llm-d Fleet Controller API
-  version: "1.0.0"
+  version: "2.0.0"
   description: |
     REST API for the fleet-llm-d fleet controller. Manages multi-cluster GPU
     inference pools, tenant usage tracking, model rollouts, and ledger-based
-    compliance verification.
+    compliance verification. Fleet actions use the asynchronous v2 intent and
+    operation lifecycle; admission is not evidence that an action executed.
   license:
     name: Apache 2.0
     identifier: Apache-2.0
@@ -30,6 +31,10 @@ tags:
     description: Fleet-wide and per-model metrics
   - name: rollouts
     description: Model rollout lifecycle (create, promote, rollback)
+  - name: intents
+    description: Governed asynchronous fleet intent admission
+  - name: operations
+    description: Durable actuation, observation, verification, and evidence lifecycle
   - name: compliance
     description: Ledger decision-chain verification
 
@@ -299,6 +304,199 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  # ---------- governed intents and operations ----------
+  /api/v1/intents:
+    post:
+      operationId: submitIntentV1Compatibility
+      summary: Submit an intent through the deprecated v1 compatibility adapter
+      deprecated: true
+      description: |
+        Compatibility adapter for clients migrating to `/api/v2/intents`.
+        The response status `deferred` covers every non-terminal operation,
+        including an intent that passed admission. `executed` is returned only
+        after the associated operation reached `SUCCEEDED`, which requires an
+        observed outcome and durable ledger evidence. Policy acceptance alone
+        is never reported as execution.
+      tags: [intents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FleetIntentRequest"
+      responses:
+        "200":
+          description: Deprecated compatibility projection of the operation state
+          headers:
+            Deprecation:
+              description: Always `true`; callers should migrate to v2.
+              schema:
+                type: string
+                const: "true"
+            Link:
+              description: Link to the successor-version intent endpoint.
+              schema:
+                type: string
+              example: '</api/v2/intents>; rel=successor-version'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntentResponseV1"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v2/intents:
+    post:
+      operationId: submitIntentV2
+      summary: Admit a governed fleet intent asynchronously
+      description: |
+        Creates a durable intent and operation. A `202` response means the
+        request was admitted to the lifecycle; it does not mean infrastructure
+        changed. Follow `status_url` until a terminal operation state is
+        reached. The same `idempotency_key` returns the original operation.
+        Production ingress uses a verified GCL DecisionPackage CloudEvent.
+        Plain JSON is unsigned, self-asserted operator compatibility and is
+        rejected unless the server explicitly enables that development mode.
+      tags: [intents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            x-development-only: true
+            schema:
+              $ref: "#/components/schemas/OperatorCompatibilityIntentRequest"
+          application/cloudevents+json:
+            schema:
+              $ref: "#/components/schemas/GCLDecisionPackageCloudEvent"
+      responses:
+        "202":
+          description: Intent durably admitted or deferred for later processing
+          headers:
+            Location:
+              description: Relative URL of the associated operation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: Invalid governed proposal, or intent reached `REJECTED` or `EXPIRED` during admission
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/SubmissionResponse"
+        "415":
+          description: Request media type is unsupported, including plain JSON when operator compatibility is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: A GCL CloudEvent was submitted but trusted signature verification is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v2/intents/{id}:
+    get:
+      operationId: getIntentV2
+      summary: Get an admitted fleet intent
+      tags: [intents]
+      parameters:
+        - $ref: "#/components/parameters/IntentID"
+      responses:
+        "200":
+          description: Immutable submitted intent and its evidence references
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetIntent"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v2/operations/{id}:
+    get:
+      operationId: getOperationV2
+      summary: Get the durable lifecycle of a fleet operation
+      tags: [operations]
+      parameters:
+        - $ref: "#/components/parameters/OperationID"
+      responses:
+        "200":
+          description: Operation state and append-only transition journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetOperation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v2/operations/{id}/approve:
+    post:
+      operationId: approveOperationV2
+      summary: Record human approval for a deferred operation
+      description: |
+        Records an authenticated approval transition. Fleet admission and
+        approval policy owns execution authorization. Immutable-ledger proof
+        receipts record decisions but never grant authority.
+      tags: [operations]
+      parameters:
+        - $ref: "#/components/parameters/OperationID"
+      responses:
+        "200":
+          description: Operation after recording the approval transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetOperation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v2/operations/{id}/cancel:
+    post:
+      operationId: cancelOperationV2
+      summary: Cancel or compensate a fleet operation
+      description: |
+        Before actuation, cancellation moves the operation to `FAILED`. During
+        or after actuation it starts `ROLLING_BACK`; cancellation never claims
+        that compensation completed synchronously.
+      tags: [operations]
+      parameters:
+        - $ref: "#/components/parameters/OperationID"
+      responses:
+        "200":
+          description: Operation after recording cancellation or rollback intent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetOperation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # ---------- compliance ----------
   /api/v1/verify/chains:
     get:
@@ -378,6 +576,26 @@ components:
         type: string
       example: rollout-abc123
 
+    IntentID:
+      name: id
+      in: path
+      required: true
+      description: Server-assigned fleet intent identifier
+      schema:
+        type: string
+        minLength: 1
+      example: intent-4f07a5033cc3d64f74fc9809
+
+    OperationID:
+      name: id
+      in: path
+      required: true
+      description: Server-assigned durable operation identifier
+      schema:
+        type: string
+        minLength: 1
+      example: operation-7bd34b188768439b09d5d002
+
   # ---------- reusable responses ----------
   responses:
     BadRequest:
@@ -397,6 +615,15 @@ components:
             $ref: "#/components/schemas/Error"
           example:
             error: "resource not found"
+
+    Conflict:
+      description: Request conflicts with the current lifecycle or idempotency state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "invalid operation transition: ACCEPTED -> ACCEPTED"
 
     InternalError:
       description: Internal server error
@@ -695,6 +922,583 @@ components:
         id: rollout-abc123
         phase: promoted
         current_weight: 100
+
+    EvidenceDigest:
+      type: object
+      additionalProperties: false
+      required: [uri, sha256]
+      properties:
+        uri:
+          type: string
+          minLength: 1
+          description: Immutable or content-addressed location of the evidence payload
+        sha256:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+          description: SHA-256 digest of the referenced evidence bytes
+        media_type:
+          type: string
+          description: Media type of the referenced evidence
+      example:
+        uri: s3://fleet-evidence/forecasts/forecast-018.json
+        sha256: 9e107d9d372bb6826bd81d3542a419d6e0f7f4b07a8b84b4d9f1e7c6a09f8c21
+        media_type: application/json
+
+    ProposerAuthority:
+      type: object
+      additionalProperties: false
+      required: [subject, authority_ref]
+      properties:
+        subject:
+          type: string
+          minLength: 1
+          description: Verified identity of the decision-package proposer
+        authority_ref:
+          type: string
+          minLength: 1
+          description: Producer-owned signing or provenance reference; not an execution grant
+        max_action:
+          type: string
+          description: Maximum action class attested for this proposal
+        expires_at:
+          type: string
+          format: date-time
+          description: Expiry of the proposer attestation
+      example:
+        subject: spiffe://srex.dev/ns/deepfield/sa/gcl
+        authority_ref: gcl://signing-keys/key-018
+        max_action: fleet.scale
+        expires_at: "2026-07-13T14:30:00Z"
+
+    FleetIntentRequest:
+      type: object
+      additionalProperties: false
+      required: [type, confidence, horizon_seconds, justification, state_snapshot]
+      properties:
+        id:
+          type: string
+          description: Optional client identifier; the server generates one when omitted
+        correlation_id:
+          type: string
+          description: End-to-end correlation identifier; defaults to the intent ID
+        idempotency_key:
+          type: string
+          description: Stable key used to return the original operation on retries
+        type:
+          type: string
+          enum: [pre_warm, scale, shed_load, alert, migrate, route, deploy, kv_transfer, no_action]
+        confidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        horizon_seconds:
+          type: integer
+          minimum: 0
+        justification:
+          type: string
+          minLength: 1
+        state_snapshot:
+          type: object
+          additionalProperties: true
+          description: Inputs used by the proposer; large evidence remains external
+        created_at:
+          type: string
+          format: date-time
+          description: Optional producer time; the server supplies its current time when omitted
+        expires_at:
+          type: string
+          format: date-time
+        decision_package_ref:
+          type: string
+          description: Immutable reference to the signed GCL decision package
+        decision_package_digest:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceDigest"
+        proposer:
+          $ref: "#/components/schemas/ProposerAuthority"
+        model:
+          type: string
+        pool:
+          type: string
+        target_replicas:
+          type: integer
+          minimum: 0
+        desired_replicas:
+          type: integer
+          minimum: 0
+        current_replicas:
+          type: integer
+          minimum: 0
+        target_clusters:
+          type: array
+          items:
+            type: string
+        max_inflight:
+          type: integer
+          minimum: 0
+        duration_seconds:
+          type: integer
+          minimum: 0
+        metric:
+          type: string
+        severity:
+          type: string
+        message:
+          type: string
+        reason:
+          type: string
+        recommended_action:
+          type: string
+      example:
+        type: scale
+        confidence: 0.93
+        horizon_seconds: 900
+        justification: Forecast demand exceeds verified serving capacity.
+        state_snapshot:
+          current_replicas: 2
+          forecast_tokens_per_second: 8400
+
+    OperatorCompatibilityIntentRequest:
+      allOf:
+        - $ref: "#/components/schemas/FleetIntentRequest"
+        - type: object
+          required: [idempotency_key, expires_at, decision_package_ref, decision_package_digest, evidence, proposer, pool]
+          properties:
+            type:
+              type: string
+              enum: [deploy, scale, route, pre_warm, shed_load, migrate, kv_transfer]
+            horizon_seconds:
+              type: integer
+              minimum: 1
+            evidence:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/EvidenceDigest"
+      oneOf:
+        - title: Deploy parameters
+          properties:
+            type: {const: deploy}
+            model: {type: string, minLength: 1}
+            desired_replicas: {type: integer, minimum: 1}
+          required: [model, desired_replicas]
+        - title: Scale parameters
+          properties:
+            type: {const: scale}
+            desired_replicas: {type: integer, minimum: 1}
+          required: [desired_replicas]
+        - title: Route parameters
+          properties:
+            type: {const: route}
+            target_clusters:
+              type: array
+              minItems: 1
+              items: {type: string, minLength: 1}
+          required: [target_clusters]
+        - title: Pre-warm parameters
+          properties:
+            type: {const: pre_warm}
+            target_replicas: {type: integer, minimum: 1}
+          required: [target_replicas]
+        - title: Load-shedding parameters
+          properties:
+            type: {const: shed_load}
+            max_inflight: {type: integer, minimum: 1}
+            duration_seconds: {type: integer, minimum: 1}
+          required: [max_inflight, duration_seconds]
+        - title: Migration parameters
+          properties:
+            type: {const: migrate}
+            state_snapshot:
+              type: object
+              required: [parameters]
+              properties:
+                parameters:
+                  type: object
+                  required: [target_pool]
+                  properties:
+                    target_pool: {type: string, minLength: 1}
+          required: [state_snapshot]
+        - title: KV transfer parameters
+          properties:
+            type: {const: kv_transfer}
+            state_snapshot:
+              type: object
+              required: [parameters]
+              properties:
+                parameters:
+                  type: object
+                  required: [source_cluster, target_cluster]
+                  properties:
+                    source_cluster: {type: string, minLength: 1}
+                    target_cluster: {type: string, minLength: 1}
+          required: [state_snapshot]
+      x-development-only: true
+      description: |
+        Unsigned, self-asserted operator compatibility input. Merely supplying
+        decision-package and proposer fields in this JSON shape does not prove
+        GCL provenance. Servers reject this media type unless the explicit
+        development/operator compatibility switch is enabled. Production
+        callers submit GCLDecisionPackageCloudEvent instead. The deprecated v1
+        adapter retains its older shape and translates all non-terminal work
+        to `deferred`.
+      example:
+        correlation_id: corr-forecast-018
+        idempotency_key: deepfield-forecast-018-scale
+        type: scale
+        confidence: 0.93
+        horizon_seconds: 900
+        justification: Forecast demand exceeds verified serving capacity.
+        state_snapshot:
+          current_replicas: 2
+          forecast_tokens_per_second: 8400
+        expires_at: "2026-07-13T14:30:00Z"
+        decision_package_ref: gcl://decision-packages/dp-018
+        decision_package_digest: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+        evidence:
+          - uri: s3://fleet-evidence/forecasts/forecast-018.json
+            sha256: 9e107d9d372bb6826bd81d3542a419d6e0f7f4b07a8b84b4d9f1e7c6a09f8c21
+            media_type: application/json
+        proposer:
+          subject: spiffe://srex.dev/ns/deepfield/sa/gcl
+          authority_ref: gcl://signing-keys/key-018
+          max_action: fleet.scale
+        model: Qwen/Qwen2.5-0.5B-Instruct
+        pool: qwen-production
+        desired_replicas: 4
+
+    GCLDecisionPackageCloudEvent:
+      type: object
+      additionalProperties: false
+      description: |
+        Fleet's transport projection of the producer-owned GCL DecisionPackage
+        CloudEvent contract. The authoritative schema is published by
+        governed-cognitive-loop. Fleet verifies the package digest, expiry,
+        envelope bindings, and HMAC signature using the configured trusted GCL
+        signing key before mapping the selected candidate into a FleetIntent.
+      externalDocs:
+        description: Producer-owned DecisionPackage v1 contract
+        url: https://github.com/jkershawrh/governed-cognitive-loop/blob/main/docs/decision-package-v1.md
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - subject
+        - time
+        - datacontenttype
+        - dataschema
+        - correlationid
+        - causationid
+        - idempotencyid
+        - tenant
+        - zone
+        - expiry
+        - evidence
+        - data
+      properties:
+        specversion: {type: string, enum: ["1.0"]}
+        id: {type: string, minLength: 1}
+        source: {type: string, minLength: 1}
+        type: {type: string, enum: [ai.llm-d.gcl.decision-package.v1]}
+        subject: {type: string, minLength: 1}
+        time: {type: string, format: date-time}
+        datacontenttype: {type: string, enum: [application/json]}
+        dataschema:
+          type: string
+          enum: [https://schemas.llm-d.ai/gcl/decision-package/v1/schema.json]
+        correlationid: {type: string, minLength: 1}
+        causationid: {type: string, minLength: 1}
+        idempotencyid: {type: string, minLength: 1}
+        tenant: {type: string, minLength: 1}
+        zone: {type: string, minLength: 1}
+        traceparent: {type: string}
+        expiry: {type: string, format: date-time}
+        evidence:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+        data:
+          type: object
+          additionalProperties: false
+          required: [package, digest, signature, algorithm, key_id]
+          properties:
+            package:
+              type: object
+              description: Producer-owned DecisionPackage v1 payload
+              additionalProperties: true
+            digest:
+              type: string
+              pattern: "^sha256:[0-9a-f]{64}$"
+            signature: {type: string, minLength: 1}
+            algorithm: {type: string, enum: [HMAC-SHA256]}
+            key_id: {type: string, minLength: 1}
+
+    FleetIntent:
+      allOf:
+        - $ref: "#/components/schemas/FleetIntentRequest"
+        - type: object
+          required: [id, correlation_id, created_at]
+          properties:
+            id:
+              type: string
+            correlation_id:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+
+    OperationState:
+      type: string
+      description: |
+        Durable lifecycle state. `SUCCEEDED` is the only successful terminal
+        state and requires verified observed state plus durable evidence.
+        `EVIDENCE_PENDING` means actuation may have occurred but its evidence
+        is not yet durable; callers must not treat it as success.
+      enum:
+        - RECEIVED
+        - ACCEPTED
+        - PLANNED
+        - GOVERNANCE_PENDING
+        - AUTHORIZED
+        - ACTUATING
+        - OBSERVING
+        - VERIFIED
+        - EVIDENCE_PENDING
+        - SUCCEEDED
+        - REJECTED
+        - DEFERRED
+        - EXPIRED
+        - FAILED
+        - ROLLING_BACK
+        - ROLLED_BACK
+        - QUARANTINED
+
+    OperationTransition:
+      type: object
+      additionalProperties: false
+      required: [sequence, state, at]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Contiguous monotonic sequence within the operation
+        state:
+          $ref: "#/components/schemas/OperationState"
+        at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        actor:
+          type: string
+          description: Verified workload or human identity responsible for the transition
+        ledger_entry_id:
+          type: string
+          description: Standalone immutable-ledger entry associated with this transition
+
+    FleetAuthorizationReference:
+      type: object
+      additionalProperties: false
+      description: |
+        Fleet-owned execution decision bound to one operation and plan. This
+        object is authorization state; an immutable-ledger receipt can record
+        it but never substitutes for it.
+      required: [grant_id, subject, action_class, object_uid, spec_digest, audience, expires_at, idempotency_key]
+      properties:
+        grant_id: {type: string, minLength: 1}
+        subject: {type: string, minLength: 1}
+        action_class: {type: string, minLength: 1}
+        object_uid: {type: string, minLength: 1}
+        spec_digest:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        audience:
+          type: string
+          enum: [fleet-llm-d]
+        expires_at: {type: string, format: date-time}
+        idempotency_key: {type: string, minLength: 1}
+        break_glass: {type: boolean, default: false}
+        incident_ref: {type: string}
+
+    FleetProviderReference:
+      type: object
+      additionalProperties: false
+      description: Provider selected to own actuation for this operation plan.
+      required: [type, name]
+      properties:
+        type: {type: string, minLength: 1}
+        name: {type: string, minLength: 1}
+        namespace: {type: string}
+        external_id: {type: string}
+        generation: {type: integer, format: int64, minimum: 0}
+
+    FleetOperation:
+      type: object
+      additionalProperties: false
+      required: [id, intent_id, correlation_id, action_class, state, created_at, updated_at, transitions]
+      properties:
+        id:
+          type: string
+        object_uid:
+          type: string
+        intent_id:
+          type: string
+        correlation_id:
+          type: string
+        idempotency_key:
+          type: string
+        action_class:
+          type: string
+        state:
+          $ref: "#/components/schemas/OperationState"
+        plan_digest:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        provider:
+          $ref: "#/components/schemas/FleetProviderReference"
+        authorization_ref:
+          $ref: "#/components/schemas/FleetAuthorizationReference"
+        observed_digest:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+          description: SHA-256 digest of the provider-observed outcome bound to the outcome receipt
+        ledger_entry_id:
+          type: string
+          description: Latest durable standalone immutable-ledger entry for the operation
+        ledger_receipts:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationLedgerReceipt"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        transitions:
+          type: array
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/OperationTransition"
+      example:
+        id: operation-7bd34b188768439b09d5d002
+        intent_id: intent-4f07a5033cc3d64f74fc9809
+        correlation_id: corr-forecast-018
+        idempotency_key: deepfield-forecast-018-scale
+        action_class: fleet.scale
+        state: GOVERNANCE_PENDING
+        plan_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        provider:
+          type: ModelPlane
+          name: modelplane-primary
+        created_at: "2026-07-13T14:00:00Z"
+        updated_at: "2026-07-13T14:00:02Z"
+        transitions:
+          - sequence: 1
+            state: RECEIVED
+            at: "2026-07-13T14:00:00Z"
+            reason: intent received
+            actor: fleet-api
+          - sequence: 2
+            state: ACCEPTED
+            at: "2026-07-13T14:00:01Z"
+            reason: policy checks passed
+            actor: fleet-policy
+          - sequence: 3
+            state: GOVERNANCE_PENDING
+            at: "2026-07-13T14:00:02Z"
+            reason: awaiting fleet admission or approval policy
+            actor: fleet-controller
+
+    OperationLedgerReceipt:
+      type: object
+      additionalProperties: false
+      required: [entry_id, entry_hash, entry_type, chain_position, written_ts, input_hash, purpose]
+      properties:
+        entry_id:
+          type: string
+          minLength: 1
+        entry_hash:
+          type: string
+          minLength: 1
+        entry_type:
+          type: string
+          minLength: 1
+        chain_position:
+          type: integer
+          format: int64
+          minimum: 1
+        written_ts:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Ledger write timestamp in Unix milliseconds
+        input_hash:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        purpose:
+          type: string
+          enum: [admission, authorization_decision, outcome]
+          description: Evidence category only; never an authorization credential
+
+    SubmissionResponse:
+      type: object
+      additionalProperties: false
+      required: [intent_id, operation_id, correlation_id, state, status_url]
+      properties:
+        intent_id:
+          type: string
+        operation_id:
+          type: string
+        correlation_id:
+          type: string
+        state:
+          $ref: "#/components/schemas/OperationState"
+        reason:
+          type: string
+        status_url:
+          type: string
+          pattern: "^/api/v2/operations/[^/]+$"
+      example:
+        intent_id: intent-4f07a5033cc3d64f74fc9809
+        operation_id: operation-7bd34b188768439b09d5d002
+        correlation_id: corr-forecast-018
+        state: ACCEPTED
+        reason: policy checks passed; awaiting governance and observed actuation
+        status_url: /api/v2/operations/operation-7bd34b188768439b09d5d002
+
+    IntentResponseV1:
+      type: object
+      additionalProperties: false
+      required: [intent_id, status, reason]
+      properties:
+        intent_id:
+          type: string
+        status:
+          type: string
+          enum: [deferred, refused, executed]
+          description: |
+            `deferred` means non-terminal, including admission success;
+            `refused` maps from `REJECTED` or `EXPIRED`; and `executed` maps
+            only from a verified `SUCCEEDED` operation.
+        reason:
+          type: string
+        ledger_entry_id:
+          type: string
+          description: Durable ledger receipt when one has been recorded
+      example:
+        intent_id: intent-4f07a5033cc3d64f74fc9809
+        status: deferred
+        reason: policy checks passed; awaiting governance and observed actuation
 
     ChainVerification:
       type: object

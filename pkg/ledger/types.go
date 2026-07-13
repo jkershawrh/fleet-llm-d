@@ -2,7 +2,8 @@ package ledger
 
 import "time"
 
-// FleetDecision represents a fleet orchestration decision to be recorded in the ARE immutable ledger.
+// FleetDecision represents a fleet orchestration decision to be recorded in
+// the standalone immutable ledger.
 type FleetDecision struct {
 	Type           string
 	AgentID        string
@@ -25,6 +26,7 @@ type LedgerReceipt struct {
 
 // ProofReceipt is a compact, portable proof that travels with requests.
 type ProofReceipt struct {
+	EntryID       string
 	EntryHash     string
 	EntryType     string
 	ChainPosition int64
@@ -42,12 +44,20 @@ type ChainVerification struct {
 
 // ProofVerification is the result of verifying a proof receipt.
 type ProofVerification struct {
-	Valid     bool
-	EntryID   string
-	EntryType string
-	AgentID   string
-	SourceID  string
-	WrittenAt time.Time
+	Valid         bool
+	EntryID       string
+	EntryType     string
+	AgentID       string
+	SourceID      string
+	CorrelationID string
+	InputHash     string
+	// Content is the exact entry payload committed by EntryHash. Callers that
+	// use a proof as operation evidence must validate this payload rather than
+	// relying on reusable metadata such as a correlation or input digest alone.
+	Content       []byte
+	ChainPosition int64
+	FailureReason string
+	WrittenAt     time.Time
 }
 
 // DecisionQuery filters for querying decisions.

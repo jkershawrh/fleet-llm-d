@@ -8,7 +8,8 @@ import (
 )
 
 // FleetRecorder provides typed methods for recording specific fleet decisions
-// to the ARE immutable ledger.
+// to the standalone immutable ledger. The recorder persists evidence only; it
+// does not authorize the recorded action.
 type FleetRecorder struct {
 	client   LedgerClient
 	agentID  string
@@ -30,7 +31,7 @@ func computeInputHash(data []byte) string {
 	return fmt.Sprintf("%x", h[:])
 }
 
-// RecordDecision records a generic fleet decision to the ARE immutable ledger.
+// RecordDecision records a generic fleet decision to the immutable ledger.
 func (r *FleetRecorder) RecordDecision(ctx context.Context, decision FleetDecision) (*LedgerReceipt, error) {
 	if decision.AgentID == "" {
 		decision.AgentID = r.agentID
@@ -39,6 +40,19 @@ func (r *FleetRecorder) RecordDecision(ctx context.Context, decision FleetDecisi
 		decision.SourceID = r.sourceID
 	}
 	return r.client.RecordDecision(ctx, decision)
+}
+
+// RecordProof writes evidence and returns the ledger's portable proof receipt.
+// The receipt proves persistence only; callers must verify it and apply their
+// own authorization policy before any consequential action.
+func (r *FleetRecorder) RecordProof(ctx context.Context, decision FleetDecision) (*ProofReceipt, error) {
+	if decision.AgentID == "" {
+		decision.AgentID = r.agentID
+	}
+	if decision.SourceID == "" {
+		decision.SourceID = r.sourceID
+	}
+	return r.client.IssueProofReceipt(ctx, decision)
 }
 
 // RecordPlacement records a model placement decision.

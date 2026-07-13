@@ -17,8 +17,8 @@ func TestEvaluate_AcceptsHighConfidence(t *testing.T) {
 	}
 
 	resp := Evaluate(context.Background(), intent, DefaultPolicyConfig())
-	if resp.Status != StatusExecuted {
-		t.Errorf("expected executed, got %s: %s", resp.Status, resp.Reason)
+	if resp.Status != StatusAccepted {
+		t.Errorf("expected accepted, got %s: %s", resp.Status, resp.Reason)
 	}
 }
 
@@ -69,7 +69,7 @@ func TestEvaluate_DefersCriticalAlert(t *testing.T) {
 	}
 }
 
-func TestEvaluate_ExecutesCriticalWithoutGate(t *testing.T) {
+func TestEvaluate_AcceptsCriticalWithoutGate(t *testing.T) {
 	intent := FleetIntent{
 		ID:         "test-5",
 		Type:       IntentAlert,
@@ -82,7 +82,7 @@ func TestEvaluate_ExecutesCriticalWithoutGate(t *testing.T) {
 	policy.RequireHumanGate = false
 
 	resp := Evaluate(context.Background(), intent, policy)
-	if resp.Status != StatusExecuted {
-		t.Errorf("expected executed without human gate, got %s", resp.Status)
+	if resp.Status != StatusAccepted {
+		t.Errorf("expected accepted without human gate, got %s", resp.Status)
 	}
 }

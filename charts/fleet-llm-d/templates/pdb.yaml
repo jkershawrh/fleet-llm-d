@@ -1,0 +1,50 @@
+{{- if and .Values.controller.enabled .Values.podDisruptionBudget.controller.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-controller
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/component: controller
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.controller.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+---
+{{- if and .Values.gateway.enabled .Values.podDisruptionBudget.gateway.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-gateway
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/component: gateway
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.gateway.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+---
+{{- if and .Values.agent.enabled .Values.podDisruptionBudget.agent.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "fleet-llm-d.fullname" . }}-agent
+  labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
+    app.kubernetes.io/name: fleet-agent
+    app.kubernetes.io/component: agent
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.agent.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-agent
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

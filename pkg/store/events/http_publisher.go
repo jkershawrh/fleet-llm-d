@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 )
@@ -28,43 +27,45 @@ func NewHTTPEventPublisher(endpoint string) *HTTPEventPublisher {
 	}
 }
 
-type httpEventPayload struct {
-	Type      string      `json:"type"`
-	Payload   interface{} `json:"payload"`
-	Timestamp string      `json:"timestamp"`
-	Source    string      `json:"source"`
-}
+type httpEventPayload = CloudEventEnvelope
 
 // Publish sends the event to the HTTP endpoint and to local subscribers.
-// HTTP delivery failure is logged but does not block local delivery.
+// Local delivery is attempted even when the remote sink is unavailable, but
+// the remote failure is returned so an authoritative outbox can retry it.
 func (p *HTTPEventPublisher) Publish(ctx context.Context, event FleetEvent) error {
-	body, err := json.Marshal(httpEventPayload{
-		Type:      event.Type,
-		Payload:   event.Payload,
-		Timestamp: event.Timestamp.Format(time.RFC3339),
-		Source:    event.Source,
-	})
+	envelope, err := event.CloudEvent()
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(envelope)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
+	var deliveryErr error
 	req, err := http.NewRequestWithContext(ctx, "POST", p.endpoint, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("http event publish: create request failed: %v", err)
+		deliveryErr = fmt.Errorf("create event request: %w", err)
 	} else {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/cloudevents+json")
 		resp, err := p.http.Do(req)
 		if err != nil {
-			log.Printf("http event publish: delivery failed: %v", err)
+			deliveryErr = fmt.Errorf("deliver event: %w", err)
 		} else {
 			resp.Body.Close()
 			if resp.StatusCode >= 400 {
-				log.Printf("http event publish: endpoint returned %d", resp.StatusCode)
+				deliveryErr = fmt.Errorf("event endpoint returned %d", resp.StatusCode)
 			}
 		}
 	}
 
-	return p.inner.Publish(ctx, event)
+	if localErr := p.inner.Publish(ctx, event); localErr != nil {
+		if deliveryErr != nil {
+			return fmt.Errorf("remote delivery failed (%v); local delivery failed: %w", deliveryErr, localErr)
+		}
+		return localErr
+	}
+	return deliveryErr
 }
 
 // Subscribe registers a local event handler.
