@@ -3,7 +3,13 @@
 **Date:** July 2026
 **Environment:** Demo Cluster OpenShift cluster (in-cluster harness) + local Go microbenchmarks
 **Controller version:** fleet-controller (Go 1.26+, UBI base image)
-**Composite rubric score:** 90.35 (Gold threshold met)
+**Legacy composite rubric score:** 90.35 (historical prototype rubric only)
+
+> **Evidence scope:** these results predate the current capability-specific
+> promotion contract. They do not establish Green, Blue, or Gold status because
+> they lack the required three-cluster Kind/OpenShift matrices, all seven
+> observed provider workflows, a 72-hour soak, signed external evidence, and a
+> qualifying security audit.
 
 ---
 
@@ -208,4 +214,4 @@ Cost is derived from InferenceClass GPU pricing applied to the deployment's GPU 
 | Total test count | 500+ (Go unit + BDD + arch + security + contracts + compliance + Rust) |
 | Real inference | Granite-3.2-sovereign via fleet proxy on Demo Cluster, 86 completion tokens |
 | ARE Ledger | 7 decision chains verified valid on live ledger |
-| Composite rubric score | 90.35 (Gold threshold met) |
+| Legacy composite rubric score | 90.35 (not a current promotion verdict) |

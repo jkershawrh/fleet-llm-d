@@ -1,0 +1,25 @@
+profile: hub
+
+controller:
+  enabled: true
+  replicaCount: 1
+
+gateway:
+  enabled: true
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+
+agent:
+  enabled: false
+
+podDisruptionBudget:
+  controller:
+    enabled: false
+  gateway:
+    enabled: true
+    minAvailable: 1
+  agent:
+    enabled: false

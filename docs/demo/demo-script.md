@@ -566,21 +566,15 @@ curl -s "${FLEET_GATEWAY}/v1/chat/completions" \
 
 ```bash
 # Query recent audit entries from the ARE Immutable Ledger
-grpcurl -plaintext localhost:9092 \
-  are.ledger.v1.AuditService/QueryEntries \
-  -d '{
-    "filter": {
-      "model": "ibm-granite/granite-3.2-8b-instruct",
-      "time_range": {
-        "start": "2026-07-06T14:00:00Z",
-        "end": "2026-07-06T15:00:00Z"
-      }
-    },
-    "limit": 3
-  }'
+grpcurl -plaintext \
+  -d '{"entry_type":"fleet.inference.completed","page_size":3}' \
+  localhost:9092 are.ledger.v1.ImmutableLedgerService/QueryEntries
 ```
 
-**Expected output:**
+**Illustrative explorer projection:** The raw protobuf response uses
+`LedgerEntry` fields (`entryId`, `entryType`, base64 `content`, `entryHash`,
+`previousHash`, `chainPosition`, and `writtenTs`). The UI may project decoded
+fleet content into the friendlier shape below.
 
 ```json
 {
@@ -637,23 +631,17 @@ grpcurl -plaintext localhost:9092 \
 
 ```bash
 # Verify the hash chain integrity
-grpcurl -plaintext localhost:9092 \
-  are.ledger.v1.AuditService/VerifyChain \
-  -d '{
-    "startEntry": "ae-1751808198-0001",
-    "endEntry": "ae-1751808261-0003"
-  }'
+grpcurl -plaintext \
+  -d '{"entry_type":"fleet.inference.completed"}' \
+  localhost:9092 are.ledger.v1.ImmutableLedgerService/VerifyChain
 ```
 
 **Expected output:**
 
 ```json
 {
-  "valid": true,
-  "entriesVerified": 63,
-  "chainStart": "ae-1751808198-0001",
-  "chainEnd": "ae-1751808261-0003",
-  "message": "Hash chain integrity verified. No gaps or tampering detected."
+  "chainValid": true,
+  "entriesChecked": "63"
 }
 ```
 

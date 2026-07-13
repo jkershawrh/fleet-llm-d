@@ -1,61 +1,180 @@
+{{- if .Values.controller.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-fleet-controller
+  name: {{ include "fleet-llm-d.fullname" . }}-controller
   labels:
+    {{- include "fleet-llm-d.labels" . | nindent 4 }}
     app.kubernetes.io/name: fleet-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: controller
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.controller.replicaCount }}
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: fleet-controller
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        {{- toYaml .Values.controller.podAnnotations | nindent 8 }}
       labels:
         app.kubernetes.io/name: fleet-controller
         app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: fleet-llm-d
+        {{- with .Values.controller.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ default (printf "%s-controller" (include "fleet-llm-d.fullname" .)) .Values.controller.serviceAccount.name }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: fleet-controller
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ .Values.controller.image.repository }}:{{ default .Chart.AppVersion .Values.controller.image.tag }}"
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args:
-            - --port={{ .Values.ports.api }}
-            - --metrics-port={{ .Values.ports.metrics }}
-            - --mode={{ .Values.mode }}
-            {{- if .Values.rateLimit.requestsPerSecond }}
-            - --rate-limit={{ .Values.rateLimit.requestsPerSecond }}
-            - --rate-burst={{ .Values.rateLimit.burst }}
+            - --port={{ .Values.controller.ports.api }}
+            - --metrics-port={{ .Values.controller.ports.metrics }}
+            - --mode={{ .Values.controller.mode }}
+            - --allow-operator-json-intents={{ .Values.controller.allowOperatorJSONIntents }}
+            - --ledger-mode={{ .Values.externalDependencies.ledger.mode }}
+            - --kube-api=https://kubernetes.default.svc
+            - --namespace={{ .Release.Namespace }}
+            - --rate-limit={{ .Values.controller.rateLimit.requestsPerSecond }}
+            - --rate-burst={{ .Values.controller.rateLimit.burst }}
+            - --max-inflight={{ .Values.controller.loadShedding.maxInflight }}
+            {{- if .Values.controller.grpc.enabled }}
+            - --grpc-port={{ .Values.controller.ports.grpc }}
             {{- end }}
-            {{- if gt (int .Values.loadShedding.maxInflight) 0 }}
-            - --max-inflight={{ .Values.loadShedding.maxInflight }}
+            {{- if eq .Values.externalDependencies.ledger.mode "http" }}
+            - --ledger-endpoint={{ required "externalDependencies.ledger.endpoint is required for http ledger mode" .Values.externalDependencies.ledger.endpoint }}
             {{- end }}
-            {{- if .Values.backends }}
-            - --backends={{ .Values.backends | toJson }}
+            {{- if .Values.externalDependencies.postgres.enabled }}
+            - --pg-url=$(FLEET_POSTGRES_URL)
             {{- end }}
-          {{- if .Values.auth.enabled }}
-          envFrom:
-            - secretRef:
-                name: {{ .Values.auth.secretName }}
+            {{- if .Values.externalDependencies.eventPublisher.enabled }}
+            - --event-endpoint={{ required "externalDependencies.eventPublisher.endpoint is required when enabled" .Values.externalDependencies.eventPublisher.endpoint }}
+            {{- end }}
+            {{- if .Values.externalDependencies.modelPlane.enabled }}
+            - --modelplane-api={{ required "externalDependencies.modelPlane.endpoint is required when enabled" .Values.externalDependencies.modelPlane.endpoint }}
+            - --modelplane-namespace={{ .Values.externalDependencies.modelPlane.namespace }}
+            {{- end }}
+            {{- with .Values.controller.backends }}
+            - --backends={{ . | toJson | quote }}
+            {{- end }}
+            {{- range .Values.controller.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- if or .Values.auth.enabled .Values.externalDependencies.gcl.enabled .Values.externalDependencies.postgres.enabled (and (eq .Values.externalDependencies.ledger.mode "http") (or .Values.externalDependencies.ledger.existingSecret (ne .Values.profile "standalone-dev"))) .Values.externalDependencies.semanticClassifier.endpoint .Values.externalDependencies.platformMetrics.gclURL .Values.externalDependencies.platformMetrics.deepfieldURL .Values.externalDependencies.platformMetrics.ledgerGatewayURL .Values.controller.extraEnv }}
+          env:
+            {{- if .Values.auth.enabled }}
+            - name: FLEET_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.existingSecret is required when auth is enabled" .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.secretKey }}
+                  optional: false
+            {{- end }}
+            {{- if .Values.externalDependencies.gcl.enabled }}
+            - name: GCL_DECISION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "externalDependencies.gcl.existingSecret is required when GCL DecisionPackage admission is enabled" .Values.externalDependencies.gcl.existingSecret }}
+                  key: {{ .Values.externalDependencies.gcl.secretKey }}
+                  optional: false
+            - name: GCL_DECISION_SIGNING_KEY_ID
+              value: {{ .Values.externalDependencies.gcl.keyID | quote }}
+            {{- end }}
+            {{- if .Values.externalDependencies.postgres.enabled }}
+            - name: FLEET_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "externalDependencies.postgres.existingSecret is required when PostgreSQL is enabled" .Values.externalDependencies.postgres.existingSecret }}
+                  key: {{ .Values.externalDependencies.postgres.secretKey }}
+                  optional: false
+            {{- end }}
+            {{- if and (eq .Values.externalDependencies.ledger.mode "http") (or .Values.externalDependencies.ledger.existingSecret (ne .Values.profile "standalone-dev")) }}
+            - name: LEDGER_GATEWAY_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "externalDependencies.ledger.existingSecret is required for http ledger mode outside standalone-dev" .Values.externalDependencies.ledger.existingSecret }}
+                  key: {{ .Values.externalDependencies.ledger.secretKey }}
+                  optional: false
+            {{- end }}
+            {{- with .Values.externalDependencies.semanticClassifier.endpoint }}
+            - name: SEMANTIC_CLASSIFIER_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.externalDependencies.platformMetrics.gclURL }}
+            - name: GCL_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.externalDependencies.platformMetrics.deepfieldURL }}
+            - name: DEEPFIELD_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.externalDependencies.platformMetrics.ledgerGatewayURL }}
+            - name: LEDGER_GATEWAY_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.controller.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: api
-              containerPort: {{ .Values.ports.api }}
+              containerPort: {{ .Values.controller.ports.api }}
+              protocol: TCP
             - name: metrics
-              containerPort: {{ .Values.ports.metrics }}
-          readinessProbe:
+              containerPort: {{ .Values.controller.ports.metrics }}
+              protocol: TCP
+            {{- if .Values.controller.grpc.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.controller.ports.grpc }}
+              protocol: TCP
+            {{- end }}
+          startupProbe:
             httpGet:
-              path: /readyz
-              port: {{ .Values.ports.api }}
-            initialDelaySeconds: 2
-            periodSeconds: 5
+              path: /healthz
+              port: api
+            failureThreshold: 30
+            periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
-              port: {{ .Values.ports.api }}
-            initialDelaySeconds: 5
+              port: api
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

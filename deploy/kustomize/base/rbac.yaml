@@ -11,6 +11,9 @@ rules:
       - fleet.llm-d.ai
     resources:
       - fleetinferencepools
+      - fleetclusters
+      - fleetintents
+      - fleetoperations
       - fleetroutingpolicies
       - fleetscalingpolicies
       - kvcachetransferpolicies
@@ -24,6 +27,33 @@ rules:
       - create
       - update
       - patch
+      - delete
+  - apiGroups:
+      - fleet.llm-d.ai
+    resources:
+      - fleetinferencepools/status
+      - fleetclusters/status
+      - fleetintents/status
+      - fleetoperations/status
+      - fleetroutingpolicies/status
+      - fleetscalingpolicies/status
+      - kvcachetransferpolicies/status
+      - modellifecycles/status
+      - placementpolicies/status
+      - tenantprofiles/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - fleet.llm-d.ai
+    resources:
+      - fleetinferencepools/finalizers
+      - fleetclusters/finalizers
+      - fleetintents/finalizers
+      - fleetoperations/finalizers
+    verbs:
+      - update
   - apiGroups:
       - inference.networking.k8s.io
     resources:
@@ -39,6 +69,14 @@ rules:
     verbs:
       - get
       - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -55,6 +93,59 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: fleet-controller
+    namespace: fleet-llm-d
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-agent
+  labels:
+    app.kubernetes.io/name: fleet-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: fleet-llm-d
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - inference.networking.k8s.io
+    resources:
+      - inferencepools
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-agent
+  labels:
+    app.kubernetes.io/name: fleet-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: fleet-llm-d
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-agent
+subjects:
+  - kind: ServiceAccount
+    name: fleet-agent
     namespace: fleet-llm-d
 ---
 apiVersion: rbac.authorization.k8s.io/v1

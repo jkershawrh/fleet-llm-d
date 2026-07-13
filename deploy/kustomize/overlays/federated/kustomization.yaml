@@ -5,7 +5,7 @@ resources:
   - ../../base
   - pdb.yaml
 patches:
-  # Patch fleet-controller: 3 replicas, federation env vars, mesh annotations
+  # Patch fleet-controller: one peer per install, federation env vars, mesh annotations
   - target:
       kind: Deployment
       name: fleet-controller
@@ -18,7 +18,7 @@ patches:
           fleet.llm-d.ai/mesh-enabled: "true"
           fleet.llm-d.ai/peer-port: "8443"
       spec:
-        replicas: 3
+        replicas: 1
         template:
           metadata:
             annotations:

@@ -46,7 +46,7 @@ Six principles govern all architectural decisions in fleet-llm-d:
 
 5. **Polyglot by Design.** The control plane is written in Go (controller-runtime, standard library patterns, table-driven tests) because the Kubernetes ecosystem is Go-native. The data plane is written in Rust (tokio, tonic, axum) because the fleet gateway and KV cache transfer coordinator operate on the hot path where memory safety and zero-cost abstractions matter. The dashboard is TypeScript (Next.js). Protocol Buffers define the contract between control plane and data plane.
 
-6. **ARE Independence.** The ARE Immutable Ledger is independent, shared enterprise infrastructure that lives outside the fleet-llm-d ecosystem. It runs on its own database, its own compute, and is operated separately. fleet-llm-d is one of many writers; other platforms (MaaS, RHACM, agentic frameworks, CI/CD, security tools) can write to the same ledger instance. This separation is deliberate: the compliance layer must be independent of the systems it audits to maintain trust.
+6. **Immutable-ledger independence.** [are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger) is an independent component in the fleet ecosystem. It runs on its own database and compute and is operated separately from fleet-llm-d. fleet-llm-d is one of many writers. Proof receipts establish recorded evidence; they are not credentials and do not authorize fleet actions.
 
 ### 3.2 Control Plane (Go)
 
@@ -136,7 +136,7 @@ Subscribers register interest in specific event types and receive synchronous ca
 
 fleet-llm-d supports three deployment modes, each implemented as a Kustomize overlay in `deploy/kustomize/overlays/`.
 
-**Hub Mode** (`overlays/hub/`) -- The fleet controller runs on a dedicated hub cluster in an RHACM-style topology. Three replicas provide high availability with leader election. The hub manages all registered spoke clusters, running the full control plane stack (fleet-controller, PostgreSQL, Redis, Kafka, Prometheus, Grafana) with PodDisruptionBudgets ensuring availability during upgrades. This is the recommended mode for enterprise deployments managing 10+ clusters, such as telco AI grids with 30+ edge sites.
+**Hub Mode** (`overlays/hub/`) -- The fleet controller runs on a dedicated hub cluster in an RHACM-style topology. The current packaging intentionally runs one controller because leader election is not implemented; multi-replica control-plane HA is future work and must not be inferred from gateway scaling or disruption budgets. The hub manages registered spoke clusters, while production-grade state, eventing, and observability dependencies remain externally managed.
 
 **Standalone Mode** (`overlays/standalone/`) -- The fleet controller, PostgreSQL, and Redis run on a single node as a self-contained deployment. This mode is designed for sovereign cloud zones that operate behind air-gap boundaries, single-region deployments, and development/testing environments. The overlay includes embedded PostgreSQL and Redis manifests so no external infrastructure is required. Each sovereign zone in the OSAC pattern runs its own standalone fleet-llm-d instance.
 
@@ -155,7 +155,7 @@ The ModelPack integration runs as a validation step in the model deployment work
 
 ### 3.8 Compliance & Audit Trail (ARE Immutable Ledger)
 
-fleet-llm-d integrates with the ARE (Agentic Runtime Environment) Immutable Ledger, an **independent, shared compliance platform** that lives outside the fleet-llm-d ecosystem. The ARE ledger is enterprise infrastructure: it runs on its own database, its own compute, and is operated independently. Any platform in the customer's ecosystem can write to it (fleet-llm-d, MaaS, RHACM, agentic frameworks such as Kagenti and OpenShell, CI/CD pipelines, security scanning tools, and custom applications). This separation is deliberate: the compliance layer must be independent of the systems it audits to maintain trust.
+fleet-llm-d integrates with the standalone [are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger), an **independent, shared evidence component**. It runs on its own database and compute and is operated independently. Any platform in the customer's ecosystem can write to it. The ledger verifies entries, chains, and proof receipts, but it has no grants, passports, scopes, or execution-authority API.
 
 fleet-llm-d is one of many writers to the ARE ledger. Every placement decision, deployment event, scaling action, and tenant usage record is written to a hash-chained append-only ledger.
 
@@ -208,7 +208,10 @@ fleet-llm-d operates as the **operations layer** on top of ModelPlane, which pro
 
 Three API endpoints expose ModelPlane state through the fleet controller: `/api/v1/modelplane/clusters` (list ModelPlane-managed clusters), `/api/v1/modelplane/deployments` (list ModelDeployment resources), and `/api/v1/modelplane/cost/{deployment}` (cost data for a specific deployment).
 
-**Live Integration Proof.** The ModelPlane integration is proven end-to-end with a mock API (`cmd/modelplane-mock/`) deployed on the Demo Cluster OpenShift cluster. The mock serves ModelPlane's CRD types: 3 InferenceClusters, 2 ModelDeployments, 3 ModelEndpoints, and 3 InferenceClasses. The fleet-controller consumes this data live -- `/api/v1/modelplane/clusters` returns 3 clusters and `/api/v1/modelplane/deployments` returns 2 deployments. Cost calculation from ModelPlane InferenceClass GPU pricing is proven: the `granite-fleet` deployment computes to $20.60/hr based on InferenceClass-provided GPU rates. The initial 503 gap (ModelPlane endpoints returning service-unavailable before the mock was deployed) is closed; all three endpoints now return real data. A collaboration proposal for deeper integration has been submitted as [modelplaneai/modelplane#326](https://github.com/modelplaneai/modelplane/issues/326).
+**Prototype integration evidence.** The demo exercised the watcher and cost
+paths against `cmd/modelplane-mock/`. This is mock contract evidence, not proof
+of the official pinned ModelPlane provider, Gateway API ownership, or observed
+multi-cluster actuation.
 
 ### 3.10 Governed Cognitive Loop Integration
 
@@ -216,13 +219,15 @@ fleet-llm-d accepts typed intents from the [governed-cognitive-loop](https://git
 
 fleet-llm-d evaluates received intents against its CRD-defined policies (confidence thresholds, replica limits, human gates for critical actions) before actuating. This creates a two-stage governance model: the GCL governs the decision (constraint satisfaction, falsification), and fleet-llm-d governs the execution (policy compliance, resource availability).
 
-The integration contract consists of six intent types (ScaleIntent, PreWarmIntent, ShedLoadIntent, AlertIntent, MigrateIntent, NoAction), HMAC-SHA256 authentication using a shared secret, and correlation IDs that chain the full decision lifecycle from classification through actuation in the ARE Immutable Ledger.
-
-The GCL's authority to act is governed by the agent-promotion-line, which dynamically adjusts the GCL's consequence ceiling based on its verified track record in the ARE ledger.
+The current integration contract is the signed, expiry-bounded `DecisionPackage` proposal carried into Fleet REST v2 with a stable correlation and idempotency identity. HMAC fleet v1 is compatibility-only. Fleet verifies the proposal, applies its own admission and approval policy, and owns actuation. The immutable ledger records correlated proposal and outcome evidence without granting authority.
 
 The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.
 
-**Verified on Oberon.** The GCL is deployed on the same OpenShift cluster as fleet-llm-d. 782 tests, 24/24 EDD rubric. 1,400 GCL ledger entries across correlation chains, all cryptographically valid. 6 scenarios validated: inference fleet spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, and multi-cluster migration. Post-commit accountability with outcome verification, decision cooldown, and actuation verification brings composite confidence to 99%. Fleet controller accepted GCL intents with HMAC auth (confirmed in controller logs). Semantic routing (prompt classification into simple/standard/complex tiers) and centralized platform metrics (GET /api/v1/metrics/platform aggregating inference, classification, governance, fleet, and ledger data) are deployed and live.
+**Historical prototype evidence.** The earlier Oberon run exercised the legacy
+GCL/HMAC intent path and produced test and ledger artifacts. It does not prove
+the target `deepfield-fleet -> GCL DecisionPackage -> FleetOperation ->
+are-immutable-ledger` chain and therefore cannot support a current capability
+promotion.
 
 ## 4. Seven Capabilities
 
@@ -572,9 +577,9 @@ fleet-llm-d uses a five-stage production gate model that governs the promotion o
 
 1. **Red** -- Unit tests are not passing. The capability's core logic is under active development or has known correctness issues. No deployment outside local development environments.
 2. **Yellow** -- All unit tests pass. Table-driven tests cover the primary code paths, achieving minimum coverage thresholds. The capability can be deployed to dev environments for integration testing. BDD scenarios, contract tests, and integration tests are authored but may not yet pass.
-3. **Green** -- All test types pass (unit, BDD, contract, integration). The capability meets staging-level thresholds across all rubric dimensions. The capability can be deployed to staging environments and used in customer proofs of concept.
-4. **Blue** -- End-to-end tests pass against real multi-cluster infrastructure. Benchmarks meet performance targets. Chaos engineering tests (fault injection, network partitions) pass reliability thresholds. The capability can be deployed to production with monitoring.
-5. **Gold** -- Full production validation complete. Soak tests (24+ hours sustained load) pass. Security audit complete with no critical findings. Documentation, runbooks, and alerting verified. The capability is production-ready for general availability.
+3. **Green** -- The capability passes the required three-cluster Kind integration environment in addition to its unit, BDD, and contract gates.
+4. **Blue** -- The capability passes the real hub-plus-two-OpenShift-spoke gate, including published performance and chaos scenarios.
+5. **Gold** -- All seven capabilities have live verdicts, the 72-hour soak and signed external evidence pass, and the security audit has no critical findings.
 
 Each stage transition requires evidence that all rubric dimensions meet the stage's minimum thresholds. No capability can skip a stage, and any regression (e.g., a previously passing test suite starts failing) reverts the capability to the appropriate lower stage.
 
@@ -594,9 +599,14 @@ The composite score is the weighted sum across all dimensions: `composite = sum(
 
 ### 6.3 Current Status
 
-As of July 2026, fleet-llm-d has achieved **Gold** status with a composite rubric score of **90.35**, validated through the integration test harness running on live OpenShift infrastructure. The 9-suite harness covers smoke, stress, pressure, chaos, red team, latency, throughput, soak, and security testing. Total test count exceeds 500 across Go unit, BDD, architecture proofs, security, contracts, compliance, and Rust test suites.
+As of July 2026, fleet-llm-d is **not promoted to Blue or Gold under the
+current evidence contract**. The legacy composite score of 90.35 and nine-suite
+demo harness are retained as historical prototype measurements. They do not
+include all seven observed provider workflows, the required three-cluster
+topology, a 72-hour soak, signed external evidence, or a qualifying security
+audit.
 
-Key evidence for Gold:
+Historical measurements (not current Gold evidence):
 
 - **Correctness**: 24/24 smoke tests, 50/50 architecture proofs, 11/11 red team tests, all BDD/contract/compliance suites green.
 - **Performance**: Placement latency p50=0.44ms (target < 100ms), routing decision 188ns (target < 5ms), throughput 2,000 rps healthz / 812 rps GET clusters (target > 500 rps).

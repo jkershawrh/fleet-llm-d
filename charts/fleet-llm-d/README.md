@@ -1,0 +1,99 @@
+# fleet-llm-d Helm chart
+
+This chart can deploy the controller, gateway, and per-cluster agent as separate
+workloads. The default `standalone-dev` profile deploys all three. It does not
+install PostgreSQL, Redis, Kafka, ARE, GCL, DeepField,
+ModelPlane, or Prometheus. Stateful and actuation integrations are disabled by
+default and must be enabled with explicit endpoints and operator-managed
+credentials. The controller still retains its compatibility fallback URLs for
+read-only semantic/platform metrics calls unless explicit URLs are supplied.
+
+## Install
+
+Create a stable identity that is unique across the fleet, then choose a profile:
+
+```sh
+kubectl apply -k api/crds
+kubectl create namespace fleet-llm-d
+kubectl -n fleet-llm-d create configmap fleet-cluster-identity \
+  --from-literal=cluster-id=us-central1-prod-01
+helm upgrade --install fleet charts/fleet-llm-d \
+  --namespace fleet-llm-d \
+  --values charts/fleet-llm-d/values-hub.yaml
+```
+
+The current chart does not yet bundle CRDs under `crds/`; install the pinned
+CRDs from this repository first as shown above. Until those definitions are
+generated into the release artifact and drift-checked, the chart is not a
+self-contained fresh-install package.
+
+The supported profiles are:
+
+| Values file | Workloads | Intended use |
+| --- | --- | --- |
+| `values-standalone-dev.yaml` | controller, gateway, agent | Local/development packaging; external governance and durable state are disabled |
+| `values-hub.yaml` | one controller, scalable gateway | Central control-plane packaging; production dependencies must be configured explicitly |
+| `values-spoke.yaml` | agent only | Managed cluster connected to an external hub control plane |
+| `values-federated-hub.yaml` | one controller peer, scalable gateway | One peer per installation; federation does not imply controller HA |
+
+No profile scales the controller above one replica because leader election is
+not implemented. Multi-replica gateway capacity or a disruption budget must not
+be described as control-plane HA.
+
+Profiles do not inject a shared placeholder cluster ID. You can set
+`clusterIdentity.clusterId` directly instead of creating the ConfigMap. A spoke
+also requires either `agent.controlPlaneURL` or this non-optional ConfigMap:
+
+```sh
+kubectl -n fleet-llm-d create configmap fleet-control-plane \
+  --from-literal=url=https://fleet-controller.example.com
+```
+
+## Ports
+
+| Component | Port | Purpose |
+| --- | ---: | --- |
+| controller | 8080 | control-plane API and health probes |
+| controller | 9091 | Prometheus metrics |
+| controller | 9092 | optional JSON-RPC listener |
+| gateway | 8080 | inference routing proxy |
+| gateway | 8081 | liveness and fail-closed readiness probes |
+| gateway | 9090 | Prometheus metrics |
+| agent | 8090 | local proxy, liveness, and fail-closed readiness probes |
+
+The package exposes only listeners the current binaries bind. Agent ports 8080
+and 9090 remain reserved CLI contracts and are not rendered as Services. Agent
+readiness stays false until synchronization and upstream forwarding exist;
+gateway readiness stays false until a real routing snapshot is installed. This
+prevents scaffold processes from being counted as live provider evidence.
+
+The default gateway Service is `ClusterIP`. Enable the OpenShift Route or set a
+deliberate ingress/load-balancer policy to expose inference traffic. Controller
+and agent Services remain internal.
+
+## External dependencies
+
+- GCL DecisionPackage admission is disabled until `externalDependencies.gcl`
+  names an existing Secret containing the shared signing key and its key ID.
+  Fleet verifies the producer signature before creating a FleetIntent.
+- The v2 production ingress accepts verified GCL DecisionPackage CloudEvents.
+  Plain `application/json` v2 intents are disabled by default because their
+  provenance is self-asserted. Set `controller.allowOperatorJSONIntents=true`
+  only for explicit development/operator compatibility testing; the equivalent
+  binary flag is `--allow-operator-json-intents` and the direct-process escape
+  hatch is `FLEET_ALLOW_OPERATOR_JSON_INTENTS=true`.
+- Standalone immutable-ledger mode defaults to `disabled`. The currently
+  packaged `http` compatibility mode requires an explicit endpoint. Hub and
+  federated-hub profiles additionally require HTTPS and an existing Secret
+  containing the gateway bearer token. `memory` is development/test evidence
+  only. The ledger-owned gRPC API remains canonical, but this binary does not
+  advertise it until a generated Go client is shipped.
+- PostgreSQL is disabled and, when enabled, reads the full connection URL from
+  an existing Secret. No password appears in values or rendered arguments.
+- The event publisher and ModelPlane adapter require explicit endpoints.
+- Semantic-classifier and platform-metrics URLs are only added when supplied.
+- Authentication never generates a Secret. The current HMAC mechanism is a
+  compatibility/development control, not production OIDC or workload identity;
+  enabling it requires the named existing Secret.
+
+Run `helm lint charts/fleet-llm-d` and template each profile before promotion.

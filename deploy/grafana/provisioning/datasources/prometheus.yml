@@ -16,7 +16,7 @@ datasources:
     uid: fleet-controller
     type: prometheus
     access: proxy
-    url: ${FLEET_CONTROLLER_METRICS_URL:-http://host.containers.internal:9090}
+    url: ${FLEET_CONTROLLER_METRICS_URL:-http://host.containers.internal:9091}
     editable: true
     jsonData:
       timeInterval: "15s"
