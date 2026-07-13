@@ -14,7 +14,9 @@ import (
 // receipt or report a chain as valid.
 var ErrLedgerDisabled = errors.New("immutable ledger is disabled")
 
-// LedgerClient provides fleet-llm-d integration with the ARE Immutable Ledger.
+// LedgerClient provides fleet-llm-d integration with the standalone
+// jkershawrh/are-immutable-ledger service. Receipts prove recorded evidence;
+// they are not execution credentials or authorization grants.
 type LedgerClient interface {
 	// RecordDecision writes a fleet decision to the immutable ledger.
 	RecordDecision(ctx context.Context, decision FleetDecision) (*LedgerReceipt, error)
@@ -42,6 +44,7 @@ const (
 type Config struct {
 	Mode     Mode
 	Endpoint string
+	APIToken string
 }
 
 // NewLedgerClient creates a development-safe ledger client. Use
@@ -70,12 +73,12 @@ func NewLedgerClientWithConfig(cfg Config) (LedgerClient, error) {
 		if strings.TrimSpace(cfg.Endpoint) == "" {
 			return nil, fmt.Errorf("ledger endpoint is required for http mode")
 		}
-		return NewHTTPLedgerClient(strings.TrimRight(cfg.Endpoint, "/")), nil
+		return NewHTTPLedgerClientWithToken(strings.TrimRight(cfg.Endpoint, "/"), cfg.APIToken), nil
 	case ModeGRPC:
 		if strings.TrimSpace(cfg.Endpoint) == "" {
 			return nil, fmt.Errorf("ledger endpoint is required for grpc mode")
 		}
-		return nil, fmt.Errorf("grpc ledger transport is not yet implemented (endpoint: %s); use --ledger-mode=http with the ARE REST gateway instead", cfg.Endpoint)
+		return nil, fmt.Errorf("grpc ledger transport is not yet implemented (endpoint: %s); use --ledger-mode=http only with the standalone ledger REST compatibility gateway", cfg.Endpoint)
 	default:
 		return nil, fmt.Errorf("unsupported ledger mode %q", mode)
 	}
@@ -107,12 +110,13 @@ func (disabledLedgerClient) VerifyProof(_ context.Context, _ string, entryType s
 type InMemoryLedgerClient struct {
 	mu      sync.Mutex
 	entries []FleetDecision
+	proofs  map[string]ProofVerification
 	counter int64
 }
 
 // NewInMemoryLedgerClient creates a ledger client backed by in-memory storage.
 func NewInMemoryLedgerClient() *InMemoryLedgerClient {
-	return &InMemoryLedgerClient{}
+	return &InMemoryLedgerClient{proofs: make(map[string]ProofVerification)}
 }
 
 func (c *InMemoryLedgerClient) RecordDecision(_ context.Context, decision FleetDecision) (*LedgerReceipt, error) {
@@ -120,11 +124,26 @@ func (c *InMemoryLedgerClient) RecordDecision(_ context.Context, decision FleetD
 	defer c.mu.Unlock()
 	c.counter++
 	c.entries = append(c.entries, decision)
-	return &LedgerReceipt{
-		EntryID:       fmt.Sprintf("entry-%d", c.counter),
-		EntryHash:     fmt.Sprintf("hash-%d", c.counter),
+	entryID := fmt.Sprintf("entry-%d", c.counter)
+	entryHash := fmt.Sprintf("hash-%d", c.counter)
+	writtenAt := time.Now()
+	c.proofs[entryHash+"\x00"+decision.Type] = ProofVerification{
+		Valid:         true,
+		EntryID:       entryID,
+		EntryType:     decision.Type,
+		AgentID:       decision.AgentID,
+		SourceID:      decision.SourceID,
+		CorrelationID: decision.CorrelationID,
+		InputHash:     decision.InputHash,
+		Content:       append([]byte(nil), decision.Content...),
 		ChainPosition: c.counter,
-		Timestamp:     time.Now(),
+		WrittenAt:     writtenAt,
+	}
+	return &LedgerReceipt{
+		EntryID:       entryID,
+		EntryHash:     entryHash,
+		ChainPosition: c.counter,
+		Timestamp:     writtenAt,
 	}, nil
 }
 
@@ -163,11 +182,27 @@ func (c *InMemoryLedgerClient) IssueProofReceipt(_ context.Context, decision Fle
 	defer c.mu.Unlock()
 	c.counter++
 	c.entries = append(c.entries, decision)
+	entryID := fmt.Sprintf("entry-%d", c.counter)
+	entryHash := fmt.Sprintf("proof-hash-%d", c.counter)
+	writtenAt := time.Now()
+	c.proofs[entryHash+"\x00"+decision.Type] = ProofVerification{
+		Valid:         true,
+		EntryID:       entryID,
+		EntryType:     decision.Type,
+		AgentID:       decision.AgentID,
+		SourceID:      decision.SourceID,
+		CorrelationID: decision.CorrelationID,
+		InputHash:     decision.InputHash,
+		Content:       append([]byte(nil), decision.Content...),
+		ChainPosition: c.counter,
+		WrittenAt:     writtenAt,
+	}
 	return &ProofReceipt{
-		EntryHash:     fmt.Sprintf("proof-hash-%d", c.counter),
+		EntryID:       entryID,
+		EntryHash:     entryHash,
 		EntryType:     decision.Type,
 		ChainPosition: c.counter,
-		Timestamp:     time.Now(),
+		Timestamp:     writtenAt,
 		InputHash:     decision.InputHash,
 	}, nil
 }
@@ -175,10 +210,10 @@ func (c *InMemoryLedgerClient) IssueProofReceipt(_ context.Context, decision Fle
 func (c *InMemoryLedgerClient) VerifyProof(_ context.Context, entryHash, entryType string) (*ProofVerification, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, e := range c.entries {
-		if e.InputHash == entryHash && e.Type == entryType {
-			return &ProofVerification{Valid: true, EntryType: entryType}, nil
-		}
+	if verification, ok := c.proofs[entryHash+"\x00"+entryType]; ok {
+		result := verification
+		result.Content = append([]byte(nil), verification.Content...)
+		return &result, nil
 	}
 	return &ProofVerification{Valid: false, EntryType: entryType}, nil
 }

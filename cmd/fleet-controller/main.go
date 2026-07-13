@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"expvar"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,10 +82,21 @@ type FleetController struct {
 	CRDWatcher *controller.CRDWatcher
 
 	// Ledger integration
-	FleetRecorder *ledger.FleetRecorder
+	FleetRecorder      *ledger.FleetRecorder
+	LedgerGatewayURL   string
+	LedgerGatewayToken string
 
 	// IntentService owns honest asynchronous intent/operation semantics.
 	IntentService *intents.Service
+
+	// DecisionPackageDecoder verifies producer-owned GCL CloudEvents before
+	// they are projected into FleetIntent admission.
+	DecisionPackageDecoder *intents.GCLDecisionPackageDecoder
+
+	// AllowOperatorJSONIntents enables the unsigned, self-asserted JSON v2
+	// compatibility input. It is development/operator tooling only and is
+	// deliberately false unless explicitly enabled.
+	AllowOperatorJSONIntents bool
 
 	// Inference proxy
 	InferenceProxy *routing.InferenceProxy
@@ -113,16 +128,19 @@ type FleetController struct {
 // CRDWatcher polls FleetInferencePool resources and FleetIntent/FleetOperation
 // CRDs become the authoritative intent repository.
 func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
-	return NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
+	controller, err := NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
+	if err != nil {
+		panic(err)
+	}
+	return controller
 }
 
 // NewFleetControllerWithLedgerConfig creates a FleetController with an
 // explicit ledger backend configuration.
-func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
+func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, backendOVMS, kubeAPI, namespace string) (*FleetController, error) {
 	ledgerClient, err := ledger.NewLedgerClientWithConfig(ledgerCfg)
 	if err != nil {
-		log.Printf("invalid ledger config (%s): %v; falling back to memory ledger", ledgerCfg.Mode, err)
-		ledgerClient = ledger.NewInMemoryLedgerClient()
+		return nil, fmt.Errorf("initialize immutable-ledger client in %q mode: %w", ledgerCfg.Mode, err)
 	}
 
 	proxy := routing.NewInferenceProxy()
@@ -165,7 +183,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	reconciler := controller.NewReconciler(constraintSolver, clusterClient.ListClusters)
 
 	// Wire the onChange callback so every placement decision is recorded
-	// to the ARE immutable ledger.
+	// to the standalone immutable ledger.
 	reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
 		for _, clusterID := range pool.DesiredClusters {
 			if _, err := fleetRecorder.RecordPlacement(
@@ -216,13 +234,20 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		Reconciler:           reconciler,
 		CRDWatcher:           crdWatcher,
 		FleetRecorder:        fleetRecorder,
-		IntentService:        intents.NewService(intentRepository, intents.DefaultPolicyConfig()),
-		InferenceProxy:       proxy,
-		ClusterRepo:          clusterRepo,
-		PoolRepo:             postgres.NewInMemoryFleetPoolRepository(),
-		TenantRepo:           postgres.NewInMemoryTenantRepository(),
-		RolloutRepo:          postgres.NewInMemoryRolloutRepository(),
-	}
+		LedgerGatewayURL: func() string {
+			if ledgerCfg.Mode == ledger.ModeHTTP {
+				return strings.TrimRight(ledgerCfg.Endpoint, "/")
+			}
+			return ""
+		}(),
+		LedgerGatewayToken: ledgerCfg.APIToken,
+		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
+		InferenceProxy:     proxy,
+		ClusterRepo:        clusterRepo,
+		PoolRepo:           postgres.NewInMemoryFleetPoolRepository(),
+		TenantRepo:         postgres.NewInMemoryTenantRepository(),
+		RolloutRepo:        postgres.NewInMemoryRolloutRepository(),
+	}, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -241,6 +266,10 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 // writeError writes an error JSON response.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func operatorJSONIntentsEnabled(flagValue bool) bool {
+	return flagValue || strings.TrimSpace(os.Getenv("FLEET_ALLOW_OPERATOR_JSON_INTENTS")) == "true"
 }
 
 // handleHealthz is the liveness probe.
@@ -592,30 +621,125 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 	if fc.FleetRecorder == nil {
 		return submission, nil
 	}
-	receipt, err := fc.FleetRecorder.RecordDecision(ctx, ledger.FleetDecision{
-		Type:          "fleet.intent." + string(intent.Type),
-		CorrelationID: submission.CorrelationID,
-		Content:       []byte(intent.Justification),
-	})
-	if err != nil || receipt == nil {
-		// Admission is durable, but the lifecycle cannot progress to AUTHORIZED
-		// without a receipt. The operation remains non-terminal for retry.
+	persistedIntent, err := fc.IntentService.GetIntent(ctx, submission.IntentID)
+	if err != nil {
 		return submission, nil
 	}
-	_, _ = fc.IntentService.AttachLedgerReceipt(ctx, submission.OperationID, intents.OperationLedgerReceipt{
-		EntryID: receipt.EntryID, ChainHash: receipt.EntryHash, Sequence: receipt.ChainPosition, RecordedAt: receipt.Timestamp,
-		Purpose: intents.ReceiptPurposeAdmission,
+	operation, err := fc.IntentService.GetOperation(ctx, submission.OperationID)
+	if err != nil {
+		return submission, nil
+	}
+	intentBytes, err := json.Marshal(persistedIntent)
+	if err != nil {
+		return submission, nil
+	}
+	intentDigest := sha256.Sum256(intentBytes)
+	actor := "fleet-api"
+	if persistedIntent.Proposer != nil && strings.TrimSpace(persistedIntent.Proposer.Subject) != "" {
+		actor = persistedIntent.Proposer.Subject
+	}
+	admissionReason := submission.Reason
+	if len(operation.Transitions) > 1 {
+		admissionReason = operation.Transitions[1].Reason
+	}
+	evidence := struct {
+		SchemaVersion         string                 `json:"schema_version"`
+		IntentID              string                 `json:"intent_id"`
+		OperationID           string                 `json:"operation_id"`
+		CorrelationID         string                 `json:"correlation_id"`
+		IdempotencyKey        string                 `json:"idempotency_key"`
+		IntentSpecDigest      string                 `json:"intent_spec_digest"`
+		DecisionPackageRef    string                 `json:"decision_package_ref,omitempty"`
+		DecisionPackageDigest string                 `json:"decision_package_digest,omitempty"`
+		Actor                 string                 `json:"actor"`
+		IntentType            intents.IntentType     `json:"intent_type"`
+		Pool                  string                 `json:"pool,omitempty"`
+		Model                 string                 `json:"model,omitempty"`
+		TargetClusters        []string               `json:"target_clusters,omitempty"`
+		DesiredReplicas       int                    `json:"desired_replicas,omitempty"`
+		AdmissionState        intents.OperationState `json:"admission_state"`
+		AdmissionReason       string                 `json:"admission_reason"`
+		ExpiresAt             *time.Time             `json:"expires_at,omitempty"`
+	}{
+		SchemaVersion: "fleet.llm-d.ai/intent-admission/v1", IntentID: persistedIntent.ID,
+		OperationID: operation.ID, CorrelationID: operation.CorrelationID,
+		IdempotencyKey: persistedIntent.IdempotencyKey, IntentSpecDigest: fmt.Sprintf("%x", intentDigest[:]),
+		DecisionPackageRef: persistedIntent.DecisionPackageRef, DecisionPackageDigest: persistedIntent.DecisionPackageDigest,
+		Actor: actor, IntentType: persistedIntent.Type, Pool: persistedIntent.Pool, Model: persistedIntent.Model,
+		TargetClusters: persistedIntent.TargetClusters, DesiredReplicas: persistedIntent.DesiredReplicas,
+		AdmissionState: operation.State, AdmissionReason: admissionReason, ExpiresAt: persistedIntent.ExpiresAt,
+	}
+	content, err := json.Marshal(evidence)
+	if err != nil {
+		return submission, nil
+	}
+	entryType := "fleet.intent." + string(persistedIntent.Type)
+	digest := sha256.Sum256(content)
+	payloadHash := fmt.Sprintf("%x", digest[:])
+	receipt, err := fc.FleetRecorder.RecordProof(ctx, ledger.FleetDecision{
+		Type:           entryType,
+		CorrelationID:  submission.CorrelationID,
+		Content:        content,
+		ContentType:    "application/json",
+		IdempotencyKey: "fleet:" + operation.ID + ":admission",
+		InputHash:      payloadHash,
 	})
+	if err != nil || receipt == nil {
+		// Admission remains durable. Missing audit evidence is retried separately
+		// and never stands in for fleet authorization.
+		return submission, nil
+	}
+	if _, attachErr := fc.IntentService.AttachLedgerReceipt(ctx, submission.OperationID, intents.OperationLedgerReceipt{
+		EntryID: receipt.EntryID, EntryHash: receipt.EntryHash, EntryType: entryType,
+		ChainPosition: receipt.ChainPosition, WrittenTS: receipt.Timestamp.UnixMilli(), InputHash: payloadHash,
+		Purpose: intents.ReceiptPurposeAdmission,
+	}); attachErr != nil {
+		log.Printf("intent %s admitted without attached immutable-ledger proof: %v", submission.IntentID, attachErr)
+	}
 	return submission, nil
 }
 
 func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Add(1)
 	var intent intents.FleetIntent
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&intent); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		writeError(w, http.StatusUnsupportedMediaType, "invalid Content-Type: "+err.Error())
+		return
+	}
+	switch mediaType {
+	case intents.GCLDecisionPackageCloudEventContentType:
+		if fc.DecisionPackageDecoder == nil {
+			writeError(w, http.StatusServiceUnavailable, "GCL DecisionPackage verification is not configured")
+			return
+		}
+		payload, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if readErr != nil {
+			writeError(w, http.StatusBadRequest, "read GCL DecisionPackage CloudEvent: "+readErr.Error())
+			return
+		}
+		intent, err = fc.DecisionPackageDecoder.Decode(contentType, payload)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid GCL DecisionPackage CloudEvent: "+err.Error())
+			return
+		}
+	case "application/json":
+		if !fc.AllowOperatorJSONIntents {
+			writeError(w, http.StatusUnsupportedMediaType, "application/json operator compatibility is disabled; submit a verified GCL DecisionPackage CloudEvent")
+			return
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&intent); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
+			return
+		}
+	default:
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/cloudevents+json (or application/json when operator compatibility is explicitly enabled)")
 		return
 	}
 	if err := intents.ValidateGovernedIntent(intent, time.Now().UTC()); err != nil {
@@ -1083,12 +1207,13 @@ func (fc *FleetController) setupAPIServer(mode string) *http.ServeMux {
 		}
 		ledgerURL := os.Getenv("LEDGER_GATEWAY_URL")
 		if ledgerURL == "" {
-			ledgerURL = "http://ledger-gateway.sovereign-ai-lab.svc:28099"
+			ledgerURL = fc.LedgerGatewayURL
 		}
 		platformCollector := &metrics.PlatformCollector{
 			GCLURL:       gclURL,
 			DeepfieldURL: deepfieldURL,
 			LedgerURL:    ledgerURL,
+			LedgerToken:  fc.LedgerGatewayToken,
 			ClustersFunc: func() int { return int(clustersGauge.Value()) },
 			PoolsFunc:    func() int { return int(poolsGauge.Value()) },
 			TenantsFunc:  func() int { return int(tenantsGauge.Value()) },
@@ -1295,13 +1420,68 @@ func splitCSV(value string) []string {
 	return result
 }
 
+func decisionPackageKeyringFromEnv() (map[string][]byte, error) {
+	if encoded := strings.TrimSpace(os.Getenv("GCL_DECISION_SIGNING_KEYS_JSON")); encoded != "" {
+		var configured map[string]string
+		if err := json.Unmarshal([]byte(encoded), &configured); err != nil {
+			return nil, fmt.Errorf("parse GCL_DECISION_SIGNING_KEYS_JSON: %w", err)
+		}
+		keyring := make(map[string][]byte, len(configured))
+		for keyID, material := range configured {
+			if strings.TrimSpace(keyID) == "" {
+				return nil, fmt.Errorf("GCL decision signing key ID cannot be empty")
+			}
+			key, err := decodeDecisionSigningKey(material)
+			if err != nil {
+				return nil, fmt.Errorf("decode GCL decision signing key %q: %w", keyID, err)
+			}
+			keyring[keyID] = key
+		}
+		if len(keyring) == 0 {
+			return nil, fmt.Errorf("GCL_DECISION_SIGNING_KEYS_JSON cannot be empty")
+		}
+		return keyring, nil
+	}
+
+	material := os.Getenv("GCL_DECISION_SIGNING_KEY")
+	if material == "" {
+		return nil, nil
+	}
+	keyID := strings.TrimSpace(os.Getenv("GCL_DECISION_SIGNING_KEY_ID"))
+	if keyID == "" {
+		keyID = "gcl-decision-v1"
+	}
+	key, err := decodeDecisionSigningKey(material)
+	if err != nil {
+		return nil, fmt.Errorf("decode GCL decision signing key %q: %w", keyID, err)
+	}
+	return map[string][]byte{keyID: key}, nil
+}
+
+func decodeDecisionSigningKey(material string) ([]byte, error) {
+	var key []byte
+	if strings.HasPrefix(material, "base64:") {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(material, "base64:"))
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64: %w", err)
+		}
+		key = decoded
+	} else {
+		key = []byte(material)
+	}
+	if len(key) < 32 {
+		return nil, fmt.Errorf("key must contain at least 32 bytes")
+	}
+	return key, nil
+}
+
 func main() {
 	port := flag.Int("port", 8080, "API server port")
 	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
 	grpcPort := flag.Int("grpc-port", 0, "gRPC (JSON-RPC) server port; 0 disables")
 	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only), inference (inference proxy only)")
-	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http, grpc")
-	ledgerEndpoint := flag.String("ledger-endpoint", "localhost:9092", "ARE ledger endpoint")
+	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http (gRPC is canonical upstream but not yet generated in this binary)")
+	ledgerEndpoint := flag.String("ledger-endpoint", "http://localhost:18099", "standalone immutable-ledger REST gateway endpoint (HTTP compatibility mode only)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
@@ -1318,6 +1498,7 @@ func main() {
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
 	backends := flag.String("backends", "", `JSON array of inference backends: [{"model":"name","url":"http://...","runtime":"openvino|vllm","path_prefix":"/v3"}]`)
 	maxInflight := flag.Int("max-inflight", 0, "Max concurrent inference requests per model (0 = disabled)")
+	allowOperatorJSONIntents := flag.Bool("allow-operator-json-intents", false, "Enable unsigned application/json v2 intent input for development/operator compatibility only")
 	flag.Parse()
 
 	log.Printf("fleet-controller starting (mode=%s, log-level=%s, ledger-mode=%s, ledger=%s, grpc-port=%d)", *mode, *logLevel, *ledgerMode, *ledgerEndpoint, *grpcPort)
@@ -1329,10 +1510,26 @@ func main() {
 		authCfg.Enabled, *tlsCert != "" && *tlsKey != "", *kubeAPI, *namespace,
 		*pgURL != "", *eventEndpoint)
 
-	fc := NewFleetControllerWithLedgerConfig(ledger.Config{
+	fc, err := NewFleetControllerWithLedgerConfig(ledger.Config{
 		Mode:     ledger.Mode(*ledgerMode),
 		Endpoint: *ledgerEndpoint,
+		APIToken: os.Getenv("LEDGER_GATEWAY_API_TOKEN"),
 	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
+	if err != nil {
+		log.Fatalf("invalid immutable-ledger configuration: %v", err)
+	}
+	decisionKeys, err := decisionPackageKeyringFromEnv()
+	if err != nil {
+		log.Fatalf("invalid GCL DecisionPackage verification configuration: %v", err)
+	}
+	if len(decisionKeys) > 0 {
+		fc.DecisionPackageDecoder = intents.NewGCLDecisionPackageDecoder(decisionKeys)
+		log.Printf("GCL DecisionPackage verification enabled with %d trusted key(s)", len(decisionKeys))
+	}
+	fc.AllowOperatorJSONIntents = operatorJSONIntentsEnabled(*allowOperatorJSONIntents)
+	if fc.AllowOperatorJSONIntents {
+		log.Printf("WARNING: unsigned application/json v2 intent compatibility is enabled; do not use this ingress as GCL provenance")
+	}
 
 	// Store auth secret for token refresh endpoint.
 	fc.AuthSecret = authCfg.Secret

@@ -136,11 +136,14 @@ func TestKubernetesRepositoryStatusUpdateSynchronizesIntent(t *testing.T) {
 	operation.UpdatedAt = acceptedAt
 	operation.Transitions = append(operation.Transitions, OperationTransition{
 		Sequence: 3, State: StateAccepted, At: acceptedAt, Reason: "human approval recorded", Actor: "human:test",
+		LedgerEntryID: "ledger-entry-1",
 	})
 	operation.LedgerReceipts = append(operation.LedgerReceipts, OperationLedgerReceipt{
-		EntryID: "ledger-entry-1", ChainHash: strings.Repeat("a", 64), Sequence: 1, RecordedAt: acceptedAt, Purpose: ReceiptPurposeAdmission,
+		EntryID: "ledger-entry-1", EntryHash: strings.Repeat("a", 64), EntryType: "fleet.intent.scale",
+		ChainPosition: 1, WrittenTS: acceptedAt.UnixMilli(), InputHash: strings.Repeat("b", 64), Purpose: ReceiptPurposeAdmission,
 	})
 	operation.LedgerEntryID = "ledger-entry-1"
+	operation.ObservedDigest = strings.Repeat("c", 64)
 	if err := repository.UpdateOperation(context.Background(), operation); err != nil {
 		t.Fatal(err)
 	}
@@ -150,13 +153,17 @@ func TestKubernetesRepositoryStatusUpdateSynchronizesIntent(t *testing.T) {
 	if afterOperation.Status.Phase != v1beta1.OperationAccepted || len(afterOperation.Status.Transitions) != 3 || len(afterOperation.Status.LedgerReceipts) != 1 {
 		t.Fatalf("operation status was not authoritative after update: %#v", afterOperation.Status)
 	}
+	if afterOperation.Status.Transitions[2].LedgerEntryID != "ledger-entry-1" {
+		t.Fatalf("transition ledger entry ID was not persisted: %#v", afterOperation.Status.Transitions[2])
+	}
 	if afterIntent.Status.Phase != v1beta1.OperationAccepted || afterIntent.Status.AcceptedAt == nil || !afterIntent.Status.AcceptedAt.Equal(acceptedAt) {
 		t.Fatalf("intent status did not follow operation acceptance: %#v", afterIntent.Status)
 	}
 	if afterOperation.Spec.ActionClass != beforeOperation.Spec.ActionClass || afterOperation.Spec.TargetRef.Name != beforeOperation.Spec.TargetRef.Name {
 		t.Fatal("status update mutated FleetOperation spec")
 	}
-	if afterOperation.Status.SpecDigest != strings.Repeat("e", 64) || afterOperation.Status.Result == nil || afterOperation.Status.Result.ProviderOperationID != "provider-operation-1" {
+	if afterOperation.Status.SpecDigest != strings.Repeat("e", 64) || afterOperation.Status.Result == nil ||
+		afterOperation.Status.Result.ProviderOperationID != "provider-operation-1" || afterOperation.Status.Result.ObservedDigest != operation.ObservedDigest {
 		t.Fatal("REST status update erased controller-owned operation status")
 	}
 	if afterIntent.Spec.IdempotencyKey != beforeIntent.Spec.IdempotencyKey {
@@ -167,8 +174,77 @@ func TestKubernetesRepositoryStatusUpdateSynchronizesIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != StateAccepted || got.LedgerEntryID != "ledger-entry-1" || len(got.LedgerReceipts) != 1 {
+	if got.State != StateAccepted || got.LedgerEntryID != "ledger-entry-1" || len(got.LedgerReceipts) != 1 ||
+		got.Transitions[2].LedgerEntryID != "ledger-entry-1" || got.ObservedDigest != operation.ObservedDigest {
 		t.Fatalf("updated operation projection is incomplete: %#v", got)
+	}
+}
+
+func TestKubernetesRepositoryPreservesPlanAndBoundAuthorization(t *testing.T) {
+	fake := newFakeKubernetesAPI()
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	repository := NewKubernetesRepository(server.URL, "fleet-system", "test-token", server.Client())
+
+	intent, operation := repositoryFixtures(StatePlanned)
+	intent.IdempotencyKey = "dedupe-1"
+	operation.IdempotencyKey = intent.IdempotencyKey
+	operation.ActionClass = "fleet.scale"
+	operation.ObjectUID = operation.ID
+	operation.Provider = &ProviderReference{Type: "ModelPlane", Name: "modelplane-primary", Namespace: "fleet-system"}
+
+	if err := repository.Create(context.Background(), intent, operation); err != nil {
+		t.Fatal(err)
+	}
+
+	// The service plans and authorizes an already-created operation. These
+	// controller-owned spec fields must survive the UpdateOperation round trip.
+	operation.PlanDigest = strings.Repeat("a", 64)
+	operation.Provider.ExternalID = "modeldeployment/qwen-prod"
+	operation.Provider.Generation = 3
+	operation.ObservedDigest = strings.Repeat("d", 64)
+	operation.State = StateAuthorized
+	expiresAt := time.Date(2026, 7, 13, 13, 0, 0, 0, time.UTC)
+	operation.AuthorizationRef = &AuthorizationReference{
+		GrantID: "grant-1", Subject: "operator:test", ActionClass: operation.ActionClass,
+		ObjectUID: operation.ObjectUID, SpecDigest: operation.PlanDigest,
+		Audience: AuthorizationAudienceFleetController, ExpiresAt: expiresAt,
+		IdempotencyKey: operation.IdempotencyKey, BreakGlass: true, IncidentRef: "incident-1",
+	}
+
+	if err := repository.UpdateOperation(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	stored := fake.operation(t, resourceName(operation.ID))
+	if stored.Spec.PlanDigest == nil || *stored.Spec.PlanDigest != operation.PlanDigest {
+		t.Fatalf("plan digest was not persisted: %#v", stored.Spec.PlanDigest)
+	}
+	if stored.Spec.Provider == nil || stored.Spec.Provider.Type != operation.Provider.Type ||
+		stored.Spec.Provider.Name != operation.Provider.Name || stored.Spec.Provider.ExternalID != operation.Provider.ExternalID ||
+		stored.Spec.Provider.Generation != operation.Provider.Generation {
+		t.Fatalf("provider reference was not persisted: %#v", stored.Spec.Provider)
+	}
+	if stored.Status.Result == nil || stored.Status.Result.ObservedDigest != operation.ObservedDigest {
+		t.Fatalf("observed digest was not persisted: %#v", stored.Status.Result)
+	}
+	if stored.Spec.AuthorizationRef == nil || stored.Spec.AuthorizationRef.Subject != "operator:test" ||
+		stored.Spec.AuthorizationRef.ObjectUID != operation.ObjectUID || !stored.Spec.AuthorizationRef.BreakGlass ||
+		stored.Spec.AuthorizationRef.IncidentRef != "incident-1" {
+		t.Fatalf("full authorization was not persisted: %#v", stored.Spec.AuthorizationRef)
+	}
+
+	got, err := repository.GetOperation(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PlanDigest != operation.PlanDigest || got.ObservedDigest != operation.ObservedDigest || got.ActionClass != operation.ActionClass || got.Provider == nil || got.AuthorizationRef == nil {
+		t.Fatalf("plan, provider, or authorization was lost on round trip: %#v", got)
+	}
+	if *got.Provider != *operation.Provider {
+		t.Fatalf("provider changed on round trip: got=%#v want=%#v", got.Provider, operation.Provider)
+	}
+	if *got.AuthorizationRef != *operation.AuthorizationRef {
+		t.Fatalf("authorization changed on round trip: got=%#v want=%#v", got.AuthorizationRef, operation.AuthorizationRef)
 	}
 }
 
@@ -322,6 +398,20 @@ func (f *fakeKubernetesAPI) serveOperations(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeFakeJSON(w, http.StatusOK, resource)
+	case r.Method == http.MethodPut && len(parts) == 2:
+		var requested v1beta1.FleetOperation
+		decodeRequest(w, r, &requested)
+		stored, ok := f.operations[parts[1]]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		stored.Spec = requested.Spec
+		stored.Metadata.Labels = requested.Metadata.Labels
+		stored.Metadata.Annotations = requested.Metadata.Annotations
+		f.bumpResourceVersion(&stored.Metadata)
+		f.operations[parts[1]] = stored
+		writeFakeJSON(w, http.StatusOK, stored)
 	case r.Method == http.MethodPut && len(parts) == 3 && parts[2] == "status":
 		var requested v1beta1.FleetOperation
 		decodeRequest(w, r, &requested)

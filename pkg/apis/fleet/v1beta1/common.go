@@ -43,10 +43,13 @@ type NamespacedObjectReference struct {
 	UID        string `json:"uid,omitempty"`
 }
 
-// AuthorizationReference binds an approved ARE grant to the exact mutation.
+// AuthorizationReference binds a fleet admission/approval decision to the
+// exact mutation. Immutable-ledger receipts may record that decision but do
+// not grant authority.
 // SpecDigest is the SHA-256 digest of the canonical next spec.
 type AuthorizationReference struct {
 	GrantID        string    `json:"grantId"`
+	Subject        string    `json:"subject"`
 	ActionClass    string    `json:"actionClass"`
 	ObjectUID      string    `json:"objectUid,omitempty"`
 	SpecDigest     string    `json:"specDigest"`

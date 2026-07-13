@@ -46,7 +46,7 @@ Six principles govern all architectural decisions in fleet-llm-d:
 
 5. **Polyglot by Design.** The control plane is written in Go (controller-runtime, standard library patterns, table-driven tests) because the Kubernetes ecosystem is Go-native. The data plane is written in Rust (tokio, tonic, axum) because the fleet gateway and KV cache transfer coordinator operate on the hot path where memory safety and zero-cost abstractions matter. The dashboard is TypeScript (Next.js). Protocol Buffers define the contract between control plane and data plane.
 
-6. **ARE Independence.** The ARE Immutable Ledger is independent, shared enterprise infrastructure that lives outside the fleet-llm-d ecosystem. It runs on its own database, its own compute, and is operated separately. fleet-llm-d is one of many writers; other platforms (MaaS, RHACM, agentic frameworks, CI/CD, security tools) can write to the same ledger instance. This separation is deliberate: the compliance layer must be independent of the systems it audits to maintain trust.
+6. **Immutable-ledger independence.** [are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger) is an independent component in the fleet ecosystem. It runs on its own database and compute and is operated separately from fleet-llm-d. fleet-llm-d is one of many writers. Proof receipts establish recorded evidence; they are not credentials and do not authorize fleet actions.
 
 ### 3.2 Control Plane (Go)
 
@@ -155,7 +155,7 @@ The ModelPack integration runs as a validation step in the model deployment work
 
 ### 3.8 Compliance & Audit Trail (ARE Immutable Ledger)
 
-fleet-llm-d integrates with the ARE (Agentic Runtime Environment) Immutable Ledger, an **independent, shared compliance platform** that lives outside the fleet-llm-d ecosystem. The ARE ledger is enterprise infrastructure: it runs on its own database, its own compute, and is operated independently. Any platform in the customer's ecosystem can write to it (fleet-llm-d, MaaS, RHACM, agentic frameworks such as Kagenti and OpenShell, CI/CD pipelines, security scanning tools, and custom applications). This separation is deliberate: the compliance layer must be independent of the systems it audits to maintain trust.
+fleet-llm-d integrates with the standalone [are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger), an **independent, shared evidence component**. It runs on its own database and compute and is operated independently. Any platform in the customer's ecosystem can write to it. The ledger verifies entries, chains, and proof receipts, but it has no grants, passports, scopes, or execution-authority API.
 
 fleet-llm-d is one of many writers to the ARE ledger. Every placement decision, deployment event, scaling action, and tenant usage record is written to a hash-chained append-only ledger.
 
@@ -219,17 +219,15 @@ fleet-llm-d accepts typed intents from the [governed-cognitive-loop](https://git
 
 fleet-llm-d evaluates received intents against its CRD-defined policies (confidence thresholds, replica limits, human gates for critical actions) before actuating. This creates a two-stage governance model: the GCL governs the decision (constraint satisfaction, falsification), and fleet-llm-d governs the execution (policy compliance, resource availability).
 
-The integration contract consists of six intent types (ScaleIntent, PreWarmIntent, ShedLoadIntent, AlertIntent, MigrateIntent, NoAction), HMAC-SHA256 authentication using a shared secret, and correlation IDs that chain the full decision lifecycle from classification through actuation in the ARE Immutable Ledger.
-
-The GCL's authority to act is governed by the agent-promotion-line, which dynamically adjusts the GCL's consequence ceiling based on its verified track record in the ARE ledger.
+The current integration contract is the signed, expiry-bounded `DecisionPackage` proposal carried into Fleet REST v2 with a stable correlation and idempotency identity. HMAC fleet v1 is compatibility-only. Fleet verifies the proposal, applies its own admission and approval policy, and owns actuation. The immutable ledger records correlated proposal and outcome evidence without granting authority.
 
 The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.
 
 **Historical prototype evidence.** The earlier Oberon run exercised the legacy
 GCL/HMAC intent path and produced test and ledger artifacts. It does not prove
-the target v2 `DecisionPackage` -> agent-promotion -> governance-strata -> ARE
-grant -> `FleetOperation` -> verified-outcome chain, and therefore cannot
-support a current capability promotion.
+the target `deepfield-fleet -> GCL DecisionPackage -> FleetOperation ->
+are-immutable-ledger` chain and therefore cannot support a current capability
+promotion.
 
 ## 4. Seven Capabilities
 

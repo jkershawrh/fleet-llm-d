@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -43,18 +44,29 @@ func TestInMemoryLedgerClient_VerifyProofAcceptsKnown(t *testing.T) {
 		InputHash: "known-hash-123",
 		Content:   []byte(`{"model":"test"}`),
 	}
-	_, err := lc.IssueProofReceipt(context.Background(), decision)
+	receipt, err := lc.IssueProofReceipt(context.Background(), decision)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Verify the proof for the known hash
-	result, err := lc.VerifyProof(context.Background(), "known-hash-123", "fleet.placement.assigned")
+	result, err := lc.VerifyProof(context.Background(), receipt.EntryHash, "fleet.placement.assigned")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Valid {
 		t.Error("VerifyProof should return Valid=true for a hash that was recorded")
+	}
+	if !bytes.Equal(result.Content, decision.Content) {
+		t.Fatalf("VerifyProof content = %q, want committed content %q", result.Content, decision.Content)
+	}
+	result.Content[0] = 'x'
+	again, err := lc.VerifyProof(context.Background(), receipt.EntryHash, "fleet.placement.assigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again.Content, decision.Content) {
+		t.Fatalf("caller mutated stored proof content: %q", again.Content)
 	}
 }
 
@@ -66,13 +78,13 @@ func TestInMemoryLedgerClient_VerifyProofWrongType(t *testing.T) {
 		InputHash: "hash-456",
 		Content:   []byte(`{"model":"test"}`),
 	}
-	_, err := lc.IssueProofReceipt(context.Background(), decision)
+	receipt, err := lc.IssueProofReceipt(context.Background(), decision)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Wrong type should not match
-	result, err := lc.VerifyProof(context.Background(), "hash-456", "fleet.routing.shifted")
+	result, err := lc.VerifyProof(context.Background(), receipt.EntryHash, "fleet.routing.shifted")
 	if err != nil {
 		t.Fatal(err)
 	}

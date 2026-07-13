@@ -62,6 +62,8 @@ func TestOpenAPIV2EvidenceProposerAndLifecycleSchemas(t *testing.T) {
 		"EvidenceDigest",
 		"ProposerAuthority",
 		"FleetIntentRequest",
+		"OperatorCompatibilityIntentRequest",
+		"GCLDecisionPackageCloudEvent",
 		"FleetIntent",
 		"OperationState",
 		"OperationTransition",
@@ -107,6 +109,38 @@ func TestOpenAPIV2EvidenceProposerAndLifecycleSchemas(t *testing.T) {
 	for _, statement := range []string{"`SUCCEEDED` is the only successful terminal", "`EVIDENCE_PENDING` means actuation may have occurred"} {
 		if !strings.Contains(states, statement) {
 			t.Errorf("OperationState honesty contract missing %q", statement)
+		}
+	}
+}
+
+func TestOpenAPIV2ProductionIngressFailsClosed(t *testing.T) {
+	body := readOpenAPIContract(t)
+	v2 := extractYAMLBlock(t, body, "  /api/v2/intents:", 2)
+	for _, fragment := range []string{
+		"application/cloudevents+json:",
+		"#/components/schemas/GCLDecisionPackageCloudEvent",
+		"x-development-only: true",
+		"#/components/schemas/OperatorCompatibilityIntentRequest",
+		`"415":`,
+		`"422":`,
+		`"503":`,
+	} {
+		if !strings.Contains(v2, fragment) {
+			t.Errorf("v2 ingress contract missing %q", fragment)
+		}
+	}
+	operator := extractYAMLBlock(t, body, "    OperatorCompatibilityIntentRequest:", 4)
+	for _, fragment := range []string{
+		"Unsigned, self-asserted operator compatibility input",
+		"enum: [deploy, scale, route, pre_warm, shed_load, migrate, kv_transfer]",
+		"minimum: 1",
+		"minItems: 1",
+		"source_cluster",
+		"target_cluster",
+		"target_pool",
+	} {
+		if !strings.Contains(operator, fragment) {
+			t.Errorf("operator compatibility contract missing %q", fragment)
 		}
 	}
 }

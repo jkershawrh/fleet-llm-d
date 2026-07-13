@@ -1,15 +1,20 @@
 package intents
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 )
 
 var (
@@ -118,18 +123,37 @@ func cloneOperation(in FleetOperation) FleetOperation {
 	out := in
 	out.Transitions = append([]OperationTransition(nil), in.Transitions...)
 	out.LedgerReceipts = append([]OperationLedgerReceipt(nil), in.LedgerReceipts...)
+	if in.AuthorizationRef != nil {
+		authorization := *in.AuthorizationRef
+		out.AuthorizationRef = &authorization
+	}
+	if in.Provider != nil {
+		provider := *in.Provider
+		out.Provider = &provider
+	}
 	return out
+}
+
+// ProofVerifier validates a portable receipt against the standalone immutable
+// ledger. ledger.LedgerClient implements this interface directly.
+type ProofVerifier interface {
+	VerifyProof(context.Context, string, string) (*ledger.ProofVerification, error)
 }
 
 // Service owns asynchronous intent admission and operation lifecycle rules.
 type Service struct {
 	repository Repository
 	policy     PolicyConfig
+	proofs     ProofVerifier
 	now        func() time.Time
 }
 
-func NewService(repository Repository, policy PolicyConfig) *Service {
-	return &Service{repository: repository, policy: policy, now: time.Now}
+func NewService(repository Repository, policy PolicyConfig, proofVerifier ...ProofVerifier) *Service {
+	service := &Service{repository: repository, policy: policy, now: time.Now}
+	if len(proofVerifier) > 0 {
+		service.proofs = proofVerifier[0]
+	}
+	return service
 }
 
 func (s *Service) Submit(ctx context.Context, intent FleetIntent) (SubmissionResponse, error) {
@@ -157,6 +181,7 @@ func (s *Service) Submit(ctx context.Context, intent FleetIntent) (SubmissionRes
 		IntentID:       intent.ID,
 		CorrelationID:  intent.CorrelationID,
 		IdempotencyKey: intent.IdempotencyKey,
+		ActionClass:    actionClass(intent.Type),
 		State:          StateReceived,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -168,6 +193,7 @@ func (s *Service) Submit(ctx context.Context, intent FleetIntent) (SubmissionRes
 			Actor:    "fleet-api",
 		}},
 	}
+	operation.ObjectUID = operation.ID
 
 	reason := ""
 	next := StateAccepted
@@ -215,12 +241,15 @@ func (s *Service) AttachLedgerReceipt(ctx context.Context, id string, receipt Op
 	if err != nil {
 		return FleetOperation{}, err
 	}
-	if strings.TrimSpace(receipt.EntryID) == "" || strings.TrimSpace(receipt.ChainHash) == "" || !validReceiptPurpose(receipt.Purpose) {
-		return FleetOperation{}, fmt.Errorf("ledger receipt requires entry ID, chain hash, and a recognized purpose")
+	if err := s.verifyLedgerReceipt(ctx, operation, receipt); err != nil {
+		return FleetOperation{}, fmt.Errorf("verify immutable-ledger receipt: %w", err)
 	}
 	for _, existing := range operation.LedgerReceipts {
-		if existing.EntryID == receipt.EntryID {
-			return operation, nil
+		if existing.EntryID == receipt.EntryID || existing.EntryHash == receipt.EntryHash {
+			if existing == receipt {
+				return operation, nil
+			}
+			return FleetOperation{}, fmt.Errorf("immutable-ledger receipt conflicts with existing entry %q", existing.EntryID)
 		}
 	}
 	operation.LedgerEntryID = receipt.EntryID
@@ -228,7 +257,7 @@ func (s *Service) AttachLedgerReceipt(ctx context.Context, id string, receipt Op
 	if len(operation.Transitions) > 0 {
 		operation.Transitions[len(operation.Transitions)-1].LedgerEntryID = receipt.EntryID
 	}
-	operation.UpdatedAt = time.Now().UTC()
+	operation.UpdatedAt = s.now().UTC()
 	if err := s.repository.UpdateOperation(ctx, operation); err != nil {
 		return FleetOperation{}, err
 	}
@@ -243,7 +272,7 @@ func (s *Service) Transition(ctx context.Context, id string, next OperationState
 	if !allowedTransition(operation.State, next) {
 		return FleetOperation{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, operation.State, next)
 	}
-	if err := validateTransitionEvidence(operation, next); err != nil {
+	if err := s.validateTransitionEvidence(ctx, operation, next); err != nil {
 		return FleetOperation{}, fmt.Errorf("%w: %s -> %s: %v", ErrInvalidTransition, operation.State, next, err)
 	}
 	operation = appendTransition(operation, next, reason, actor)
@@ -311,40 +340,253 @@ func allowedTransition(from, to OperationState) bool {
 	return allowed[from][to]
 }
 
-func validateTransitionEvidence(operation FleetOperation, next OperationState) error {
+func (s *Service) validateTransitionEvidence(ctx context.Context, operation FleetOperation, next OperationState) error {
 	switch next {
 	case StatePlanned:
 		if !validSHA256(operation.PlanDigest) {
 			return fmt.Errorf("a durable SHA-256 plan digest is required")
 		}
+		if operation.Provider == nil || strings.TrimSpace(operation.Provider.Type) == "" || strings.TrimSpace(operation.Provider.Name) == "" {
+			return fmt.Errorf("a provider reference with type and name is required")
+		}
 	case StateAuthorized:
-		if strings.TrimSpace(operation.AuthorizationRef) == "" {
-			return fmt.Errorf("an ARE authorization reference is required")
+		if err := validateAuthorizationReference(operation, s.now().UTC()); err != nil {
+			return err
 		}
 	case StateActuating:
-		if !hasReceiptPurpose(operation, ReceiptPurposeAuthorization) {
-			return fmt.Errorf("a durable ARE authorization receipt is required")
+		if err := validateAuthorizationReference(operation, s.now().UTC()); err != nil {
+			return err
 		}
 	case StateSucceeded:
-		if !hasReceiptPurpose(operation, ReceiptPurposeOutcome) {
-			return fmt.Errorf("a durable ARE outcome acknowledgement is required")
+		if err := s.verifyReceiptPurpose(ctx, operation, ReceiptPurposeOutcome); err != nil {
+			return fmt.Errorf("a durable verified immutable-ledger outcome receipt is required: %w", err)
 		}
 	}
 	return nil
 }
 
-func hasReceiptPurpose(operation FleetOperation, purpose LedgerReceiptPurpose) bool {
+func (s *Service) verifyReceiptPurpose(ctx context.Context, operation FleetOperation, purpose LedgerReceiptPurpose) error {
+	found := false
+	var lastErr error
 	for _, receipt := range operation.LedgerReceipts {
-		if receipt.Purpose == purpose {
-			return true
+		if receipt.Purpose != purpose {
+			continue
+		}
+		found = true
+		if err := s.verifyLedgerReceipt(ctx, operation, receipt); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 	}
-	return false
+	if !found {
+		return fmt.Errorf("receipt purpose %q is absent", purpose)
+	}
+	return lastErr
+}
+
+func (s *Service) verifyLedgerReceipt(ctx context.Context, operation FleetOperation, receipt OperationLedgerReceipt) error {
+	if strings.TrimSpace(receipt.EntryID) == "" || strings.TrimSpace(receipt.EntryHash) == "" ||
+		strings.TrimSpace(receipt.EntryType) == "" || receipt.ChainPosition < 1 || receipt.WrittenTS < 1 ||
+		!validSHA256(receipt.InputHash) || !validReceiptPurpose(receipt.Purpose) {
+		return fmt.Errorf("receipt requires entry ID/hash/type, a SHA-256 input hash, positive chain position/written timestamp, and a recognized purpose")
+	}
+	if expected := expectedLedgerEntryType(operation.ActionClass, receipt.Purpose); receipt.EntryType != expected {
+		return fmt.Errorf("entry type %q cannot satisfy purpose %q; expected %q", receipt.EntryType, receipt.Purpose, expected)
+	}
+	if s.proofs == nil {
+		return fmt.Errorf("proof verifier is not configured")
+	}
+	verification, err := s.proofs.VerifyProof(ctx, receipt.EntryHash, receipt.EntryType)
+	if err != nil {
+		return err
+	}
+	if verification == nil || !verification.Valid {
+		if verification != nil && strings.TrimSpace(verification.FailureReason) != "" {
+			return fmt.Errorf("ledger rejected proof: %s", verification.FailureReason)
+		}
+		return fmt.Errorf("ledger rejected proof")
+	}
+	if verification.EntryType != receipt.EntryType {
+		return fmt.Errorf("proof entry type does not match receipt")
+	}
+	if verification.EntryID != "" && verification.EntryID != receipt.EntryID {
+		return fmt.Errorf("proof entry ID does not match receipt")
+	}
+	if verification.CorrelationID != operation.CorrelationID {
+		return fmt.Errorf("proof correlation ID %q does not match operation %q", verification.CorrelationID, operation.CorrelationID)
+	}
+	if verification.InputHash != receipt.InputHash {
+		return fmt.Errorf("proof input hash does not match receipt")
+	}
+	if receipt.Purpose == ReceiptPurposeOutcome {
+		if !validSHA256(operation.ObservedDigest) {
+			return fmt.Errorf("operation requires a SHA-256 observed digest before outcome evidence can be attached")
+		}
+		if !strings.EqualFold(receipt.InputHash, operation.ObservedDigest) {
+			return fmt.Errorf("outcome input hash is not bound to the operation observed digest")
+		}
+		if err := verifyOutcomeEvidence(operation, verification.Content); err != nil {
+			return err
+		}
+	}
+	if verification.ChainPosition != receipt.ChainPosition {
+		return fmt.Errorf("proof chain position does not match receipt")
+	}
+	if verification.WrittenAt.IsZero() || verification.WrittenAt.UnixMilli() != receipt.WrittenTS {
+		return fmt.Errorf("proof written timestamp does not match receipt")
+	}
+	return nil
+}
+
+const outcomeEvidenceSchemaV1 = "fleet.llm-d.ai/operation-outcome/v1"
+
+type outcomeEvidenceV1 struct {
+	SchemaVersion  string `json:"schema_version"`
+	OperationID    string `json:"operation_id"`
+	OperationUID   string `json:"operation_uid"`
+	PlanDigest     string `json:"plan_digest"`
+	IdempotencyKey string `json:"idempotency_key"`
+	ObservedDigest string `json:"observed_digest"`
+}
+
+// NewOutcomeEvidence returns the canonical JSON payload that must be written
+// to the immutable ledger for an operation outcome. The proof entry hash
+// commits this envelope, binding otherwise reusable correlation and observed
+// digests to one operation identity and plan.
+func NewOutcomeEvidence(operation FleetOperation) ([]byte, error) {
+	operationID := strings.TrimSpace(operation.ID)
+	if operationID == "" {
+		return nil, fmt.Errorf("operation ID is required for outcome evidence")
+	}
+	operationUID := strings.TrimSpace(operation.ObjectUID)
+	if operationUID == "" {
+		operationUID = operationID
+	}
+	if !validSHA256(operation.PlanDigest) {
+		return nil, fmt.Errorf("a SHA-256 plan digest is required for outcome evidence")
+	}
+	if !validSHA256(operation.ObservedDigest) {
+		return nil, fmt.Errorf("a SHA-256 observed digest is required for outcome evidence")
+	}
+	return json.Marshal(outcomeEvidenceV1{
+		SchemaVersion:  outcomeEvidenceSchemaV1,
+		OperationID:    operationID,
+		OperationUID:   operationUID,
+		PlanDigest:     strings.ToLower(operation.PlanDigest),
+		IdempotencyKey: operation.IdempotencyKey,
+		ObservedDigest: strings.ToLower(operation.ObservedDigest),
+	})
+}
+
+func verifyOutcomeEvidence(operation FleetOperation, content []byte) error {
+	if len(content) == 0 {
+		return fmt.Errorf("outcome proof is missing its committed operation evidence")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	var evidence outcomeEvidenceV1
+	if err := decoder.Decode(&evidence); err != nil {
+		return fmt.Errorf("decode committed outcome evidence: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return fmt.Errorf("decode committed outcome evidence: %w", err)
+	}
+	expectedContent, err := NewOutcomeEvidence(operation)
+	if err != nil {
+		return err
+	}
+	var expected outcomeEvidenceV1
+	if err := json.Unmarshal(expectedContent, &expected); err != nil {
+		return fmt.Errorf("construct expected outcome evidence: %w", err)
+	}
+	if evidence != expected || !bytes.Equal(content, expectedContent) {
+		return fmt.Errorf("outcome proof content is not bound to this operation identity, plan, idempotency key, and observed digest")
+	}
+	return nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
+}
+
+func expectedLedgerEntryType(actionClass string, purpose LedgerReceiptPurpose) string {
+	switch purpose {
+	case ReceiptPurposeAdmission:
+		action := strings.TrimPrefix(actionClass, "fleet.")
+		if action == "prewarm" {
+			action = string(IntentPreWarm)
+		}
+		return "fleet.intent." + action
+	case ReceiptPurposeAuthorizationDecision:
+		return LedgerEntryTypeAuthorizationDecision
+	case ReceiptPurposeOutcome:
+		return LedgerEntryTypeOutcome
+	default:
+		return ""
+	}
+}
+
+func validateAuthorizationReference(operation FleetOperation, now time.Time) error {
+	ref := operation.AuthorizationRef
+	if ref == nil {
+		return fmt.Errorf("a fleet authorization reference is required")
+	}
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "grant ID", value: ref.GrantID},
+		{name: "subject", value: ref.Subject},
+		{name: "action class", value: ref.ActionClass},
+		{name: "object UID", value: ref.ObjectUID},
+		{name: "spec digest", value: ref.SpecDigest},
+		{name: "audience", value: ref.Audience},
+		{name: "idempotency key", value: ref.IdempotencyKey},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("fleet authorization %s is required", field.name)
+		}
+	}
+	if ref.ActionClass != operation.ActionClass {
+		return fmt.Errorf("fleet authorization action class %q does not match operation %q", ref.ActionClass, operation.ActionClass)
+	}
+	objectUID := operation.ObjectUID
+	if strings.TrimSpace(objectUID) == "" {
+		objectUID = operation.ID
+	}
+	if ref.ObjectUID != objectUID {
+		return fmt.Errorf("fleet authorization object UID %q does not match operation %q", ref.ObjectUID, objectUID)
+	}
+	if !validSHA256(operation.PlanDigest) || !strings.EqualFold(ref.SpecDigest, operation.PlanDigest) {
+		return fmt.Errorf("fleet authorization spec digest is not bound to the operation plan")
+	}
+	if ref.Audience != AuthorizationAudienceFleetController {
+		return fmt.Errorf("fleet authorization audience %q does not match %q", ref.Audience, AuthorizationAudienceFleetController)
+	}
+	if ref.IdempotencyKey != operation.IdempotencyKey {
+		return fmt.Errorf("fleet authorization idempotency key does not match the operation")
+	}
+	if ref.ExpiresAt.IsZero() || !ref.ExpiresAt.After(now) {
+		return fmt.Errorf("fleet authorization is expired")
+	}
+	if ref.BreakGlass && strings.TrimSpace(ref.IncidentRef) == "" {
+		return fmt.Errorf("fleet break-glass authorization requires an incident reference")
+	}
+	return nil
 }
 
 func validReceiptPurpose(purpose LedgerReceiptPurpose) bool {
 	switch purpose {
-	case ReceiptPurposeAdmission, ReceiptPurposeAuthorization, ReceiptPurposeOutcome:
+	case ReceiptPurposeAdmission, ReceiptPurposeAuthorizationDecision, ReceiptPurposeOutcome:
 		return true
 	default:
 		return false

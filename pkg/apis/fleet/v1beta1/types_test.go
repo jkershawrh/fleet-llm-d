@@ -94,9 +94,11 @@ func TestValidateAuthorizationReference(t *testing.T) {
 	now := time.Now().UTC()
 	ref := &AuthorizationReference{
 		GrantID:        "grant-1",
+		Subject:        "spiffe://fleet.llm-d.ai/operator/test",
 		ActionClass:    "fleet.deploy",
+		ObjectUID:      "pool-uid-1",
 		SpecDigest:     strings.Repeat("a", 64),
-		Audience:       "fleet-controller",
+		Audience:       FleetAuthorizationAudience,
 		ExpiresAt:      now.Add(time.Hour),
 		IdempotencyKey: "intent-1",
 		BreakGlass:     true,
@@ -157,9 +159,11 @@ func TestFleetOperationValidationIsPhaseAware(t *testing.T) {
 
 	spec.AuthorizationRef = &AuthorizationReference{
 		GrantID:        "grant-1",
+		Subject:        "spiffe://fleet.llm-d.ai/operator/test",
 		ActionClass:    "fleet.scale",
+		ObjectUID:      "operation-uid-1",
 		SpecDigest:     digest,
-		Audience:       "fleet-controller",
+		Audience:       FleetAuthorizationAudience,
 		ExpiresAt:      now.Add(-time.Minute),
 		IdempotencyKey: "operation-1",
 	}
@@ -176,6 +180,86 @@ func TestFleetOperationValidationIsPhaseAware(t *testing.T) {
 	if errs := ValidateFleetOperationForPhase(spec, OperationSucceeded, now); len(errs) != 0 {
 		t.Fatalf("completed operation must not be invalidated by later grant expiry: %v", errs)
 	}
+}
+
+func TestFleetOperationAuthorizationIsBoundToOperation(t *testing.T) {
+	now := time.Now().UTC()
+	digest := strings.Repeat("d", 64)
+	valid := FleetOperation{
+		Metadata: ObjectMeta{UID: "operation-uid-1"},
+		Spec: FleetOperationSpec{
+			IntentRef:      LocalObjectReference{Name: "intent-1"},
+			ActionClass:    "fleet.scale",
+			TargetRef:      NamespacedObjectReference{Name: "pool-1"},
+			PlanDigest:     &digest,
+			Provider:       &ProviderReference{Type: "ModelPlane", Name: "modelplane-primary"},
+			IdempotencyKey: "operation-1",
+			AuthorizationRef: &AuthorizationReference{
+				GrantID:        "grant-1",
+				Subject:        "spiffe://fleet.llm-d.ai/operator/test",
+				ActionClass:    "fleet.scale",
+				ObjectUID:      "operation-uid-1",
+				SpecDigest:     digest,
+				Audience:       FleetAuthorizationAudience,
+				ExpiresAt:      now.Add(time.Minute),
+				IdempotencyKey: "operation-1",
+			},
+		},
+	}
+	if errs := ValidateFleetOperationResourceForPhase(valid, OperationAuthorized, now); len(errs) != 0 {
+		t.Fatalf("valid bound operation authorization rejected: %v", errs)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*FleetOperation)
+		field  string
+	}{
+		{"action", func(operation *FleetOperation) { operation.Spec.AuthorizationRef.ActionClass = "fleet.route" }, "actionClass"},
+		{"plan", func(operation *FleetOperation) { operation.Spec.AuthorizationRef.SpecDigest = strings.Repeat("e", 64) }, "specDigest"},
+		{"idempotency", func(operation *FleetOperation) { operation.Spec.AuthorizationRef.IdempotencyKey = "other-operation" }, "idempotencyKey"},
+		{"audience", func(operation *FleetOperation) { operation.Spec.AuthorizationRef.Audience = "other-service" }, "audience"},
+		{"object UID", func(operation *FleetOperation) { operation.Spec.AuthorizationRef.ObjectUID = "other-uid" }, "objectUid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			operation := valid
+			ref := *valid.Spec.AuthorizationRef
+			operation.Spec.AuthorizationRef = &ref
+			test.mutate(&operation)
+			errs := ValidateFleetOperationResourceForPhase(operation, OperationAuthorized, now)
+			if len(errs) == 0 || !containsValidationField(errs, test.field) {
+				t.Fatalf("expected %s binding error, got %v", test.field, errs)
+			}
+		})
+	}
+}
+
+func TestAuthorizationReferenceRequiresIdentityAndFleetAudience(t *testing.T) {
+	now := time.Now().UTC()
+	ref := &AuthorizationReference{
+		GrantID:        "grant-1",
+		ActionClass:    "fleet.scale",
+		SpecDigest:     strings.Repeat("a", 64),
+		Audience:       "other-service",
+		ExpiresAt:      now.Add(time.Minute),
+		IdempotencyKey: "operation-1",
+	}
+	errs := ValidateAuthorizationReference(ref)
+	for _, field := range []string{"subject", "objectUid", "audience"} {
+		if !containsValidationField(errs, field) {
+			t.Errorf("expected %s validation error, got %v", field, errs)
+		}
+	}
+}
+
+func containsValidationField(errs []error, field string) bool {
+	for _, err := range errs {
+		if strings.Contains(err.Error(), field) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFleetOperationCreationOmitsDeferredFields(t *testing.T) {

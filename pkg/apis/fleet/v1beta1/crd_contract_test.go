@@ -90,6 +90,86 @@ func TestOperationCreationAndIntentParameterSchemas(t *testing.T) {
 	}
 }
 
+func TestAuthorizationReferenceSchemasAreCompleteAndBound(t *testing.T) {
+	crdDir := filepath.Join("..", "..", "..", "..", "api", "crds")
+	crds := []string{
+		"fleetcluster.yaml",
+		"fleetinferencepool.yaml",
+		"fleetintent.yaml",
+		"fleetoperation.yaml",
+		"fleetroutingpolicy.yaml",
+		"fleetscalingpolicy.yaml",
+		"kvcachetransferpolicy.yaml",
+		"modellifecycle.yaml",
+		"placementpolicy.yaml",
+		"tenantprofile.yaml",
+	}
+
+	for _, name := range crds {
+		t.Run(name, func(t *testing.T) {
+			body := readCRD(t, crdDir, name)
+			beta := strings.Index(body, "    - name: v1beta1")
+			if beta < 0 {
+				t.Fatal("missing v1beta1 storage schema")
+			}
+			body = body[beta:]
+			authStart := strings.Index(body, "authorizationRef:")
+			if authStart < 0 {
+				t.Fatal("missing authorizationRef schema")
+			}
+			statusStart := strings.Index(body[authStart:], "\n            status:")
+			if statusStart < 0 {
+				t.Fatal("missing status schema after authorizationRef")
+			}
+			auth := body[authStart : authStart+statusStart]
+			properties := strings.Index(auth, "properties:")
+			if properties < 0 {
+				t.Fatal("authorizationRef schema is missing properties")
+			}
+			required := auth[:properties]
+			for _, field := range []string{"subject", "objectUid"} {
+				if !strings.Contains(required, field) {
+					t.Errorf("authorizationRef required list is missing %s", field)
+				}
+			}
+			for _, fragment := range []string{
+				"subject:",
+				"objectUid:",
+				"self.audience == 'fleet-llm-d'",
+				"size(self.incidentRef) > 0",
+			} {
+				if !strings.Contains(auth, fragment) {
+					t.Errorf("authorizationRef schema is missing %q", fragment)
+				}
+			}
+			for _, fieldPair := range [][2]string{{"subject:", "actionClass:"}, {"objectUid:", "specDigest:"}} {
+				fields := auth[properties:]
+				start := strings.Index(fields, fieldPair[0])
+				if start < 0 {
+					t.Errorf("authorizationRef is missing %s", strings.TrimSuffix(fieldPair[0], ":"))
+					continue
+				}
+				end := strings.Index(fields[start:], fieldPair[1])
+				if end < 0 || !strings.Contains(fields[start:start+end], "minLength: 1") {
+					t.Errorf("authorizationRef.%s must reject empty values", strings.TrimSuffix(fieldPair[0], ":"))
+				}
+			}
+		})
+	}
+
+	operation := readCRD(t, crdDir, "fleetoperation.yaml")
+	for _, binding := range []string{
+		"self.spec.authorizationRef.actionClass == self.spec.actionClass",
+		"self.spec.authorizationRef.specDigest == self.spec.planDigest",
+		"self.spec.authorizationRef.idempotencyKey == self.spec.idempotencyKey",
+		"self.spec.authorizationRef.audience == 'fleet-llm-d'",
+	} {
+		if !strings.Contains(operation, binding) {
+			t.Errorf("FleetOperation schema is missing authorization binding %q", binding)
+		}
+	}
+}
+
 func assertBetaStorageAndStatus(t *testing.T, beta string) {
 	t.Helper()
 	if !strings.Contains(beta, "served: true\n      storage: true") {
