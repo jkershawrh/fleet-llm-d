@@ -1,0 +1,59 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-inference
+  namespace: fleet-llm-d
+  labels:
+    app: mock-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-inference
+  template:
+    metadata:
+      labels:
+        app: mock-inference
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      containers:
+        - name: mock-inference
+          image: quay.io/rh-ee-jkershaw/mock-inference:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: MOCK_LATENCY_MIN_MS
+              value: "200"
+            - name: MOCK_LATENCY_MAX_MS
+              value: "800"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-inference
+  namespace: fleet-llm-d
+  labels:
+    app: mock-inference
+spec:
+  selector:
+    app: mock-inference
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http

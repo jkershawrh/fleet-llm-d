@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ecosystem-soak-standard
+  namespace: fleet-llm-d
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: ecosystem-soak
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: quay-pull-secret
+      containers:
+        - name: soak
+          image: quay.io/rh-ee-jkershaw/ecosystem-soak:latest
+          args:
+            - "--gcl-url=http://gcl-app.governed-cognitive-loop.svc:8000"
+            - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
+            - "--ledger-url=http://ledger-gateway.sovereign-ai-lab.svc:28099"
+            - "--profile=standard"
+            - "--timeout=15"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
