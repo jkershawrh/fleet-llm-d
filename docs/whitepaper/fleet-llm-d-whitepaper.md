@@ -569,6 +569,81 @@ The CPU inference work demonstrates a concrete technical narrative for the Red H
 
 **Together:** The combination enables a differentiated offering for regulated industries -- confidential AI inference on Intel TDX-enabled Xeon processors, orchestrated by fleet-llm-d on OpenShift, with tamper-evident compliance records in the ARE Immutable Ledger. This is a sovereign AI story that neither company can tell alone.
 
+### 5.5 Ecosystem Stress Tests (Oberon, July 2026)
+
+An 8-phase stress test exercised the full 4-system platform (deepfield-fleet, GCL, fleet-llm-d, ARE ledger) on the Oberon cluster. GCL ran as a single pod on OpenShift with sslip.io TLS route termination. Fleet controller ran locally against the same test harness. The test harness (`tests/test_ecosystem_stress.py` in GCL) exercises smoke, performance baseline, pressure, edge cases, degradation, soak, pen testing, and chaos phases.
+
+**Overall result: 42/48 passed (87.5%).**
+
+#### 5.5.1 Pressure Testing
+
+| Concurrency | GCL p50 | GCL p95 | Errors | Wall Clock |
+|---|---|---|---|---|
+| 5 | 815ms | 871ms | 0/5 (0%) | 871ms |
+| 10 | 1,048ms | 1,079ms | 0/10 (0%) | 1,084ms |
+| 20 | 2,430ms | 2,498ms | 0/20 (0%) | 2,513ms |
+| 50 | 4,777ms | 4,841ms | 0/50 (0%) | 4,866ms |
+
+Zero errors at all concurrency levels. Latency scales linearly with concurrency, indicating orderly queuing rather than contention failure. Signal payloads of 100, 500, and 1,000 all completed in ~770ms with no latency variation.
+
+#### 5.5.2 Soak (300 Sequential Cycles)
+
+| Metric | Value |
+|---|---|
+| Total cycles | 300 |
+| Errors | 0/300 |
+| p50 | 566ms |
+| p95 | 900ms |
+| p99 | 1,007ms |
+| Wall clock | 186.7s |
+| Latency drift | 1.2x (across 19 ten-second windows) |
+
+Mixed concurrent soak (60 seconds, 3 GCL workers + 2 fleet workers): 479 total requests, 0 errors, 0.0% error rate across both systems.
+
+#### 5.5.3 Degradation and Security
+
+GCL operates correctly when fleet is unreachable. All 6 governance scenarios (spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, multi-cluster migration) degrade gracefully with no crashes. Rapid state thrashing (10 reset/seed cycles) produced 0 failures. Fleet healthz remained at p50=2ms under concurrent GCL load.
+
+Pen testing: SQL injection, path traversal, malformed input, and unknown scenario injection all handled correctly. No 500 errors. Reset endpoint has no auth (expected for development).
+
+#### 5.5.4 Chaos Boundary
+
+200 simultaneous governance cycles completed with 0 errors (p50=13,099ms, wall=13.3s). Subsequent requests after saturation returned 503 until recovery. This is the expected single-pod concurrency ceiling.
+
+See [GCL ecosystem stress test benchmarks](https://github.com/jkershawrh/governed-cognitive-loop/blob/main/docs/benchmarks/ecosystem-stress-benchmarks.md) for the full 48-test breakdown.
+
+#### 5.5.5 Production-Emulation Soak (On-Cluster, 2 Hours)
+
+A 2-hour production-emulation soak ran on-cluster on Oberon (pod-to-pod, no external network). The soak driver ran as a Kubernetes Job inside the `fleet-llm-d` namespace, exercising the full decision pipeline: GCL governance cycles across all 6 scenarios, with 7 degradation injections (burst 50 concurrent, invalid intents, GCL state resets, expired events).
+
+**Result: 2,240 governance cycles. Zero errors. All 5 SLO gates passed.**
+
+| Metric | Value |
+|---|---|
+| Total events | 2,240 |
+| Success rate | 100.0% |
+| E2E latency p50 | 147ms |
+| E2E latency p95 | 504ms |
+| E2E latency p99 | 561ms |
+| Chain integrity verifications | 23/23 passed |
+| Health availability | GCL 100%, Fleet 100% |
+| Max injection recovery | 5.6s |
+
+All 7 degradation injections passed: burst-50 concurrent events (0 errors), invalid intents (correctly rejected with 401), and full GCL state resets (recovered in ~1 second). Latency remained flat at 135-155ms across the full 2 hours with no drift.
+
+#### 5.5.6 Control Plane Scale Microbenchmarks
+
+Go microbenchmarks measured the hot-path functions at cluster counts from 10 to 1,000 (Apple M2, `-benchmem`):
+
+| Clusters | List() | Solver | Balancer | Reconcile |
+|---|---|---|---|---|
+| 10 | 345 ns | 1,023 ns | 34 ns | 1,361 ns |
+| 100 | 2,744 ns | 7,137 ns | 353 ns | 5,970 ns |
+| 500 | 16,493 ns | 41,333 ns | 1,049 ns | 66,291 ns |
+| 1,000 | 35,114 ns | 81,703 ns | 1,720 ns | 84,186 ns |
+
+All scale linearly. The balancer (per-request routing decision) runs at 1.7 microseconds even at 1,000 clusters with zero allocations. No knee point found.
+
 ## 6. Production Gates
 
 ### 6.1 Stage Model

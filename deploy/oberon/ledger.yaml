@@ -1,0 +1,164 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sovereign-ai-lab
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ledger-db-pvc
+  namespace: sovereign-ai-lab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-db
+  namespace: sovereign-ai-lab
+  labels:
+    app: ledger-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger-db
+  template:
+    metadata:
+      labels:
+        app: ledger-db
+    spec:
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          env:
+            - name: POSTGRESQL_USER
+              value: ledger
+            - name: POSTGRESQL_PASSWORD
+              value: ledger
+            - name: POSTGRESQL_DATABASE
+              value: are_ledger
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ledger-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-db
+  namespace: sovereign-ai-lab
+spec:
+  selector:
+    app: ledger-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-gateway
+  namespace: sovereign-ai-lab
+  labels:
+    app: ledger-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger-gateway
+  template:
+    metadata:
+      labels:
+        app: ledger-gateway
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      containers:
+        - name: gateway
+          image: quay.io/rh-ee-jkershaw/are-ledger-gateway:latest
+          env:
+            - name: LEDGER_GRPC_ENDPOINT
+              value: "ledger-core.sovereign-ai-lab.svc:19292"
+            - name: GATEWAY_PORT
+              value: "28099"
+          ports:
+            - containerPort: 28099
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 28099
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+        - name: ledger-core
+          image: quay.io/rh-ee-jkershaw/are-immutable-ledger:latest
+          env:
+            - name: DATABASE_URL
+              value: "postgres://ledger:ledger@ledger-db.sovereign-ai-lab.svc:5432/are_ledger"
+            - name: GRPC_PORT
+              value: "19292"
+            - name: HEALTH_PORT
+              value: "18080"
+          ports:
+            - containerPort: 19292
+              name: grpc
+            - containerPort: 18080
+              name: health
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-gateway
+  namespace: sovereign-ai-lab
+spec:
+  selector:
+    app: ledger-gateway
+  ports:
+    - port: 28099
+      targetPort: 28099
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-core
+  namespace: sovereign-ai-lab
+spec:
+  selector:
+    app: ledger-gateway
+  ports:
+    - port: 19292
+      targetPort: 19292
+      name: grpc

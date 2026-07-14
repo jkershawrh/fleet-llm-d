@@ -311,6 +311,23 @@ required hub-plus-two-spoke release-candidate gate.
 
 See [`test/harness/`](test/harness/) for the harness source and [`test/benchmarks/reports/benchmark-results.md`](test/benchmarks/reports/benchmark-results.md) for full results.
 
+### Ecosystem Stress Tests (Oberon, July 2026)
+
+An 8-phase ecosystem stress test exercised the full 4-system platform (deepfield-fleet, GCL, fleet-llm-d, ARE ledger) on the Oberon cluster. **42/48 passed (87.5%).** Key results:
+
+| Phase | Result | Highlights |
+|---|---|---|
+| Pressure | 7/7 | 0 errors at 50 concurrent governance cycles, signal payloads up to 1,000 |
+| Degradation | 10/10 | Fleet health p50=2ms under GCL load, all scenarios degrade gracefully |
+| Soak | 6/6 | 300 cycles, 0 errors, 1.2x drift; mixed concurrent (60s): 479 requests, 0% error rate |
+| Pen Testing | 5/5 | SQL injection, path traversal, malformed input all handled |
+
+See [`docs/whitepaper/fleet-llm-d-whitepaper.md`](docs/whitepaper/fleet-llm-d-whitepaper.md) section 5.5 for the full breakdown.
+
+### Production-Emulation Soak (On-Cluster, 2 Hours)
+
+A 2-hour soak ran on-cluster on Oberon (pod-to-pod). 2,240 governance cycles, zero errors, all 5 SLO gates passed. E2E latency p50=147ms, p95=504ms. 7 degradation injections passed (burst, state resets, invalid intents). Chain integrity 23/23 verified. See whitepaper section 5.5.5.
+
 ### Production Gate Model
 
 | Stage | Gate | Criteria | Status |

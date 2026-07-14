@@ -1,0 +1,109 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-llm-d
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-controller
+  namespace: fleet-llm-d
+  labels:
+    app: fleet-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fleet-controller
+  template:
+    metadata:
+      labels:
+        app: fleet-controller
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      containers:
+        - name: fleet-controller
+          image: quay.io/rh-ee-jkershaw/fleet-controller:latest
+          args:
+            - "--port=8080"
+            - "--metrics-port=9091"
+            - "--ledger-mode=http"
+            - "--ledger-endpoint=http://ledger-gateway.sovereign-ai-lab.svc:28099"
+            - "--modelplane-api=http://modelplane-mock.fleet-llm-d.svc:8090"
+            - "--rate-limit=0"
+            - "--log-level=info"
+            - "--backends=[{\"model\":\"granite-3.3-2b\",\"url\":\"http://mock-inference.fleet-llm-d.svc:8080\",\"runtime\":\"vllm\"},{\"model\":\"granite-sovereign\",\"url\":\"http://mock-inference.fleet-llm-d.svc:8080\",\"runtime\":\"openvino\",\"path_prefix\":\"/v3\"}]"
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9091
+              name: metrics
+          env:
+            - name: FLEET_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-identity
+                  key: hmac-secret
+                  optional: true
+            - name: GCL_DECISION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-identity
+                  key: gcl-signing-key
+                  optional: true
+            - name: FLEET_ALLOW_OPERATOR_JSON_INTENTS
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-controller
+  namespace: fleet-llm-d
+  labels:
+    app: fleet-controller
+spec:
+  selector:
+    app: fleet-controller
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+    - port: 9091
+      targetPort: 9091
+      name: metrics
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: fleet-controller
+  namespace: fleet-llm-d
+spec:
+  to:
+    kind: Service
+    name: fleet-controller
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
