@@ -1,0 +1,55 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modelplane-mock
+  namespace: fleet-llm-d
+  labels:
+    app: modelplane-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: modelplane-mock
+  template:
+    metadata:
+      labels:
+        app: modelplane-mock
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      containers:
+        - name: modelplane-mock
+          image: quay.io/rh-ee-jkershaw/modelplane-mock:latest
+          args: ["--port=8090"]
+          ports:
+            - containerPort: 8090
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /apis/modelplane.ai/v1alpha1/inferenceclusters
+              port: 8090
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: modelplane-mock
+  namespace: fleet-llm-d
+  labels:
+    app: modelplane-mock
+spec:
+  selector:
+    app: modelplane-mock
+  ports:
+    - port: 8090
+      targetPort: 8090
+      name: http
