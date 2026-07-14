@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-all
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-all
 
 # ──────────────────────────────────────────────
 # Build
@@ -180,5 +180,15 @@ harness-latency: harness-build
 harness-throughput: harness-build
 	./bin/fleet-harness --suite=throughput $(HARNESS_FLAGS)
 
+harness-scale: harness-build
+	./bin/fleet-harness --suite=scale $(HARNESS_FLAGS)
+
 harness-all: harness-build
 	./bin/fleet-harness --suite=all $(HARNESS_FLAGS)
+
+bench-scale:
+	@echo "Running fleet scale microbenchmarks..."
+	go test -bench=BenchmarkInMemoryList -benchmem -benchtime=3s ./pkg/store/postgres/...
+	go test -bench=BenchmarkSolve -benchmem -benchtime=3s ./pkg/placement/solver/...
+	go test -bench=BenchmarkWeightedBalancer -benchmem -benchtime=3s ./pkg/routing/balancer/...
+	go test -bench=BenchmarkReconcilePool -benchmem -benchtime=3s ./pkg/controller/...
