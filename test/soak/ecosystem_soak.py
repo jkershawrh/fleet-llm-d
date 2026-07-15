@@ -71,12 +71,14 @@ class SoakResult:
 
 class EcosystemSoak:
     def __init__(self, gcl_url: str, fleet_url: str, ledger_url: str = "",
-                 timeout: float = 30.0):
+                 deepfield_token: str = "", timeout: float = 30.0):
         self.gcl = gcl_url.rstrip("/")
         self.fleet = fleet_url.rstrip("/")
         self.ledger = ledger_url.rstrip("/") if ledger_url else ""
+        self.deepfield_token = deepfield_token
         self.timeout = timeout
         self._stop = False
+        self._event_counter = 0
 
     async def _get(self, url: str) -> httpx.Response:
         async with httpx.AsyncClient(verify=False, timeout=self.timeout) as c:
@@ -102,6 +104,46 @@ class EcosystemSoak:
 
     # ── A. Decision Pipeline ──
 
+    def _build_deepfield_cloudevent(self, signal: dict) -> dict:
+        self._event_counter += 1
+        eid = f"soak-obs-{self._event_counter}"
+        now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+        expires = time.strftime(
+            "%Y-%m-%dT%H:%M:%S+00:00",
+            time.gmtime(time.time() + 300))
+        sha = f"{self._event_counter:064x}"
+        return {
+            "specversion": "1.0",
+            "type": "io.srex.deepfield.observation.v1",
+            "source": "urn:srex:deepfield-fleet",
+            "id": eid,
+            "subject": "fleet/edge-east/granite-fleet",
+            "time": now,
+            "datacontenttype": "application/json",
+            "dataschema": "urn:srex:deepfield:schema:observation:v1",
+            "correlationid": f"corr-{eid}",
+            "causationid": f"cause-{eid}",
+            "idempotencykey": f"idem-{eid}",
+            "tenant": "default",
+            "zone": "us-east",
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "expiresat": expires,
+            "data": {
+                "observation_id": eid,
+                "observed_at": now,
+                "resource": {
+                    "cluster": "edge-east",
+                    "kind": "InferencePool",
+                    "name": "granite-fleet",
+                },
+                "signal_type": signal.get("metric", "latency_ms"),
+                "severity": "high" if signal.get("value", 0) > 3000 else "medium",
+                "value": signal.get("value", 0),
+                "unit": signal.get("metric", "unknown"),
+                "evidence": [{"uri": f"urn:srex:deepfield:obs:{eid}", "sha256": sha}],
+            },
+        }
+
     async def run_governance_cycle(self, scenario: str, step: int
                                    ) -> tuple[bool, float, str]:
         e2e_start = time.monotonic()
@@ -112,11 +154,21 @@ class EcosystemSoak:
             data = resp.json()
             signals = data.get("signals", data.get("step", {}).get("signals", []))
 
-            resp, gcl_ms = await self._timed_post(
-                f"{self.gcl}/api/v1/cycle", {"signals": signals})
+            if self.deepfield_token and signals:
+                event = self._build_deepfield_cloudevent(signals[0])
+                headers = {
+                    "Content-Type": "application/cloudevents+json",
+                    "Authorization": f"Bearer {self.deepfield_token}",
+                }
+                resp, gcl_ms = await self._timed_post(
+                    f"{self.gcl}/api/v1/events/deepfield",
+                    json.dumps(event), headers)
+            else:
+                resp, gcl_ms = await self._timed_post(
+                    f"{self.gcl}/api/v1/cycle", {"signals": signals})
+
             d = resp.json()
             action = d.get("action_type", "none")
-            committed = d.get("committed", False)
 
             e2e_ms = (time.monotonic() - e2e_start) * 1000
             return True, e2e_ms, action
@@ -504,6 +556,8 @@ async def main():
     parser.add_argument("--gcl-url", default="https://gcl-app.192.168.1.123.sslip.io")
     parser.add_argument("--fleet-url", default="http://localhost:18080")
     parser.add_argument("--ledger-url", default="")
+    parser.add_argument("--deepfield-token", default="",
+                        help="Bearer token for deepfield CloudEvent submission (enables production path)")
     parser.add_argument("--profile", default="quick",
                         choices=["quick", "standard", "overnight"],
                         help="Soak duration profile")
@@ -511,7 +565,7 @@ async def main():
     args = parser.parse_args()
 
     soak = EcosystemSoak(args.gcl_url, args.fleet_url, args.ledger_url,
-                         args.timeout)
+                         args.deepfield_token, args.timeout)
     await soak.run(args.profile)
 
 
