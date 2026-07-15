@@ -68,7 +68,7 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 
 ### Custom Resource Definitions
 
-fleet-llm-d defines seven CRDs that drive all fleet behavior declaratively:
+fleet-llm-d defines ten CRDs that drive all fleet behavior declaratively:
 
 | CRD | Purpose |
 |-----|---------|
@@ -363,7 +363,7 @@ See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubri
 ```
 fleet-llm-d/
 ├── api/
-│   └── crds/                    # 7 CRD definitions
+│   └── crds/                    # 10 CRD definitions
 ├── cmd/
 │   ├── fleet-controller/        # Go control plane binary
 │   ├── fleetctl/                # CLI tool
@@ -424,7 +424,7 @@ The fleet controller exposes 27 REST endpoints. See [`api/openapi/fleet-api.yaml
 | Component | Purpose |
 |-----------|---------|
 | PostgreSQL | Primary state store for fleet configuration and placement data. |
-| Kafka (AMQ Streams) | Event bus for cross-cluster coordination and audit event streaming. |
+| HTTP Event Sink | Optional CloudEvents-compatible endpoint for fleet event streaming (can target Kafka REST proxy). |
 | Redis | Caching layer for routing decisions and metrics aggregation. |
 | Prometheus + Grafana | Monitoring and dashboarding for fleet-wide observability. |
 | ARE Ledger (separate network) | Independent compliance ledger with own PostgreSQL on `are-ledger-net`. |

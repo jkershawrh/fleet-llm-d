@@ -50,7 +50,7 @@ DeepField owns observations, findings, and forecasts. GCL owns signed and falsif
 
 ## Dependencies
 
-- Go 1.23+
+- Go 1.26+
 - Rust 1.79+
 - Node.js 20+
 - Python 3.12+
@@ -59,7 +59,7 @@ DeepField owns observations, findings, and forecasts. GCL owns signed and falsif
 
 ## Conventions
 
-- Go: standard library style, table-driven tests, controller-runtime for Kubernetes operators
+- Go: standard library style, table-driven tests, raw HTTPS against Kubernetes API (no controller-runtime, single dependency: lib/pq)
 - Rust: tokio async runtime, tonic for gRPC, axum for HTTP
 - Proto files define the contract between control plane and data plane
 - CRD schemas in `api/crds/` are the source of truth for Kubernetes types
