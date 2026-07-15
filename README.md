@@ -324,9 +324,19 @@ An 8-phase ecosystem stress test exercised the full 4-system platform (deepfield
 
 See [`docs/whitepaper/fleet-llm-d-whitepaper.md`](docs/whitepaper/fleet-llm-d-whitepaper.md) section 5.5 for the full breakdown.
 
-### Production-Emulation Soak (On-Cluster, 2 Hours)
+### Production-Emulation Soak (On-Cluster, 8 Hours)
 
-A 2-hour soak ran on-cluster on Oberon (pod-to-pod). 2,240 governance cycles, zero errors, all 5 SLO gates passed. E2E latency p50=147ms, p95=504ms. 7 degradation injections passed (burst, state resets, invalid intents). Chain integrity 23/23 verified. See whitepaper section 5.5.5.
+An 8-hour soak ran on-cluster on Oberon (pod-to-pod, production deepfield CloudEvent pipeline). 5,534 governance cycles, zero errors, all 5 SLO gates passed. E2E latency p50=154ms, p95=485ms. 15 degradation injections passed. Chain integrity 95/95 verified.
+
+### Resilience (On-Cluster)
+
+6 resilience tests passed: fleet controller pod kill (9ms recovery), GCL pod kill (8ms), simultaneous kill (12ms/10ms), rapid restart 5x (avg 7ms), post-disruption soak (0% error rate).
+
+### Observability and Security
+
+- Prometheus text format metrics at `:9091/metrics` (8 metrics: counters, gauges, memory, goroutines)
+- NetworkPolicies: default-deny with per-component allowlists deployed on Oberon
+- Ecosystem test matrix: `test/matrix/ecosystem-matrix.yaml` (CDD/TDD/BDD/EDD/CBT/Soak rubric)
 
 ### Production Gate Model
 

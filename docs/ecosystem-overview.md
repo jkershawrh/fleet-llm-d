@@ -202,23 +202,31 @@ An 8-phase stress test exercised all 4 systems on the Oberon cluster. GCL ran as
 
 See [ecosystem stress test benchmarks](docs/benchmarks/ecosystem-stress-benchmarks.md) for the full breakdown.
 
-### Production-Emulation Soak (On-Cluster, 2 Hours)
+### Production-Emulation Soak (On-Cluster, 8 Hours)
 
-A 2-hour production-emulation soak ran on-cluster on Oberon (pod-to-pod, no external network). The soak driver ran as a Kubernetes Job inside the `fleet-llm-d` namespace, exercising the full decision pipeline across all 6 governance scenarios with 7 degradation injections.
+An 8-hour production-emulation soak ran on-cluster on Oberon (pod-to-pod, production deepfield CloudEvent pipeline with bearer token authentication). The soak driver ran as a Kubernetes Job, exercising the full decision pipeline across all 6 governance scenarios with 15 degradation injections.
 
 | Metric | Value |
 |---|---|
-| Duration | 120 minutes |
-| Total governance cycles | 2,240 |
+| Duration | 480 minutes (8 hours) |
+| Total governance cycles | 5,534 |
 | Success rate | **100.0%** |
-| E2E latency p50 | **147ms** |
-| E2E latency p95 | 504ms |
-| Chain integrity | **23/23 verifications passed** |
-| Degradation injections | **7/7 passed** (burst, invalid intents, state resets, expired events) |
+| E2E latency p50 | **154ms** |
+| E2E latency p95 | 485ms |
+| Chain integrity | **95/95 verifications passed** |
+| Degradation injections | **15/15 passed** (burst, invalid intents, state resets, expired events) |
 | Health availability | GCL 100%, Fleet 100% |
-| Max injection recovery | 5.6s |
+| Max injection recovery | 1.1s |
 
-All 5 SLO gates passed. Governance cycle latency held flat at 135-155ms across the full 2 hours with no drift. The full pipeline (observe -> govern -> act -> prove) operates at production-grade reliability under sustained load with active fault injection.
+All 5 SLO gates passed. Governance cycle latency held flat at 149-160ms across the full 8 hours with no drift.
+
+### Resilience (On-Cluster, 6/6 passed)
+
+Pod kill recovery, simultaneous kill, rapid restart cycling (5x), and post-disruption soak. Fleet controller recovers in 9ms, GCL in 8ms. Post-disruption soak: 28 events, 0 errors.
+
+### Observability and Security
+
+Fleet controller serves Prometheus text format metrics at `:9091/metrics`. NetworkPolicies with default-deny and per-component allowlists deployed on Oberon. Ecosystem test matrix at `test/matrix/ecosystem-matrix.yaml`.
 
 ---
 

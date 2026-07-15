@@ -723,9 +723,51 @@
 </tr>
 </tbody>
 </table>
-<h3 id="63-security-audit-status">6.3 Security Audit Status</h3>
-<p>A 104-item security checklist exists at <code>docs/security-audit-checklist.md</code>. Current status: <strong>Not Started</strong>. Container hardening is complete. Supply chain CI controls are active and blocking. No third-party security audit has been conducted.</p>
-<h3 id="64-soak-test-status">6.4 Soak Test Status</h3>
+<h3 id="63-observability-status">6.3 Observability Status</h3>
+<p>The fleet controller now serves Prometheus text exposition format at <code>/metrics</code> on port 9091, exposing 8 metrics: request/error counters, cluster/pool/tenant/rollout gauges, process memory (alloc/sys/heap_inuse), and goroutine count. The existing Grafana dashboards (fleet-overview, fleet-operations) and 24 Prometheus recording rules can now scrape real data from the controller.</p>
+<p>The expvar JSON endpoint is preserved at <code>/debug/vars</code> for backward compatibility with the soak test driver.</p>
+<h3 id="64-security-status">6.4 Security Status</h3>
+<p><strong>NetworkPolicies.</strong> Default-deny NetworkPolicies with per-component allowlists are deployed on Oberon. The fleet-controller accepts traffic only from the GCL namespace, OpenShift ingress, and authorized test pods. Mock-inference and modelplane-mock accept traffic only from the fleet-controller. All unauthorized cross-pod traffic is blocked.</p>
+<p><strong>Security audit.</strong> A 104-item security checklist exists at <code>docs/security-audit-checklist.md</code>. Current status: <strong>Not Started</strong>. Container hardening is complete (readOnlyRootFilesystem, drop ALL capabilities, non-root UID 65534). Supply chain CI controls are active and blocking (cosign, Trivy, govulncheck, cargo audit). No third-party security audit has been conducted.</p>
+<h3 id="65-resilience-status">6.5 Resilience Status</h3>
+<p>6 resilience tests passed on Oberon (SNO):</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fleet controller pod kill</td>
+<td>9ms recovery</td>
+</tr>
+<tr>
+<td>GCL pod kill</td>
+<td>8ms recovery</td>
+</tr>
+<tr>
+<td>Mock inference pod kill</td>
+<td>Fleet stays healthy</td>
+</tr>
+<tr>
+<td>Simultaneous fleet + GCL kill</td>
+<td>12ms / 10ms recovery</td>
+</tr>
+<tr>
+<td>Rapid restart 5x fleet kill</td>
+<td>avg 7ms, max 12ms</td>
+</tr>
+<tr>
+<td>Post-disruption 60s soak</td>
+<td>28 events, 0 errors</td>
+</tr>
+</tbody>
+</table>
+<h3 id="66-multi-cluster-simulation-status">6.6 Multi-Cluster Simulation Status</h3>
+<p>28 simulated cluster agents were deployed on Oberon as a StatefulSet, each registering with the fleet controller with unique cluster IDs, regions (7 regions), GPU types (5 types), and load patterns (5 patterns). All 28 registered successfully. The simulated agents prove the controller can track and manage N clusters with live health data; they do not prove real spoke cluster monitoring (see Section 8.2).</p>
+<h3 id="67-soak-test-status">6.7 Soak Test Status</h3>
 <table>
 <thead>
 <tr>
