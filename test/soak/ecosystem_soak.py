@@ -26,8 +26,9 @@ from typing import Optional
 import httpx
 
 PROFILES = {
-    "quick":    {"duration": 1800,  "event_interval": 5, "inject_interval": 600,  "inject_count": 2},
-    "standard": {"duration": 7200,  "event_interval": 3, "inject_interval": 900,  "inject_count": 8},
+    "quick":    {"duration": 1800,   "event_interval": 5, "inject_interval": 600,  "inject_count": 2},
+    "standard": {"duration": 7200,   "event_interval": 3, "inject_interval": 900,  "inject_count": 8},
+    "72hr":     {"duration": 259200, "event_interval": 5, "inject_interval": 3600, "inject_count": 72},
     "overnight":{"duration": 28800, "event_interval": 5, "inject_interval": 1800, "inject_count": 16},
 }
 
@@ -559,7 +560,7 @@ async def main():
     parser.add_argument("--deepfield-token", default="",
                         help="Bearer token for deepfield CloudEvent submission (enables production path)")
     parser.add_argument("--profile", default="quick",
-                        choices=["quick", "standard", "overnight"],
+                        choices=["quick", "standard", "overnight", "72hr"],
                         help="Soak duration profile")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
