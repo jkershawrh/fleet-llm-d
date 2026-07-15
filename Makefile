@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-all
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-all
 
 # ──────────────────────────────────────────────
 # Build
@@ -185,6 +185,15 @@ harness-scale: harness-build
 
 harness-all: harness-build
 	./bin/fleet-harness --suite=all $(HARNESS_FLAGS)
+
+e2e-kind:
+	@echo "Setting up 3-cluster Kind environment..."
+	bash test/e2e/kind/setup.sh
+	@echo "Running verification..."
+	bash test/e2e/kind/verify.sh
+
+e2e-kind-teardown:
+	bash test/e2e/kind/teardown.sh
 
 bench-scale:
 	@echo "Running fleet scale microbenchmarks..."
