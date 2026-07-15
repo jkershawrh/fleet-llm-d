@@ -77,6 +77,21 @@ func (s *defaultConstraintSolver) Solve(ctx context.Context, pool v1alpha1.Fleet
 		return nil, fmt.Errorf("no feasible placement: no clusters satisfy all constraints")
 	}
 
+	// Filter clusters with zero GPU capacity when GPU type is requested.
+	if requestedGPUType != "" {
+		var withCapacity []ClusterInfo
+		for _, c := range eligible {
+			if c.GPUCapacity.Available > 0 {
+				withCapacity = append(withCapacity, c)
+			}
+		}
+		eligible = withCapacity
+	}
+
+	if len(eligible) == 0 {
+		return nil, fmt.Errorf("no feasible placement: no clusters have available capacity")
+	}
+
 	// Build placement decisions with affinity-based scores.
 	decisions := make([]PlacementDecision, 0, len(eligible))
 	for _, cluster := range eligible {
@@ -85,12 +100,27 @@ func (s *defaultConstraintSolver) Solve(ctx context.Context, pool v1alpha1.Fleet
 		if gpuType == "" && len(cluster.GPUCapacity.Types) > 0 {
 			gpuType = cluster.GPUCapacity.Types[0]
 		}
+
+		replicas := 1
+		var reasons []string
+		if requestedGPUType != "" {
+			reasons = append(reasons, fmt.Sprintf("gpu-type=%s available=%d", gpuType, cluster.GPUCapacity.Available))
+			if pool.Placement.MinClusters > 0 {
+				replicas = max(1, cluster.GPUCapacity.Available/max(pool.Placement.MinClusters, 1))
+			}
+		} else {
+			reasons = append(reasons, "passed constraints")
+		}
+		if score > 0 {
+			reasons = append(reasons, fmt.Sprintf("affinity-score=%.2f", score))
+		}
+
 		decisions = append(decisions, PlacementDecision{
 			ClusterID: cluster.ID,
 			Score:     score,
 			GPUType:   gpuType,
-			Replicas:  1,
-			Reasons:   []string{"passed constraints"},
+			Replicas:  replicas,
+			Reasons:   reasons,
 		})
 	}
 

@@ -429,3 +429,79 @@ func TestSolve_NoFeasiblePlacement(t *testing.T) {
 		})
 	}
 }
+
+func TestSolve_GPUCapacity(t *testing.T) {
+	s := NewConstraintSolver()
+	ctx := context.Background()
+
+	hwPolicy := v1alpha1.PlacementPolicySpec{
+		Constraints: []v1alpha1.PlacementConstraint{
+			{Type: "hardware", Rule: "gpu-type=H100"},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		clusters []ClusterInfo
+		wantN   int
+		wantErr bool
+	}{
+		{
+			name: "zero available GPUs excluded",
+			clusters: []ClusterInfo{
+				{ID: "c1", GPUCapacity: GPUCapacity{Available: 0, Total: 8, Types: []string{"H100"}}},
+				{ID: "c2", GPUCapacity: GPUCapacity{Available: 4, Total: 8, Types: []string{"H100"}}},
+			},
+			wantN: 1,
+		},
+		{
+			name: "all zero capacity returns error",
+			clusters: []ClusterInfo{
+				{ID: "c1", GPUCapacity: GPUCapacity{Available: 0, Total: 8, Types: []string{"H100"}}},
+				{ID: "c2", GPUCapacity: GPUCapacity{Available: 0, Total: 4, Types: []string{"H100"}}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "exact fit passes",
+			clusters: []ClusterInfo{
+				{ID: "c1", GPUCapacity: GPUCapacity{Available: 1, Total: 8, Types: []string{"H100"}}},
+			},
+			wantN: 1,
+		},
+		{
+			name: "multiple clusters with varying capacity",
+			clusters: []ClusterInfo{
+				{ID: "c1", GPUCapacity: GPUCapacity{Available: 8, Total: 8, Types: []string{"H100"}}},
+				{ID: "c2", GPUCapacity: GPUCapacity{Available: 0, Total: 4, Types: []string{"H100"}}},
+				{ID: "c3", GPUCapacity: GPUCapacity{Available: 2, Total: 4, Types: []string{"H100"}}},
+			},
+			wantN: 2,
+		},
+	}
+
+	pool := poolSpec("test-model", "test-source")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decisions, err := s.Solve(ctx, pool, tt.clusters, hwPolicy)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error for zero-capacity clusters, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(decisions) != tt.wantN {
+				t.Errorf("expected %d decisions, got %d", tt.wantN, len(decisions))
+			}
+			for _, d := range decisions {
+				if d.Replicas < 1 {
+					t.Errorf("decision for %s has Replicas=%d, want >= 1", d.ClusterID, d.Replicas)
+				}
+			}
+		})
+	}
+}
