@@ -37,6 +37,16 @@ tags:
     description: Durable actuation, observation, verification, and evidence lifecycle
   - name: compliance
     description: Ledger decision-chain verification
+  - name: cost
+    description: GPU pricing, tokenomics, chargeback, and budget alerts
+  - name: modelplane
+    description: ModelPlane cluster and deployment integration
+  - name: auth
+    description: Token refresh
+  - name: webhook
+    description: Kubernetes admission webhook endpoints
+  - name: inference
+    description: OpenAI-compatible inference proxy
 
 security:
   - bearerAuth: []
@@ -150,6 +160,25 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/pools/{name}/state:
+    get:
+      operationId: getPoolState
+      summary: Get reconciled state for a single pool
+      tags: [pools]
+      parameters:
+        - $ref: "#/components/parameters/PoolName"
+      responses:
+        "200":
+          description: Reconciled pool state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolState"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # ---------- tenants ----------
   /api/v1/tenants:
     get:
@@ -219,6 +248,21 @@ paths:
                 $ref: "#/components/schemas/ModelMetrics"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/metrics/platform:
+    get:
+      operationId: getPlatformMetrics
+      summary: Get unified platform metrics across all systems
+      tags: [metrics]
+      responses:
+        "200":
+          description: Platform-wide metrics including inference, governance, fleet, and ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformMetrics"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -301,6 +345,162 @@ paths:
           $ref: "#/components/responses/NotFound"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- cost ----------
+  /api/v1/cost/pricing:
+    get:
+      operationId: getCostPricing
+      summary: Get the full GPU pricing table
+      tags: [cost]
+      responses:
+        "200":
+          description: Array of GPU pricing entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GPUPricing"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/cost/tokenomics/{model}:
+    get:
+      operationId: getCostTokenomics
+      summary: Compute token costs for a model across all GPU types
+      tags: [cost]
+      parameters:
+        - $ref: "#/components/parameters/ModelName"
+        - name: throughput
+          in: query
+          description: Tokens per second throughput (defaults to 1000)
+          schema:
+            type: number
+            format: double
+      responses:
+        "200":
+          description: Array of token cost entries per GPU type and tier
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TokenCost"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/cost/chargeback/{tenant}:
+    get:
+      operationId: getCostChargeback
+      summary: Generate a chargeback report for a tenant
+      tags: [cost]
+      parameters:
+        - $ref: "#/components/parameters/TenantPathName"
+        - name: budget
+          in: query
+          description: Monthly budget override (defaults to 10000)
+          schema:
+            type: number
+            format: double
+      responses:
+        "200":
+          description: Tenant chargeback report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChargebackReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/cost/projection:
+    get:
+      operationId: getCostProjection
+      summary: Project monthly cost based on current usage rates
+      tags: [cost]
+      parameters:
+        - name: tokens_per_day
+          in: query
+          description: Estimated daily token consumption (defaults to 10000000)
+          schema:
+            type: integer
+            format: int64
+        - name: gpu_type
+          in: query
+          description: GPU type (defaults to H200)
+          schema:
+            type: string
+        - name: tier
+          in: query
+          description: Pricing tier (defaults to on-demand)
+          schema:
+            type: string
+        - name: model
+          in: query
+          description: Model name (defaults to default)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Monthly cost projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostProjection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/cost/savings:
+    get:
+      operationId: getCostSavings
+      summary: Compare current versus optimized placement cost
+      tags: [cost]
+      parameters:
+        - name: current
+          in: query
+          description: Current monthly cost (defaults to 5000)
+          schema:
+            type: number
+            format: double
+        - name: optimized
+          in: query
+          description: Optimized monthly cost (defaults to 3000)
+          schema:
+            type: number
+            format: double
+      responses:
+        "200":
+          description: Savings projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavingsProjection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/cost/alerts:
+    get:
+      operationId: getCostAlerts
+      summary: Check all tenant budgets and return active alerts
+      tags: [cost]
+      responses:
+        "200":
+          description: Array of active budget alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BudgetAlert"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -529,6 +729,238 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  # ---------- auth ----------
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Refresh an authentication token
+      tags: [auth]
+      responses:
+        "200":
+          description: New token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenRefreshResponse"
+        "401":
+          description: Valid token required for refresh
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- modelplane ----------
+  /api/v1/modelplane/clusters:
+    get:
+      operationId: listModelPlaneClusters
+      summary: List ModelPlane inference clusters
+      tags: [modelplane]
+      responses:
+        "200":
+          description: Array of ModelPlane cluster objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelPlaneCluster"
+        "503":
+          description: ModelPlane integration not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/modelplane/deployments:
+    get:
+      operationId: listModelPlaneDeployments
+      summary: List ModelPlane model deployments
+      tags: [modelplane]
+      responses:
+        "200":
+          description: Array of ModelPlane deployment objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelPlaneDeployment"
+        "503":
+          description: ModelPlane integration not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/modelplane/cost/{deployment}:
+    get:
+      operationId: getModelPlaneDeploymentCost
+      summary: Get the hourly cost of a ModelPlane deployment
+      tags: [modelplane]
+      parameters:
+        - $ref: "#/components/parameters/DeploymentName"
+      responses:
+        "200":
+          description: Deployment cost breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentCost"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: ModelPlane integration not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- webhook ----------
+  /api/v1/webhook/fleetinferencepool:
+    post:
+      operationId: watchFleetInferencePool
+      summary: Receive FleetInferencePool CRD watch events
+      tags: [webhook]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchEvent"
+      responses:
+        "200":
+          description: Watch event processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/webhook/validate:
+    post:
+      operationId: validateAdmission
+      summary: Kubernetes admission validation webhook
+      tags: [webhook]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdmissionReview"
+      responses:
+        "200":
+          description: Admission review response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionReview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- inference ----------
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: OpenAI-compatible chat completion proxy
+      description: |
+        Proxies chat completion requests to the appropriate inference backend
+        based on the requested model. Supports semantic routing when model is
+        set to "auto".
+      tags: [inference]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Chat completion response from the inference backend
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: No backend registered for the requested model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Max in-flight requests exceeded for this model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Backend request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/completions:
+    post:
+      operationId: createCompletion
+      summary: OpenAI-compatible text completion proxy
+      description: |
+        Proxies text completion requests to the appropriate inference backend
+        based on the requested model.
+      tags: [inference]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletionRequest"
+      responses:
+        "200":
+          description: Completion response from the inference backend
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: No backend registered for the requested model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Max in-flight requests exceeded for this model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Backend request failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   # ---------- security schemes ----------
   securitySchemes:
@@ -585,6 +1017,33 @@ components:
         type: string
         minLength: 1
       example: intent-4f07a5033cc3d64f74fc9809
+
+    PoolName:
+      name: name
+      in: path
+      required: true
+      description: Pool name
+      schema:
+        type: string
+      example: granite-3b-pool
+
+    TenantPathName:
+      name: tenant
+      in: path
+      required: true
+      description: Tenant identifier
+      schema:
+        type: string
+      example: tenant-acme
+
+    DeploymentName:
+      name: deployment
+      in: path
+      required: true
+      description: ModelPlane deployment name
+      schema:
+        type: string
+      example: granite-3b-deploy
 
     OperationID:
       name: id
@@ -1522,3 +1981,526 @@ components:
         entries_checked: 142
         chain_type: placement
         verified_at: "2026-07-06T12:00:00Z"
+
+    PoolState:
+      type: object
+      properties:
+        name:
+          type: string
+        model:
+          type: string
+        source:
+          type: string
+        desired_clusters:
+          type: array
+          items:
+            type: string
+        actual_clusters:
+          type: array
+          items:
+            type: string
+        phase:
+          type: string
+          description: Current reconciliation phase (e.g. Ready, Pending, Degraded)
+        last_reconciled:
+          type: string
+          format: date-time
+      example:
+        name: granite-3b-pool
+        model: granite-3b
+        source: registry.example.com/models/granite-3b:v2
+        desired_clusters: ["cluster-us-east-1a"]
+        actual_clusters: ["cluster-us-east-1a"]
+        phase: Ready
+        last_reconciled: "2026-07-06T12:00:00Z"
+
+    PlatformMetrics:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        inference:
+          type: object
+          properties:
+            models:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  replicas:
+                    type: integer
+                  latency_p50_ms:
+                    type: number
+                    format: double
+                  latency_p95_ms:
+                    type: number
+                    format: double
+                  throughput_rps:
+                    type: number
+                    format: double
+                  status:
+                    type: string
+            total_requests:
+              type: integer
+              format: int64
+            error_rate:
+              type: number
+              format: double
+        classification:
+          type: object
+          properties:
+            total_classifications:
+              type: integer
+            agents:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  avg_confidence:
+                    type: number
+                    format: double
+            top_classes:
+              type: array
+              items:
+                type: string
+        governance:
+          type: object
+          properties:
+            total_cycles:
+              type: integer
+            committed:
+              type: integer
+            rejected:
+              type: integer
+            rejection_reasons:
+              type: object
+              additionalProperties:
+                type: integer
+            action_distribution:
+              type: object
+              additionalProperties:
+                type: integer
+        fleet:
+          type: object
+          properties:
+            clusters:
+              type: integer
+            pools:
+              type: integer
+            tenants:
+              type: integer
+            routing:
+              type: object
+              properties:
+                semantic_tiers:
+                  type: object
+                  additionalProperties:
+                    type: number
+                    format: double
+        ledger:
+          type: object
+          properties:
+            total_entries:
+              type: integer
+            gcl_entries:
+              type: integer
+            chains_valid:
+              type: boolean
+            sources:
+              type: object
+              additionalProperties:
+                type: integer
+
+    GPUPricing:
+      type: object
+      properties:
+        gpu_type:
+          type: string
+        cost_per_hour:
+          type: number
+          format: double
+        memory_gb:
+          type: integer
+        pricing_tier:
+          type: string
+      example:
+        gpu_type: H100
+        cost_per_hour: 3.50
+        memory_gb: 80
+        pricing_tier: on-demand
+
+    TokenCost:
+      type: object
+      properties:
+        model:
+          type: string
+        gpu_type:
+          type: string
+        pricing_tier:
+          type: string
+        cost_per_m_token:
+          type: number
+          format: double
+          description: Cost per million tokens
+        throughput_tps:
+          type: number
+          format: double
+          description: Throughput in tokens per second
+        cost_per_hour:
+          type: number
+          format: double
+      example:
+        model: granite-3b
+        gpu_type: H100
+        pricing_tier: on-demand
+        cost_per_m_token: 0.15
+        throughput_tps: 1000.0
+        cost_per_hour: 3.50
+
+    ChargebackReport:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+        period:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+        tokens_consumed:
+          type: integer
+          format: int64
+        gpu_hours_used:
+          type: number
+          format: double
+        total_cost:
+          type: number
+          format: double
+        cost_breakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              model:
+                type: string
+              cluster:
+                type: string
+              gpu_type:
+                type: string
+              tokens:
+                type: integer
+                format: int64
+              gpu_hours:
+                type: number
+                format: double
+              cost:
+                type: number
+                format: double
+        budget_total:
+          type: number
+          format: double
+        budget_used:
+          type: number
+          format: double
+      example:
+        tenant_id: tenant-acme
+        period:
+          start: "2026-07-01T00:00:00Z"
+          end: "2026-07-06T12:00:00Z"
+        tokens_consumed: 1250000
+        gpu_hours_used: 48.5
+        total_cost: 169.75
+        cost_breakdown:
+          - model: granite-3b
+            cluster: cluster-us-east-1a
+            gpu_type: H100
+            tokens: 1250000
+            gpu_hours: 48.5
+            cost: 169.75
+        budget_total: 10000.0
+        budget_used: 169.75
+
+    CostProjection:
+      type: object
+      properties:
+        model:
+          type: string
+        gpu_type:
+          type: string
+        tier:
+          type: string
+        tokens_per_day:
+          type: integer
+          format: int64
+        monthly_cost:
+          type: number
+          format: double
+        token_cost:
+          $ref: "#/components/schemas/TokenCost"
+      example:
+        model: granite-3b
+        gpu_type: H200
+        tier: on-demand
+        tokens_per_day: 10000000
+        monthly_cost: 4500.0
+
+    SavingsProjection:
+      type: object
+      properties:
+        current_monthly:
+          type: number
+          format: double
+        optimized_monthly:
+          type: number
+          format: double
+        monthly_savings:
+          type: number
+          format: double
+        savings_percent:
+          type: number
+          format: double
+        annualized:
+          type: number
+          format: double
+      example:
+        current_monthly: 5000.0
+        optimized_monthly: 3000.0
+        monthly_savings: 2000.0
+        savings_percent: 40.0
+        annualized: 24000.0
+
+    BudgetAlert:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+        alert_level:
+          type: string
+          description: Alert severity (warning, critical)
+        threshold:
+          type: number
+          format: double
+        current_cost:
+          type: number
+          format: double
+        budget:
+          type: number
+          format: double
+        percent:
+          type: number
+          format: double
+        message:
+          type: string
+      example:
+        tenant_id: tenant-acme
+        alert_level: warning
+        threshold: 0.8
+        current_cost: 8500.0
+        budget: 10000.0
+        percent: 0.85
+        message: "Tenant tenant-acme has used 85% of monthly budget"
+
+    TokenRefreshResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: New JWT token with extended expiry
+
+    ModelPlaneCluster:
+      type: object
+      properties:
+        name:
+          type: string
+        region:
+          type: string
+        provider:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          type: object
+          properties:
+            phase:
+              type: string
+            nodes:
+              type: integer
+        pools:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              gpuType:
+                type: string
+              count:
+                type: integer
+              available:
+                type: integer
+      example:
+        name: mp-cluster-us-east
+        region: us-east-1
+        provider: aws
+        status:
+          phase: Ready
+          nodes: 4
+        pools:
+          - name: h100-pool
+            gpuType: H100
+            count: 8
+            available: 6
+
+    ModelPlaneDeployment:
+      type: object
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        model:
+          type: string
+        engine:
+          type: string
+        replicas:
+          type: integer
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          type: object
+          properties:
+            phase:
+              type: string
+            readyReplicas:
+              type: integer
+            clusters:
+              type: array
+              items:
+                type: string
+      example:
+        name: granite-3b-deploy
+        namespace: default
+        model: granite-3b
+        engine: vllm
+        replicas: 3
+        status:
+          phase: Running
+          readyReplicas: 3
+          clusters: ["cluster-us-east-1a"]
+
+    DeploymentCost:
+      type: object
+      properties:
+        deployment:
+          type: string
+        model:
+          type: string
+        replicas:
+          type: integer
+        hourly_cost:
+          type: number
+          format: double
+      example:
+        deployment: granite-3b-deploy
+        model: granite-3b
+        replicas: 3
+        hourly_cost: 10.50
+
+    WatchEvent:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Watch event type (ADDED, MODIFIED, DELETED)
+        object:
+          type: object
+          additionalProperties: true
+          description: FleetInferencePool CRD spec
+
+    AdmissionReview:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        request:
+          type: object
+          additionalProperties: true
+          description: Kubernetes admission request
+        response:
+          type: object
+          properties:
+            uid:
+              type: string
+            allowed:
+              type: boolean
+            status:
+              type: object
+              properties:
+                message:
+                  type: string
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: Model name or "auto" for semantic routing
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role:
+                type: string
+                enum: [system, user, assistant]
+              content:
+                type: string
+        stream:
+          type: boolean
+          default: false
+      example:
+        model: granite-3.3-2b
+        messages:
+          - role: user
+            content: "What is Kubernetes?"
+
+    CompletionRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+          description: Model name or "auto" for semantic routing
+        prompt:
+          type: string
+        stream:
+          type: boolean
+          default: false
+      example:
+        model: granite-3.3-2b
+        prompt: "Explain GPU inference optimization"
+
+    InferenceResponse:
+      type: object
+      description: OpenAI-compatible response proxied from the inference backend
+      additionalProperties: true
