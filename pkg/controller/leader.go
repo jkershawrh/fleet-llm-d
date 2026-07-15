@@ -269,9 +269,3 @@ func (le *LeaderElector) isExpired(lease *k8sLease) bool {
 	return time.Since(renewTime) > time.Duration(lease.Spec.LeaseDurationSeconds)*time.Second
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

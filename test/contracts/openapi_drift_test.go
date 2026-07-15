@@ -18,7 +18,7 @@ import (
 func TestOpenAPIDrift(t *testing.T) {
 	root := findProjectRoot()
 
-	codeRoutes := extractCodeRoutes(t, filepath.Join(root, "cmd", "fleet-controller", "main.go"))
+	codeRoutes := extractCodeRoutes(t, filepath.Join(root, "pkg", "server", "routes.go"))
 	specPaths := extractSpecPaths(t, filepath.Join(root, "api", "openapi", "fleet-api.yaml"))
 
 	// Routes that are intentionally not in the OpenAPI spec.
