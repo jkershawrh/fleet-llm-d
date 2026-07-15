@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 
 /// Configuration for the fleet-gateway, parsed from CLI arguments.
@@ -74,14 +75,21 @@ impl GatewayState {
     fn new(health_checker: health::HealthChecker) -> Self {
         Self {
             health_checker,
-            http: reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
+            http: build_gateway_client(Duration::from_secs(5), Duration::from_secs(120))
                 .unwrap_or_default(),
             next_cluster: Arc::new(AtomicUsize::new(0)),
         }
     }
+}
+
+fn build_gateway_client(
+    connect_timeout: Duration,
+    idle_read_timeout: Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(idle_read_timeout)
+        .build()
 }
 
 #[tokio::main]
@@ -317,6 +325,7 @@ async fn serve(port: u16, app: Router) -> anyhow::Result<()> {
 mod integration_tests {
     use super::*;
     use axum::routing::{any, get};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn ready_gateway_forwards_to_a_probed_cluster() {
@@ -361,5 +370,44 @@ mod integration_tests {
         let body = to_bytes(response.into_body(), 1024).await.unwrap();
         assert_eq!(&body[..], b"spoke-1");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn gateway_client_uses_idle_timeout_for_streaming_responses() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            for chunk in [b"a", b"b", b"c", b"d"] {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                stream.write_all(b"1\r\n").await.unwrap();
+                stream.write_all(chunk).await.unwrap();
+                stream.write_all(b"\r\n").await.unwrap();
+                stream.flush().await.unwrap();
+            }
+            stream.write_all(b"0\r\n\r\n").await.unwrap();
+        });
+
+        let client =
+            build_gateway_client(Duration::from_secs(1), Duration::from_millis(500)).unwrap();
+        let body = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+
+        assert_eq!(&body[..], b"abcd");
+        server.await.unwrap();
     }
 }

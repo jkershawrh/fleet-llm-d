@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::State;
@@ -82,10 +83,7 @@ impl LocalProxy {
             listen_port,
             // Default upstream; will be configurable.
             upstream_url: "http://localhost:8000".to_string(),
-            http: reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
+            http: build_proxy_client(Duration::from_secs(5), Duration::from_secs(120))
                 .unwrap_or_default(),
         }
     }
@@ -141,6 +139,16 @@ impl LocalProxy {
             source_cluster: source_cluster.map(|s| s.to_string()),
         }
     }
+}
+
+fn build_proxy_client(
+    connect_timeout: Duration,
+    idle_read_timeout: Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(idle_read_timeout)
+        .build()
 }
 
 async fn proxy_ready(State(proxy): State<LocalProxy>) -> impl IntoResponse {
@@ -243,6 +251,7 @@ mod tests {
     use super::*;
     use axum::routing::{any, get};
     use axum::Router;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn proxy_stores_port() {
@@ -315,5 +324,44 @@ mod tests {
             StatusCode::OK
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn proxy_client_uses_idle_timeout_for_streaming_responses() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            for chunk in [b"a", b"b", b"c", b"d"] {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                stream.write_all(b"1\r\n").await.unwrap();
+                stream.write_all(chunk).await.unwrap();
+                stream.write_all(b"\r\n").await.unwrap();
+                stream.flush().await.unwrap();
+            }
+            stream.write_all(b"0\r\n\r\n").await.unwrap();
+        });
+
+        let client =
+            build_proxy_client(Duration::from_secs(1), Duration::from_millis(500)).unwrap();
+        let body = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+
+        assert_eq!(&body[..], b"abcd");
+        server.await.unwrap();
     }
 }
