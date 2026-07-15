@@ -14,6 +14,7 @@ type PoolMetrics struct {
 	Model                 string
 	Replicas              int
 	QueueDepth            int
+	TTFT_P50_Ms           float64
 	TTFT_P99_Ms           float64
 	Throughput_TPS        float64
 	GPUUtilization        float64
@@ -31,6 +32,7 @@ type ClusterMetrics struct {
 
 // MetricsCollector defines the interface for gathering autoscaling metrics.
 type MetricsCollector interface {
+	Add(metrics ClusterMetrics)
 	CollectAll(ctx context.Context) ([]ClusterMetrics, error)
 	CollectCluster(ctx context.Context, clusterID string) (*ClusterMetrics, error)
 }

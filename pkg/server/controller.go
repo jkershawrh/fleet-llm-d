@@ -55,6 +55,9 @@ type FleetController struct {
 	// CRDWatcher polls the K8s API for CRD changes (optional, only when kube-api is configured)
 	CRDWatcher *controller.CRDWatcher
 
+	// LeaderElector coordinates active/passive control-plane ownership in Kubernetes.
+	LeaderElector *controller.LeaderElector
+
 	// Ledger integration
 	FleetRecorder      *ledger.FleetRecorder
 	LedgerGatewayURL   string

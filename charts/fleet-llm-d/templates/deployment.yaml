@@ -75,8 +75,11 @@ spec:
             {{- range .Values.controller.extraArgs }}
             - {{ . | quote }}
             {{- end }}
-          {{- if or .Values.auth.enabled .Values.externalDependencies.gcl.enabled .Values.externalDependencies.postgres.enabled (and (eq .Values.externalDependencies.ledger.mode "http") (or .Values.externalDependencies.ledger.existingSecret (ne .Values.profile "standalone-dev"))) .Values.externalDependencies.semanticClassifier.endpoint .Values.externalDependencies.platformMetrics.gclURL .Values.externalDependencies.platformMetrics.deepfieldURL .Values.externalDependencies.platformMetrics.ledgerGatewayURL .Values.controller.extraEnv }}
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             {{- if .Values.auth.enabled }}
             - name: FLEET_AUTH_SECRET
               valueFrom:
@@ -130,7 +133,6 @@ spec:
             {{- with .Values.controller.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- end }}
           ports:
             - name: api
               containerPort: {{ .Values.controller.ports.api }}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
+
+var errLeaseNotFound = errors.New("leader lease not found")
 
 const (
 	leaseNamespace     = "fleet-llm-d"
@@ -89,9 +92,18 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 
 		lease, err := le.getLease(ctx)
 		if err != nil {
+			if !errors.Is(err, errLeaseNotFound) {
+				log.Printf("leader election: failed to read lease: %v", err)
+				if !waitForLeaderRetry(ctx) {
+					return ctx.Err()
+				}
+				continue
+			}
 			if err := le.createLease(ctx); err != nil {
 				log.Printf("leader election: failed to create lease: %v", err)
-				time.Sleep(leaseRetryInterval)
+				if !waitForLeaderRetry(ctx) {
+					return ctx.Err()
+				}
 				continue
 			}
 			le.isLeader.Store(true)
@@ -109,7 +121,9 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 		if le.isExpired(lease) {
 			if err := le.acquireLease(ctx, lease); err != nil {
 				log.Printf("leader election: failed to acquire expired lease: %v", err)
-				time.Sleep(leaseRetryInterval)
+				if !waitForLeaderRetry(ctx) {
+					return ctx.Err()
+				}
 				continue
 			}
 			le.isLeader.Store(true)
@@ -119,7 +133,9 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 		}
 
 		le.isLeader.Store(false)
-		time.Sleep(leaseRetryInterval)
+		if !waitForLeaderRetry(ctx) {
+			return ctx.Err()
+		}
 	}
 }
 
@@ -142,10 +158,10 @@ func (le *LeaderElector) renewLoop(ctx context.Context) {
 }
 
 type k8sLease struct {
-	APIVersion string            `json:"apiVersion"`
-	Kind       string            `json:"kind"`
-	Metadata   k8sLeaseMetadata  `json:"metadata"`
-	Spec       k8sLeaseSpec      `json:"spec"`
+	APIVersion string           `json:"apiVersion"`
+	Kind       string           `json:"kind"`
+	Metadata   k8sLeaseMetadata `json:"metadata"`
+	Spec       k8sLeaseSpec     `json:"spec"`
 }
 
 type k8sLeaseMetadata struct {
@@ -181,7 +197,7 @@ func (le *LeaderElector) getLease(ctx context.Context) (*k8sLease, error) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("lease not found")
+		return nil, errLeaseNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get lease: %d %s", resp.StatusCode, string(body[:min(len(body), 200)]))
@@ -192,6 +208,17 @@ func (le *LeaderElector) getLease(ctx context.Context) (*k8sLease, error) {
 		return nil, fmt.Errorf("unmarshal lease: %w", err)
 	}
 	return &lease, nil
+}
+
+func waitForLeaderRetry(ctx context.Context) bool {
+	timer := time.NewTimer(leaseRetryInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (le *LeaderElector) createLease(ctx context.Context) error {
@@ -268,4 +295,3 @@ func (le *LeaderElector) isExpired(lease *k8sLease) bool {
 	}
 	return time.Since(renewTime) > time.Duration(lease.Spec.LeaseDurationSeconds)*time.Second
 }
-

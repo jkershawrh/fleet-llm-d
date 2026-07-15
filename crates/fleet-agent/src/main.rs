@@ -65,6 +65,14 @@ pub struct FleetAgentConfig {
     )]
     pub local_prometheus_url: String,
 
+    /// Optional bearer token for authenticated control-plane ingestion.
+    #[arg(long, env = "FLEET_CONTROL_PLANE_TOKEN")]
+    pub control_plane_token: Option<String>,
+
+    /// Gateway-reachable health endpoint advertised to the control plane.
+    #[arg(long, default_value = "", env = "FLEET_CLUSTER_HEALTH_URL")]
+    pub cluster_health_url: String,
+
     /// Port for the local inference proxy.
     #[arg(long, default_value = "8090", env = "FLEET_PROXY_PORT")]
     pub proxy_port: u16,
@@ -103,7 +111,9 @@ async fn main() -> anyhow::Result<()> {
         cluster_id.clone(),
         config.local_prometheus_url.clone(),
     )
-    .with_interval(15);
+    .with_interval(15)
+    .with_token(config.control_plane_token.clone())
+    .with_health_url(config.cluster_health_url.clone());
     let enforcer = enforcer::PolicyEnforcerImpl::new(cluster_id.clone());
     let _ = enforcer.cluster_id();
     enforcer

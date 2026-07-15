@@ -36,9 +36,10 @@ The supported profiles are:
 | `values-spoke.yaml` | agent only | Managed cluster connected to an external hub control plane |
 | `values-federated-hub.yaml` | one controller peer, scalable gateway | One peer per installation; federation does not imply controller HA |
 
-No profile scales the controller above one replica because leader election is
-not implemented. Multi-replica gateway capacity or a disruption budget must not
-be described as control-plane HA.
+The controller uses Kubernetes Lease election whenever `--kube-api` is set.
+Profiles remain conservative at one replica because HA also requires shared
+PostgreSQL and external event/ledger backends. Operators may scale the
+controller after configuring those shared dependencies.
 
 Profiles do not inject a shared placeholder cluster ID. You can set
 `clusterIdentity.clusterId` directly instead of creating the ConfigMap. A spoke

@@ -82,3 +82,23 @@ func TestLeaderElector_IsLeaderDefault(t *testing.T) {
 		t.Error("expected IsLeader() to be false by default")
 	}
 }
+
+func TestLeaderElector_DoesNotCreateLeaseOnAuthorizationFailure(t *testing.T) {
+	var creates atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			creates.Add(1)
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	le := NewLeaderElector(srv.URL, "test", "test-instance")
+	le.token = "test-token"
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_ = le.Run(ctx)
+	if creates.Load() != 0 {
+		t.Fatalf("expected no create attempt after GET 403, got %d", creates.Load())
+	}
+}

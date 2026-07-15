@@ -53,6 +53,10 @@ func (c *repositoryClusterClient) ListClusters(ctx context.Context) ([]solver.Cl
 			Name:   rec.Name,
 			Region: rec.Region,
 			Labels: rec.Labels,
+			GPUCapacity: solver.GPUCapacity{
+				Available: rec.GPUAvailable,
+				Total:     rec.GPUTotal,
+			},
 		})
 	}
 	return clusters, nil

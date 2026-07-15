@@ -142,7 +142,7 @@ Subscribers register interest in specific event types and receive synchronous ca
 
 fleet-llm-d supports three deployment modes, each implemented as a Kustomize overlay in `deploy/kustomize/overlays/`.
 
-**Hub Mode** (`overlays/hub/`) -- The fleet controller runs on a dedicated hub cluster in an RHACM-style topology. The current packaging intentionally runs one controller because leader election is not implemented; multi-replica control-plane HA is future work and must not be inferred from gateway scaling or disruption budgets. The hub manages registered spoke clusters, while production-grade state, eventing, and observability dependencies remain externally managed.
+**Hub Mode** (`overlays/hub/`) -- The fleet controller runs on a dedicated hub cluster in an RHACM-style topology. Kubernetes Lease election provides active/passive controller ownership; the packaged profile remains at one replica until shared state, eventing, ledger, and observability dependencies are configured. The hub manages registered spoke clusters while those production-grade dependencies remain externally managed.
 
 **Standalone Mode** (`overlays/standalone/`) -- The fleet controller and PostgreSQL run on a single node as a self-contained deployment. This mode is designed for sovereign cloud zones that operate behind air-gap boundaries, single-region deployments, and development/testing environments. The overlay includes an embedded PostgreSQL manifest so no external infrastructure is required. Each sovereign zone in the OSAC pattern runs its own standalone fleet-llm-d instance.
 

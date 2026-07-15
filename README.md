@@ -219,7 +219,7 @@ Ready-to-apply CRD examples for specific deployment patterns:
 
 | Mode | Description | Details |
 |------|-------------|---------|
-| **Hub** | RHACM-style hub managing spoke clusters; one active controller is enforced until leader election exists. | See [`deploy/kustomize/overlays/hub/`](deploy/kustomize/overlays/hub/) |
+| **Hub** | RHACM-style hub managing spoke clusters; Kubernetes Lease election keeps one controller active while standby replicas remain live. | See [`deploy/kustomize/overlays/hub/`](deploy/kustomize/overlays/hub/) |
 | **Standalone** | Single-node development/CI deployment with convenience dependencies; not a production default. | See [`deploy/kustomize/overlays/standalone/`](deploy/kustomize/overlays/standalone/) |
 | **Federated** | Peer-to-peer mesh where multiple fleet-controllers coordinate as equals. | See [`deploy/kustomize/overlays/federated/`](deploy/kustomize/overlays/federated/) |
 
