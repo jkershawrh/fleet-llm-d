@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fleet-agent-sim
+  namespace: fleet-llm-d
+  labels:
+    app: fleet-agent-sim
+spec:
+  serviceName: fleet-agent-sim
+  replicas: 10
+  selector:
+    matchLabels:
+      app: fleet-agent-sim
+  template:
+    metadata:
+      labels:
+        app: fleet-agent-sim
+    spec:
+      imagePullSecrets:
+        - name: quay-pull-secret
+      containers:
+        - name: agent-sim
+          image: quay.io/rh-ee-jkershaw/fleet-agent-sim:latest
+          args:
+            - "--control-url=http://fleet-controller.fleet-llm-d.svc:8080"
+            - "--port=8090"
+          env:
+            - name: FLEET_AUTH_SECRET
+              value: "oberon-fleet-secret-2026"
+          ports:
+            - containerPort: 8090
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8090
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-agent-sim
+  namespace: fleet-llm-d
+spec:
+  clusterIP: None
+  selector:
+    app: fleet-agent-sim
+  ports:
+    - port: 8090
+      targetPort: 8090
+      name: http
