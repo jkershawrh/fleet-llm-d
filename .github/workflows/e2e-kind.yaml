@@ -1,0 +1,87 @@
+name: Kind E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/e2e-kind.yaml"
+      - "api/crds/**"
+      - "cmd/**"
+      - "crates/**"
+      - "pkg/**"
+      - "deploy/docker/**"
+      - "test/e2e/kind/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/e2e-kind.yaml"
+      - "api/crds/**"
+      - "cmd/**"
+      - "crates/**"
+      - "pkg/**"
+      - "deploy/docker/**"
+      - "test/e2e/kind/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "go.mod"
+      - "go.sum"
+
+concurrency:
+  group: kind-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  data-plane:
+    name: Three-cluster data plane
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Kind and kubectl
+        uses: helm/kind-action@v1.14.0
+        with:
+          install_only: true
+          version: v0.31.0
+          kubectl_version: v1.31.0
+
+      - name: Create fleet and deploy components
+        run: bash test/e2e/kind/setup.sh
+
+      - name: Verify discovery, placement, readiness, and inference
+        run: bash test/e2e/kind/verify.sh
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p kind-diagnostics
+          for context in kind-fleet-hub kind-fleet-spoke-1 kind-fleet-spoke-2; do
+            kubectl --context "${context}" get all --all-namespaces -o wide \
+              >"kind-diagnostics/${context}-resources.txt" 2>&1 || true
+            kubectl --context "${context}" describe pods --all-namespaces \
+              >"kind-diagnostics/${context}-pods.txt" 2>&1 || true
+            kubectl --context "${context}" logs --all-containers --prefix \
+              --namespace fleet-llm-d --selector app \
+              >"kind-diagnostics/${context}-logs.txt" 2>&1 || true
+          done
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-e2e-diagnostics
+          path: kind-diagnostics/
+          retention-days: 14
+
+      - name: Tear down Kind clusters
+        if: always()
+        run: bash test/e2e/kind/teardown.sh

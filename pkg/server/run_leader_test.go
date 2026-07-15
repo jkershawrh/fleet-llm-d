@@ -33,7 +33,7 @@ func TestRunLeaderScopedWorkersWaitsForShutdownBeforeRestart(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runLeaderScopedWorkers(ctx, leader.Load, 5*time.Millisecond, []func(context.Context){worker})
+		runLeaderScopedWorkers(ctx, leader.Load, 5*time.Millisecond, time.Second, []func(context.Context){worker})
 	}()
 
 	leader.Store(true)
@@ -46,6 +46,68 @@ func TestRunLeaderScopedWorkersWaitsForShutdownBeforeRestart(t *testing.T) {
 	if maximum := maxActive.Load(); maximum != 1 {
 		t.Fatalf("leader workers overlapped: max active = %d", maximum)
 	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("leader worker coordinator did not stop")
+	}
+}
+
+func TestRunLeaderScopedWorkersBlocksRestartAfterStopTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var leader atomic.Bool
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	var starts atomic.Int32
+	firstCanceled := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	worker := func(workerCtx context.Context) {
+		generation := starts.Add(1)
+		current := active.Add(1)
+		for {
+			maximum := maxActive.Load()
+			if current <= maximum || maxActive.CompareAndSwap(maximum, current) {
+				break
+			}
+		}
+		<-workerCtx.Done()
+		if generation == 1 {
+			close(firstCanceled)
+			<-releaseFirst
+		}
+		active.Add(-1)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runLeaderScopedWorkers(ctx, leader.Load, 5*time.Millisecond, 20*time.Millisecond, []func(context.Context){worker})
+	}()
+
+	leader.Store(true)
+	waitForAtomicValue(t, &starts, 1)
+	leader.Store(false)
+	select {
+	case <-firstCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("first worker did not receive cancellation")
+	}
+	time.Sleep(50 * time.Millisecond)
+	leader.Store(true)
+	time.Sleep(50 * time.Millisecond)
+	if got := starts.Load(); got != 1 {
+		t.Fatalf("started generation %d before the first generation stopped", got)
+	}
+
+	close(releaseFirst)
+	waitForAtomicValue(t, &starts, 2)
+	if maximum := maxActive.Load(); maximum != 1 {
+		t.Fatalf("leader workers overlapped: max active = %d", maximum)
+	}
+
 	cancel()
 	select {
 	case <-done:

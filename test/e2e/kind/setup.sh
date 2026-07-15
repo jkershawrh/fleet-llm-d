@@ -127,6 +127,7 @@ spec:
       labels:
         app: fleet-gateway
     spec:
+      enableServiceLinks: false
       containers:
         - name: gateway
           image: fleet-gateway:e2e
@@ -241,6 +242,7 @@ spec:
       labels:
         app: fleet-agent
     spec:
+      enableServiceLinks: false
       containers:
         - name: agent
           image: fleet-agent:e2e

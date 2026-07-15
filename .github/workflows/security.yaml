@@ -80,6 +80,8 @@ jobs:
             dockerfile: deploy/docker/Dockerfile.agent
           - name: fleet-gateway
             dockerfile: deploy/docker/Dockerfile.gateway
+          - name: inference-mock
+            dockerfile: deploy/docker/Dockerfile.inference-mock
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -145,7 +147,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Check dependency graph availability
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          response="$(gh api --silent "repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" 2>&1)"
+          result=$?
+          set -e
+          if [ "${result}" -eq 0 ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif echo "${response}" | grep -q "HTTP 404"; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Dependency Review is unavailable. Enable Dependency graph in the repository security settings to enforce this check."
+          else
+            echo "::error::Unable to determine Dependency graph availability: ${response}"
+            exit "${result}"
+          fi
+
       - name: Dependency Review
+        if: steps.dependency-graph.outputs.available == 'true'
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high

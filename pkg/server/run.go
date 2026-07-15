@@ -187,7 +187,7 @@ func (fc *FleetController) runControlPlaneWatchers(ctx context.Context) {
 		return
 	}
 
-	go runLeaderScopedWorkers(ctx, fc.LeaderElector.IsLeader, 250*time.Millisecond, workers)
+	go runLeaderScopedWorkers(ctx, fc.LeaderElector.IsLeader, 250*time.Millisecond, 10*time.Second, workers)
 }
 
 func startWatcherGroup(ctx context.Context, workers []func(context.Context)) <-chan struct{} {
@@ -208,43 +208,87 @@ func startWatcherGroup(ctx context.Context, workers []func(context.Context)) <-c
 	return done
 }
 
-func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval time.Duration, workers []func(context.Context)) {
+func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval, stopTimeout time.Duration, workers []func(context.Context)) {
+	if len(workers) == 0 {
+		return
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	var cancel context.CancelFunc
 	var done <-chan struct{}
-	stop := func() {
+	var stopTimer *time.Timer
+	var stopDeadline <-chan time.Time
+	clearStopTimer := func() {
+		if stopTimer != nil && !stopTimer.Stop() {
+			select {
+			case <-stopTimer.C:
+			default:
+			}
+		}
+		stopTimer = nil
+		stopDeadline = nil
+	}
+	requestStop := func() {
 		if cancel == nil {
 			return
 		}
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			log.Println("WARNING: watcher stop timed out after 10s, proceeding with leadership transition")
-		}
 		cancel = nil
-		done = nil
+		clearStopTimer()
+		stopTimer = time.NewTimer(stopTimeout)
+		stopDeadline = stopTimer.C
 	}
-	defer stop()
+	defer clearStopTimer()
 
 	for {
 		leader := isLeader()
-		if leader && cancel == nil {
+		if leader && done == nil {
 			leaderCtx, leaderCancel := context.WithCancel(ctx)
 			cancel = leaderCancel
 			done = startWatcherGroup(leaderCtx, workers)
 			log.Println("leader acquired: started control-plane watchers")
 		} else if !leader && cancel != nil {
 			log.Println("leadership lost: stopping control-plane watchers")
-			stop()
-			log.Println("leadership lost: control-plane watchers stopped")
+			requestStop()
 		}
 
 		select {
 		case <-ctx.Done():
+			if cancel != nil {
+				cancel()
+			}
+			clearStopTimer()
+			if done != nil {
+				timer := time.NewTimer(stopTimeout)
+				select {
+				case <-done:
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+				case <-timer.C:
+					log.Printf("WARNING: watcher shutdown still incomplete after %s", stopTimeout)
+				}
+			}
 			return
+		case <-done:
+			wasStopping := cancel == nil
+			clearStopTimer()
+			cancel = nil
+			done = nil
+			if wasStopping {
+				log.Println("leadership lost: control-plane watchers stopped")
+			} else {
+				log.Println("WARNING: control-plane watchers exited while leadership is active")
+			}
+		case <-stopDeadline:
+			stopTimer = nil
+			stopDeadline = nil
+			log.Printf("WARNING: watcher stop still incomplete after %s; restart remains blocked", stopTimeout)
 		case <-ticker.C:
 		}
 	}

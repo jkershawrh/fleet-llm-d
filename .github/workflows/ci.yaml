@@ -234,6 +234,26 @@ jobs:
       - name: Render federated overlay
         run: kustomize build deploy/kustomize/overlays/federated
 
+  validate-helm:
+    name: Validate Helm Chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5.0.1
+
+      - name: Lint and render every values profile
+        run: |
+          for values in charts/fleet-llm-d/values*.yaml; do
+            echo "Validating ${values}"
+            helm lint charts/fleet-llm-d --values "${values}"
+            helm template fleet-llm-d charts/fleet-llm-d \
+              --namespace fleet-llm-d \
+              --values "${values}" >/dev/null
+          done
+
   docker-build:
     name: Docker Build
     runs-on: ubuntu-latest
@@ -274,6 +294,16 @@ jobs:
           tags: fleet-gateway:ci
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,mode=max,scope=gateway
+
+      - name: Build inference-mock image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.inference-mock
+          push: false
+          tags: inference-mock:ci
+          cache-from: type=gha,scope=inference-mock
+          cache-to: type=gha,mode=max,scope=inference-mock
 
   test-matrix:
     name: Test Matrix

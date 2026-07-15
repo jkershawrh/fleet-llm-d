@@ -98,9 +98,14 @@
             "metrics": {"$ref": "#/definitions/port"}
           }
         },
+        "controlPlaneURL": {"type": "string"},
         "service": {"$ref": "#/definitions/service"},
         "serviceAccount": {"$ref": "#/definitions/serviceAccount"},
         "controlPlaneConfigMap": {"$ref": "#/definitions/configMapReference"},
+        "upstreamURL": {"type": "string", "pattern": "^https?://"},
+        "advertisedHealthURL": {"type": "string"},
+        "advertisedInferenceURL": {"type": "string"},
+        "localPrometheusURL": {"type": "string"},
         "resources": {"type": "object"}
       }
     },
