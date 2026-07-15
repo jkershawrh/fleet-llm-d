@@ -349,11 +349,36 @@ The 2-hour on-cluster soak provides strong evidence toward Blue gate, but formal
 | Go CVEs | 0 | Clean as of July 2026 |
 | Base image CVEs | 1 HIGH | UBI 9 base OS, unfixed upstream |
 
-### 6.3 Security Audit Status
+### 6.3 Observability Status
 
-A 104-item security checklist exists at `docs/security-audit-checklist.md`. Current status: **Not Started**. Container hardening is complete. Supply chain CI controls are active and blocking. No third-party security audit has been conducted.
+The fleet controller now serves Prometheus text exposition format at `/metrics` on port 9091, exposing 8 metrics: request/error counters, cluster/pool/tenant/rollout gauges, process memory (alloc/sys/heap_inuse), and goroutine count. The existing Grafana dashboards (fleet-overview, fleet-operations) and 24 Prometheus recording rules can now scrape real data from the controller.
 
-### 6.4 Soak Test Status
+The expvar JSON endpoint is preserved at `/debug/vars` for backward compatibility with the soak test driver.
+
+### 6.4 Security Status
+
+**NetworkPolicies.** Default-deny NetworkPolicies with per-component allowlists are deployed on Oberon. The fleet-controller accepts traffic only from the GCL namespace, OpenShift ingress, and authorized test pods. Mock-inference and modelplane-mock accept traffic only from the fleet-controller. All unauthorized cross-pod traffic is blocked.
+
+**Security audit.** A 104-item security checklist exists at `docs/security-audit-checklist.md`. Current status: **Not Started**. Container hardening is complete (readOnlyRootFilesystem, drop ALL capabilities, non-root UID 65534). Supply chain CI controls are active and blocking (cosign, Trivy, govulncheck, cargo audit). No third-party security audit has been conducted.
+
+### 6.5 Resilience Status
+
+6 resilience tests passed on Oberon (SNO):
+
+| Test | Result |
+|---|---|
+| Fleet controller pod kill | 9ms recovery |
+| GCL pod kill | 8ms recovery |
+| Mock inference pod kill | Fleet stays healthy |
+| Simultaneous fleet + GCL kill | 12ms / 10ms recovery |
+| Rapid restart 5x fleet kill | avg 7ms, max 12ms |
+| Post-disruption 60s soak | 28 events, 0 errors |
+
+### 6.6 Multi-Cluster Simulation Status
+
+28 simulated cluster agents were deployed on Oberon as a StatefulSet, each registering with the fleet controller with unique cluster IDs, regions (7 regions), GPU types (5 types), and load patterns (5 patterns). All 28 registered successfully. The simulated agents prove the controller can track and manage N clusters with live health data; they do not prove real spoke cluster monitoring (see Section 8.2).
+
+### 6.7 Soak Test Status
 
 | Test | Duration | Status | Result |
 |---|---|---|---|
