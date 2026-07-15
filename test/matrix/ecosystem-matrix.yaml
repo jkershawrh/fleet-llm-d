@@ -1,0 +1,303 @@
+# Ecosystem Test Matrix
+# Tracks test coverage across all 4 systems and cross-system testing.
+# Methodology: CDD (Contract), TDD (Unit), BDD (Behavior), EDD (Evidence),
+#              CBT (Chaos/Benchmark), Soak (Sustained load)
+# Status: green (passing), yellow (partial), red (not tested)
+
+metadata:
+  generated_at: "2026-07-15T00:00:00Z"
+  version: "0.1.0"
+  project: fleet-llm-d-ecosystem
+  description: >
+    Ecosystem test matrix covering all 4 systems (deepfield-fleet,
+    governed-cognitive-loop, fleet-llm-d, are-immutable-ledger) and
+    cross-system integration testing on Oberon (SNO OpenShift).
+
+# ─────────────────────────────────────────────────────────────────
+# Per-System Unit/Contract Evidence
+# ─────────────────────────────────────────────────────────────────
+
+systems:
+
+  fleet-llm-d:
+    unit:
+      status: green
+      tests: 436
+      methodology: TDD
+    python_unit:
+      status: green
+      tests: 26
+      methodology: TDD
+    architecture:
+      status: green
+      tests: 55
+      methodology: EDD
+    bdd:
+      status: green
+      tests: 63
+      methodology: BDD
+    contract:
+      status: green
+      tests: 12
+      methodology: CDD
+      detail: "Proto + OpenAPI + CRD validation"
+    scale_benchmarks:
+      status: green
+      tests: 24
+      methodology: CBT
+      detail: "InMemoryList, Solver, Balancer, Reconciler at 10-1000 clusters"
+
+  governed-cognitive-loop:
+    unit:
+      status: green
+      tests: 822
+      methodology: TDD
+    edd_rubric:
+      status: green
+      tests: 33
+      methodology: EDD
+      detail: "33 rubric dimensions"
+    bdd:
+      status: green
+      tests: 15
+      methodology: BDD
+    property:
+      status: green
+      tests: 300
+      methodology: TDD
+      detail: "Randomized property tests for hard-constraint satisfaction"
+
+  deepfield-fleet:
+    unit:
+      status: green
+      tests: 295
+      methodology: TDD
+    ecosystem_contract:
+      status: green
+      tests: 10
+      methodology: CDD
+      detail: "CloudEvent producer contracts"
+
+  are-immutable-ledger:
+    rust_unit:
+      status: green
+      tests: 38
+      methodology: TDD
+    python_gateway:
+      status: green
+      tests: 2
+      methodology: CDD
+    integration:
+      status: green
+      tests: 4
+      methodology: TDD
+      detail: "Chain integrity, concurrent writes, delegation"
+    grpc_contract:
+      status: green
+      tests: 1
+      methodology: CDD
+
+# ─────────────────────────────────────────────────────────────────
+# Cross-System Ecosystem Testing
+# ─────────────────────────────────────────────────────────────────
+
+ecosystem:
+
+  stress_test:
+    status: green
+    total: 48
+    passed: 42
+    failed: 6
+    methodology: CBT
+    environment: "Oberon SNO, remote client"
+    phases:
+      smoke:
+        status: yellow
+        passed: 5
+        total: 6
+        failed_tests:
+          - name: fleet_metrics
+            reason: "Expvar endpoint not exposed via Route (config issue)"
+            severity: low
+      performance:
+        status: yellow
+        passed: 1
+        total: 2
+        failed_tests:
+          - name: gcl_cycle_latency_p99
+            reason: "p99=1086ms exceeds 500ms threshold due to ~500ms network RTT from remote client. On-cluster p50=154ms."
+            severity: low
+      pressure:
+        status: green
+        passed: 7
+        total: 7
+      edge_cases:
+        status: yellow
+        passed: 7
+        total: 9
+        failed_tests:
+          - name: nan_evidence
+            reason: "Python json module rejects NaN before request reaches GCL (client limitation)"
+            severity: low
+          - name: wrong_content_type
+            reason: "Returns 422 instead of 415. FastAPI validates body before content type."
+            severity: low
+      degradation:
+        status: green
+        passed: 10
+        total: 10
+      soak:
+        status: green
+        passed: 6
+        total: 6
+      pen_testing:
+        status: green
+        passed: 5
+        total: 5
+      chaos:
+        status: yellow
+        passed: 1
+        total: 3
+        failed_tests:
+          - name: gcl_10kb_payload
+            reason: "503 after 200 simultaneous cycles saturated single GCL pod"
+            severity: medium
+          - name: gcl_reset_recovery
+            reason: "Empty response during recovery from 200-concurrent saturation"
+            severity: medium
+
+  production_soak_2hr:
+    status: green
+    methodology: Soak
+    environment: "Oberon SNO, on-cluster pod-to-pod"
+    duration_minutes: 120
+    events: 2240
+    errors: 0
+    success_rate: 100.0
+    e2e_p50_ms: 147
+    e2e_p95_ms: 504
+    chain_verifications: "23/23"
+    degradation_injections: "7/7"
+    slo_gates: "5/5 passed"
+
+  production_soak_8hr:
+    status: green
+    methodology: Soak
+    environment: "Oberon SNO, on-cluster pod-to-pod, production deepfield CloudEvent pipeline"
+    duration_minutes: 480
+    events: 5534
+    errors: 0
+    success_rate: 100.0
+    e2e_p50_ms: 154
+    e2e_p95_ms: 485
+    chain_verifications: "95/95"
+    degradation_injections: "15/15"
+    slo_gates: "5/5 passed"
+
+  resilience:
+    status: green
+    methodology: CBT
+    environment: "Oberon SNO, on-cluster"
+    tests:
+      fleet_controller_kill:
+        status: green
+        recovery_ms: 9
+      gcl_kill:
+        status: green
+        recovery_ms: 8
+      inference_kill:
+        status: green
+        detail: "Fleet stays healthy after backend kill"
+      simultaneous_kill:
+        status: green
+        fleet_recovery_ms: 12
+        gcl_recovery_ms: 10
+      rapid_restart_5x:
+        status: green
+        avg_recovery_ms: 7
+        max_recovery_ms: 12
+      post_disruption_soak:
+        status: green
+        events: 28
+        errors: 0
+
+  scale_benchmarks:
+    status: green
+    methodology: CBT
+    environment: "Apple M2, Go microbenchmarks"
+    cluster_counts: [10, 50, 100, 250, 500, 1000]
+    knee_point: "none"
+    results:
+      inmemory_list_1000: "35,114 ns/op, 1 alloc"
+      solver_1000: "81,703 ns/op"
+      balancer_1000: "1,720 ns/op, 0 allocs"
+      reconciler_1000: "84,186 ns/op"
+
+  multi_cluster_sim:
+    status: green
+    methodology: EDD
+    environment: "Oberon SNO, simulated agents"
+    agents_deployed: 10
+    agents_registered: 10
+    scaling_to: 50
+    detail: "Each agent exposes /healthz and /metrics with varying load patterns"
+
+# ─────────────────────────────────────────────────────────────────
+# Gate Status
+# ─────────────────────────────────────────────────────────────────
+
+gate_status:
+  current: yellow
+  evidence:
+    red: "All interfaces defined, executable tests authored"
+    yellow: "1,619 unit/contract tests passing across 4 systems"
+    green: "Not yet: requires three-cluster Kind integration"
+    blue: "Not yet: requires real hub + two OpenShift spokes"
+    gold: "Not yet: requires 72-hour soak, signed external evidence, security audit"
+
+# ─────────────────────────────────────────────────────────────────
+# Gaps
+# ─────────────────────────────────────────────────────────────────
+
+gaps:
+  - id: GAP-001
+    area: multi-cluster
+    description: "fleet-agent reporter.rs is entirely stubbed. No real metrics flow from spoke clusters."
+    severity: high
+    status: "Simulated agents deployed; real agent implementation pending"
+
+  - id: GAP-002
+    area: soak
+    description: "No 72-hour soak. Longest verified is 8 hours."
+    severity: medium
+    status: "8-hour soak passed. 72-hour requires dedicated cluster window."
+
+  - id: GAP-003
+    area: security
+    description: "104-item security audit checklist at Not Started."
+    severity: high
+    status: "Container hardening done. Supply chain CI active. No formal audit."
+
+  - id: GAP-004
+    area: persistence
+    description: "All soak tests ran with in-memory stores. PostgreSQL persistence not soak-tested."
+    severity: medium
+    status: red
+
+  - id: GAP-005
+    area: multi-tenant
+    description: "Tenant governance is unit-tested but not soak-tested under concurrent contention."
+    severity: medium
+    status: red
+
+  - id: GAP-006
+    area: observability
+    description: "Go controller metrics are expvar JSON, not Prometheus text. Gateway /metrics is a stub."
+    severity: medium
+    status: red
+
+  - id: GAP-007
+    area: chaos
+    description: "Single GCL pod saturates at 200 concurrent. Horizontal GCL scaling not tested."
+    severity: low
+    status: "Known architectural boundary, documented"
