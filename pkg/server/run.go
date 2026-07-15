@@ -219,7 +219,11 @@ func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval 
 			return
 		}
 		cancel()
-		<-done
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			log.Println("WARNING: watcher stop timed out after 10s, proceeding with leadership transition")
+		}
 		cancel = nil
 		done = nil
 	}

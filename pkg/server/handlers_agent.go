@@ -76,6 +76,8 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		} else {
 			status = "Unhealthy"
 		}
+	} else if !report.Healthy && status != "Degraded" && status != "Unhealthy" {
+		status = "Unhealthy"
 	}
 	labels := map[string]string{}
 	if report.HealthURL != "" {

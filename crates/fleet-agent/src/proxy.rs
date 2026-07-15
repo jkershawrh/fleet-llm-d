@@ -84,6 +84,7 @@ impl LocalProxy {
             upstream_url: "http://localhost:8000".to_string(),
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap_or_default(),
         }
