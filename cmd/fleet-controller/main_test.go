@@ -15,15 +15,16 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
+	"github.com/llm-d/fleet-llm-d/pkg/server"
 )
 
 // newTestController creates a minimal FleetController for testing route setup.
-func newTestController() *FleetController {
-	return NewFleetController("", "http://localhost:8000", "http://localhost:8080", "", "")
+func newTestController() *server.FleetController {
+	return server.NewFleetController("", "http://localhost:8000", "http://localhost:8080", "", "")
 }
 
 func TestConfiguredLedgerFailureDoesNotFallBackToFabricatedMemoryEvidence(t *testing.T) {
-	controller, err := NewFleetControllerWithLedgerConfig(
+	controller, err := server.NewFleetControllerWithLedgerConfig(
 		ledger.Config{Mode: ledger.ModeGRPC, Endpoint: "ledger.example:9092"},
 		"http://localhost:8000", "http://localhost:8080", "", "",
 	)
@@ -38,7 +39,7 @@ func TestDecisionPackageKeyringFromEnvironment(t *testing.T) {
 	t.Setenv("GCL_DECISION_SIGNING_KEY_ID", "gcl-key-2")
 	t.Setenv("GCL_DECISION_SIGNING_KEY", "base64:"+base64.StdEncoding.EncodeToString(key))
 
-	keyring, err := decisionPackageKeyringFromEnv()
+	keyring, err := server.DecisionPackageKeyringFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestDecisionPackageKeyringFromEnvironment(t *testing.T) {
 func TestDecisionPackageKeyringRejectsShortKey(t *testing.T) {
 	t.Setenv("GCL_DECISION_SIGNING_KEYS_JSON", "")
 	t.Setenv("GCL_DECISION_SIGNING_KEY", "too-short")
-	if _, err := decisionPackageKeyringFromEnv(); err == nil {
+	if _, err := server.DecisionPackageKeyringFromEnv(); err == nil {
 		t.Fatal("expected short GCL signing key to fail")
 	}
 }
@@ -69,8 +70,8 @@ func TestOperatorJSONIntentCompatibilityRequiresExplicitTrue(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("FLEET_ALLOW_OPERATOR_JSON_INTENTS", test.envValue)
-			if got := operatorJSONIntentsEnabled(test.flagValue); got != test.want {
-				t.Fatalf("operatorJSONIntentsEnabled(%v) = %v, want %v", test.flagValue, got, test.want)
+			if got := server.OperatorJSONIntentsEnabled(test.flagValue); got != test.want {
+				t.Fatalf("OperatorJSONIntentsEnabled(%v) = %v, want %v", test.flagValue, got, test.want)
 			}
 		})
 	}
@@ -84,7 +85,7 @@ func TestConfiguredKubernetesAPIBacksIntentAuthority(t *testing.T) {
 	}))
 	defer apiServer.Close()
 
-	controller := NewFleetController("", "http://localhost:8000", "http://localhost:8080", apiServer.URL, "fleet-system")
+	controller := server.NewFleetController("", "http://localhost:8000", "http://localhost:8080", apiServer.URL, "fleet-system")
 	_, err := controller.IntentService.Submit(context.Background(), intents.FleetIntent{
 		ID:             "intent-1",
 		IdempotencyKey: "intent-key-1",
@@ -104,7 +105,7 @@ func TestConfiguredKubernetesAPIBacksIntentAuthority(t *testing.T) {
 func TestIntentV2CreatesHonestAsynchronousOperation(t *testing.T) {
 	fc := newTestController()
 	fc.AllowOperatorJSONIntents = true
-	mux := fc.setupAPIServer("control")
+	mux := fc.SetupRoutes("control")
 	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	body := fmt.Sprintf(`{
 		"type":"scale","confidence":0.9,"horizon_seconds":900,
@@ -152,7 +153,7 @@ func TestIntentV2CreatesHonestAsynchronousOperation(t *testing.T) {
 func TestIntentV2RejectsMissingGovernanceEnvelope(t *testing.T) {
 	fc := newTestController()
 	fc.AllowOperatorJSONIntents = true
-	mux := fc.setupAPIServer("control")
+	mux := fc.SetupRoutes("control")
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/intents", strings.NewReader(`{"type":"scale","confidence":0.9,"horizon_seconds":1,"justification":"scale","state_snapshot":{},"pool":"p"}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -163,7 +164,7 @@ func TestIntentV2RejectsMissingGovernanceEnvelope(t *testing.T) {
 }
 
 func TestIntentV2RejectsOperatorJSONByDefault(t *testing.T) {
-	mux := newTestController().setupAPIServer("control")
+	mux := newTestController().SetupRoutes("control")
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/intents", strings.NewReader(`{"type":"scale"}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -177,7 +178,7 @@ func TestIntentV2RejectsOperatorJSONByDefault(t *testing.T) {
 }
 
 func TestIntentV2RequiresConfiguredGCLVerification(t *testing.T) {
-	mux := newTestController().setupAPIServer("control")
+	mux := newTestController().SetupRoutes("control")
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/intents", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", intents.GCLDecisionPackageCloudEventContentType)
 	recorder := httptest.NewRecorder()
@@ -192,7 +193,7 @@ func TestIntentV2RejectsInvalidVerifiedGCLPayload(t *testing.T) {
 	fc.DecisionPackageDecoder = intents.NewGCLDecisionPackageDecoder(map[string][]byte{
 		"gcl-key": []byte("0123456789abcdef0123456789abcdef"),
 	})
-	mux := fc.setupAPIServer("control")
+	mux := fc.SetupRoutes("control")
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/intents", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", intents.GCLDecisionPackageCloudEventContentType)
 	recorder := httptest.NewRecorder()
@@ -203,7 +204,7 @@ func TestIntentV2RejectsInvalidVerifiedGCLPayload(t *testing.T) {
 }
 
 func TestIntentV2RejectsUnsupportedMediaType(t *testing.T) {
-	mux := newTestController().setupAPIServer("control")
+	mux := newTestController().SetupRoutes("control")
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/intents", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "text/plain")
 	recorder := httptest.NewRecorder()
@@ -214,7 +215,7 @@ func TestIntentV2RejectsUnsupportedMediaType(t *testing.T) {
 }
 
 func TestIntentV1NeverMapsAdmissionToExecuted(t *testing.T) {
-	mux := newTestController().setupAPIServer("control")
+	mux := newTestController().SetupRoutes("control")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/intents", strings.NewReader(`{"id":"legacy-1","type":"scale","confidence":0.9,"horizon_seconds":1,"justification":"legacy","state_snapshot":{},"pool":"p","target_replicas":2}`))
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -237,14 +238,14 @@ func TestRequestActorUsesVerifiedClaimsAndIgnoresSpoofedHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/operations/op-1/approve", nil)
 	req.Header.Set("X-Fleet-Actor", "spoofed-client")
 	req = req.WithContext(auth.WithClaims(req.Context(), &auth.Claims{Subject: "spiffe://example/operator"}))
-	if got := requestActor(req); got != "spiffe://example/operator" {
-		t.Fatalf("requestActor() = %q, want verified subject", got)
+	if got := server.RequestActor(req); got != "spiffe://example/operator" {
+		t.Fatalf("RequestActor() = %q, want verified subject", got)
 	}
 
 	unauthenticated := httptest.NewRequest(http.MethodPost, "/api/v2/operations/op-1/approve", nil)
 	unauthenticated.Header.Set("X-Fleet-Actor", "spoofed-client")
-	if got := requestActor(unauthenticated); got != "unauthenticated-development" {
-		t.Fatalf("requestActor() = %q, want development fallback", got)
+	if got := server.RequestActor(unauthenticated); got != "unauthenticated-development" {
+		t.Fatalf("RequestActor() = %q, want development fallback", got)
 	}
 }
 
@@ -270,7 +271,7 @@ func routeExists(mux *http.ServeMux, method, path string) bool {
 
 func TestSetupAPIServer_ModeAll_MountsBothControlAndInference(t *testing.T) {
 	fc := newTestController()
-	mux := fc.setupAPIServer("all")
+	mux := fc.SetupRoutes("all")
 
 	// Control plane routes should be present.
 	if !routeExists(mux, "GET", "/api/v1/clusters") {
@@ -299,7 +300,7 @@ func TestSetupAPIServer_ModeAll_MountsBothControlAndInference(t *testing.T) {
 
 func TestSetupAPIServer_ModeControl_OnlyMountsControlRoutes(t *testing.T) {
 	fc := newTestController()
-	mux := fc.setupAPIServer("control")
+	mux := fc.SetupRoutes("control")
 
 	// Control plane routes should be present.
 	if !routeExists(mux, "GET", "/api/v1/clusters") {
@@ -331,7 +332,7 @@ func TestSetupAPIServer_ModeControl_OnlyMountsControlRoutes(t *testing.T) {
 
 func TestSetupAPIServer_ModeInference_OnlyMountsInferenceRoutes(t *testing.T) {
 	fc := newTestController()
-	mux := fc.setupAPIServer("inference")
+	mux := fc.SetupRoutes("inference")
 
 	// Control plane routes should NOT be present.
 	if routeExists(mux, "GET", "/api/v1/clusters") {
@@ -366,7 +367,7 @@ func TestSetupAPIServer_ModeInference_OnlyMountsInferenceRoutes(t *testing.T) {
 
 func TestSetupAPIServer_ModeControl_CostEndpointsMounted(t *testing.T) {
 	fc := newTestController()
-	mux := fc.setupAPIServer("control")
+	mux := fc.SetupRoutes("control")
 
 	costRoutes := []struct {
 		method string
@@ -386,7 +387,7 @@ func TestSetupAPIServer_ModeControl_CostEndpointsMounted(t *testing.T) {
 
 func TestSetupAPIServer_ModeInference_CostEndpointsNotMounted(t *testing.T) {
 	fc := newTestController()
-	mux := fc.setupAPIServer("inference")
+	mux := fc.SetupRoutes("inference")
 
 	costRoutes := []struct {
 		method string
@@ -408,7 +409,7 @@ func TestSetupAPIServer_HealthAlwaysMounted(t *testing.T) {
 	fc := newTestController()
 
 	for _, mode := range []string{"all", "control", "inference"} {
-		mux := fc.setupAPIServer(mode)
+		mux := fc.SetupRoutes(mode)
 
 		if !routeExists(mux, "GET", "/healthz") {
 			t.Errorf("mode=%s: expected /healthz to be mounted", mode)
@@ -422,7 +423,7 @@ func TestSetupAPIServer_HealthAlwaysMounted(t *testing.T) {
 func TestBackendsFlag_RegistersCustomBackends(t *testing.T) {
 	backendsJSON := `[{"model":"test-model","url":"http://test:8000","runtime":"openvino","path_prefix":"/v3"}]`
 
-	fc := NewFleetController("", "http://unused:8000", "http://unused:8080", "", "")
+	fc := server.NewFleetController("", "http://unused:8000", "http://unused:8080", "", "")
 
 	var backendList []struct {
 		Model      string `json:"model"`
