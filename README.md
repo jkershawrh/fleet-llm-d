@@ -37,7 +37,7 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
                          └──────────┬──────────┬───────────┘
                                     │          │
                      ┌──────────────┘          └──────────────┐
-                     │        Fleet Network (Kafka/gRPC)       │
+                     │        Fleet Network (HTTP/gRPC)        │
                      └──┬──────────┬──────────┬──────────┬────┘
                         │          │          │          │
                    ┌────▼───┐ ┌───▼────┐ ┌───▼────┐ ┌───▼────┐
@@ -424,8 +424,7 @@ The fleet controller exposes 27 REST endpoints. See [`api/openapi/fleet-api.yaml
 | Component | Purpose |
 |-----------|---------|
 | PostgreSQL | Primary state store for fleet configuration and placement data. |
-| HTTP Event Sink | Optional CloudEvents-compatible endpoint for fleet event streaming (can target Kafka REST proxy). |
-| Redis | Caching layer for routing decisions and metrics aggregation. |
+| HTTP Event Sink | Optional CloudEvents-compatible endpoint for fleet event streaming (can target Kafka REST proxy). No native Kafka or Redis client -- lib/pq is the sole Go dependency. |
 | Prometheus + Grafana | Monitoring and dashboarding for fleet-wide observability. |
 | ARE Ledger (separate network) | Independent compliance ledger with own PostgreSQL on `are-ledger-net`. |
 
