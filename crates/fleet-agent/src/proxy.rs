@@ -7,9 +7,10 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-use axum::body::Bytes;
+use axum::body::{to_bytes, Body};
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::header::{CONNECTION, HOST, TRANSFER_ENCODING};
+use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
 use axum::Router;
@@ -70,6 +71,8 @@ pub struct LocalProxy {
     listen_port: u16,
     /// Upstream EPP endpoint to forward requests to.
     upstream_url: String,
+    /// Shared HTTP client used for readiness probes and request forwarding.
+    http: reqwest::Client,
 }
 
 impl LocalProxy {
@@ -79,6 +82,10 @@ impl LocalProxy {
             listen_port,
             // Default upstream; will be configurable.
             upstream_url: "http://localhost:8000".to_string(),
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -109,15 +116,7 @@ impl LocalProxy {
 
         let app = Router::new()
             .route("/healthz", get(|| async { "ok" }))
-            .route(
-                "/readyz",
-                get(|| async {
-                    (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "agent synchronization and upstream forwarding are not configured",
-                    )
-                }),
-            )
+            .route("/readyz", get(proxy_ready))
             .fallback(any(proxy_request))
             .with_state(self.clone());
 
@@ -143,11 +142,23 @@ impl LocalProxy {
     }
 }
 
-async fn proxy_request(
-    State(proxy): State<LocalProxy>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> impl IntoResponse {
+async fn proxy_ready(State(proxy): State<LocalProxy>) -> impl IntoResponse {
+    let url = format!("{}/healthz", proxy.upstream_url.trim_end_matches('/'));
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        proxy.http.get(url).send(),
+    )
+    .await
+    {
+        Ok(Ok(response)) if response.status().is_success() => (StatusCode::OK, "ready"),
+        Ok(Ok(_)) => (StatusCode::SERVICE_UNAVAILABLE, "upstream is not ready"),
+        Ok(Err(_)) | Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "upstream is unreachable"),
+    }
+}
+
+async fn proxy_request(State(proxy): State<LocalProxy>, request: Request<Body>) -> Response<Body> {
+    let (parts, body) = request.into_parts();
+    let headers = &parts.headers;
     let tenant = headers
         .get(HEADER_TENANT_ID)
         .and_then(|v| v.to_str().ok())
@@ -158,39 +169,79 @@ async fn proxy_request(
         });
     let injected = proxy.build_headers(tenant, Some(InferenceObjective::Balanced), None);
 
-    let mut response_headers = HeaderMap::new();
+    let mut upstream_headers = headers.clone();
+    remove_hop_by_hop_headers(&mut upstream_headers);
     if let Some(fairness_id) = injected.fairness_id {
         if let Ok(value) = HeaderValue::from_str(&fairness_id) {
-            response_headers.insert(HEADER_FAIRNESS_ID, value);
+            upstream_headers.insert(HEADER_FAIRNESS_ID, value);
         }
     }
     if let Some(tenant_id) = injected.tenant_id {
         if let Ok(value) = HeaderValue::from_str(&tenant_id) {
-            response_headers.insert(HEADER_TENANT_ID, value);
+            upstream_headers.insert(HEADER_TENANT_ID, value);
         }
     }
-    response_headers.insert(HEADER_SOURCE_CLUSTER, HeaderValue::from_static("local"));
-    response_headers.insert(
+    upstream_headers.insert(HEADER_SOURCE_CLUSTER, HeaderValue::from_static("local"));
+    upstream_headers.insert(
         HEADER_INFERENCE_OBJECTIVE,
         HeaderValue::from_static("balanced"),
     );
 
+    let body = match to_bytes(body, 16 * 1024 * 1024).await {
+        Ok(body) => body,
+        Err(error) => return proxy_error(StatusCode::PAYLOAD_TOO_LARGE, error.to_string()),
+    };
+    let path = parts
+        .uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
+    let target = format!("{}{}", proxy.upstream_url.trim_end_matches('/'), path);
+
     tracing::debug!(
-        upstream = %proxy.upstream_url,
+        upstream = %target,
         body_bytes = body.len(),
-        "received local proxy request"
+        "forwarding local proxy request"
     );
 
-    (
-        StatusCode::BAD_GATEWAY,
-        response_headers,
-        "upstream forwarding is not configured for this local proxy",
-    )
+    let upstream = match proxy
+        .http
+        .request(parts.method, target)
+        .headers(upstream_headers)
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => return proxy_error(StatusCode::BAD_GATEWAY, error.to_string()),
+    };
+
+    let status = upstream.status();
+    let mut response_headers = upstream.headers().clone();
+    remove_hop_by_hop_headers(&mut response_headers);
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+    *response.status_mut() = status;
+    *response.headers_mut() = response_headers;
+    response
+}
+
+fn remove_hop_by_hop_headers(headers: &mut HeaderMap) {
+    headers.remove(HOST);
+    headers.remove(CONNECTION);
+    headers.remove(TRANSFER_ENCODING);
+}
+
+fn proxy_error(status: StatusCode, message: String) -> Response<Body> {
+    let mut response = Response::new(Body::from(message));
+    *response.status_mut() = status;
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::routing::{any, get};
+    use axum::Router;
 
     #[test]
     fn proxy_stores_port() {
@@ -226,5 +277,42 @@ mod tests {
         );
         assert_eq!(InferenceObjective::MinCost.to_string(), "min-cost");
         assert_eq!(InferenceObjective::Balanced.to_string(), "balanced");
+    }
+
+    #[tokio::test]
+    async fn proxy_forwards_method_path_body_and_fleet_headers() {
+        let upstream = Router::new()
+            .route("/healthz", get(|| async { "ok" }))
+            .route(
+                "/v1/completions",
+                any(|headers: HeaderMap, body: axum::body::Bytes| async move {
+                    let tenant = headers
+                        .get(HEADER_TENANT_ID)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("");
+                    format!("{tenant}:{}", String::from_utf8_lossy(&body))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let proxy = LocalProxy::new(8090).with_upstream(format!("http://{address}"));
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/completions")
+            .header(HEADER_TENANT_ID, "tenant-a")
+            .body(Body::from("prompt"))
+            .unwrap();
+        let response = proxy_request(State(proxy.clone()), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"tenant-a:prompt");
+
+        assert_eq!(
+            proxy_ready(State(proxy)).await.into_response().status(),
+            StatusCode::OK
+        );
+        server.abort();
     }
 }

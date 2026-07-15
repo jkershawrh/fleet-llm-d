@@ -2,7 +2,15 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+var (
+	// ErrClusterNotFound is returned when a cluster repository lookup misses.
+	ErrClusterNotFound = errors.New("cluster not found")
+	// ErrClusterAlreadyExists is returned when a cluster ID conflicts on create.
+	ErrClusterAlreadyExists = errors.New("cluster already exists")
 )
 
 // ClusterRepository manages cluster records.

@@ -44,6 +44,7 @@ echo "=== Building e2e component images ==="
 build_image fleet-controller:e2e deploy/docker/Dockerfile.controller
 build_image fleet-agent:e2e deploy/docker/Dockerfile.agent
 build_image fleet-gateway:e2e deploy/docker/Dockerfile.gateway
+build_image inference-mock:e2e deploy/docker/Dockerfile.inference-mock
 
 echo ""
 echo "=== Loading component images into Kind clusters ==="
@@ -51,6 +52,8 @@ kind load docker-image fleet-controller:e2e --name "$HUB"
 kind load docker-image fleet-gateway:e2e --name "$HUB"
 kind load docker-image fleet-agent:e2e --name "$SPOKE1"
 kind load docker-image fleet-agent:e2e --name "$SPOKE2"
+kind load docker-image inference-mock:e2e --name "$SPOKE1"
+kind load docker-image inference-mock:e2e --name "$SPOKE2"
 
 echo ""
 echo "=== Deploying controller to hub ==="
@@ -132,6 +135,8 @@ spec:
             - name: FLEET_CONTROL_PLANE_URL
               value: "$CONTROLLER_URL"
           ports:
+            - name: proxy
+              containerPort: 8080
             - name: health
               containerPort: 8081
 ---
@@ -144,6 +149,9 @@ spec:
   selector:
     app: fleet-gateway
   ports:
+    - name: proxy
+      port: 8080
+      targetPort: proxy
     - name: health
       port: 8081
       targetPort: health
@@ -156,6 +164,48 @@ echo "=== Deploying spoke agents ==="
 for spoke in "$SPOKE1" "$SPOKE2"; do
   SPOKE_ID=$(echo "$spoke" | sed 's/fleet-//')
   kubectl --context "kind-${spoke}" create namespace fleet-llm-d 2>/dev/null || true
+  cat <<EOF | kubectl --context "kind-${spoke}" apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-mock
+  namespace: fleet-llm-d
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference-mock
+  template:
+    metadata:
+      labels:
+        app: inference-mock
+    spec:
+      containers:
+        - name: inference-mock
+          image: inference-mock:e2e
+          imagePullPolicy: Never
+          env:
+            - name: CLUSTER_ID
+              value: "$SPOKE_ID"
+          ports:
+            - name: http
+              containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-mock
+  namespace: fleet-llm-d
+spec:
+  selector:
+    app: inference-mock
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+EOF
+  kubectl --context "kind-${spoke}" -n fleet-llm-d rollout status deploy/inference-mock --timeout=120s
+
   cat <<EOF | kubectl --context "kind-${spoke}" apply -f -
 apiVersion: v1
 kind: Service
@@ -173,7 +223,8 @@ spec:
 EOF
   AGENT_NODEPORT=$(kubectl --context "kind-${spoke}" -n fleet-llm-d get svc fleet-agent -o jsonpath='{.spec.ports[0].nodePort}')
   SPOKE_IP=$(container_ip "${spoke}-control-plane")
-  HEALTH_URL="http://${SPOKE_IP}:${AGENT_NODEPORT}/healthz"
+  INFERENCE_URL="http://${SPOKE_IP}:${AGENT_NODEPORT}"
+  HEALTH_URL="${INFERENCE_URL}/readyz"
   cat <<EOF | kubectl --context "kind-${spoke}" apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -201,8 +252,12 @@ spec:
               value: "$SPOKE_ID"
             - name: FLEET_CLUSTER_HEALTH_URL
               value: "$HEALTH_URL"
+            - name: FLEET_CLUSTER_INFERENCE_URL
+              value: "$INFERENCE_URL"
+            - name: FLEET_UPSTREAM_URL
+              value: "http://inference-mock.fleet-llm-d.svc.cluster.local:8000"
             - name: FLEET_LOCAL_PROMETHEUS_URL
-              value: "http://127.0.0.1:1/metrics"
+              value: "http://inference-mock.fleet-llm-d.svc.cluster.local:8000/metrics"
           ports:
             - name: proxy
               containerPort: 8090

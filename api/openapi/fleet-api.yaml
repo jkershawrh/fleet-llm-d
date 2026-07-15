@@ -282,7 +282,9 @@ paths:
               $ref: "#/components/schemas/AgentStatusReport"
       responses:
         "200":
-          description: Status accepted
+          description: Existing cluster status updated
+        "201":
+          description: New cluster status registered
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -1206,6 +1208,9 @@ components:
           type: object
           additionalProperties:
             type: string
+        status:
+          type: string
+          description: Latest lifecycle phase reported by the cluster agent
         gpu_capacity:
           $ref: "#/components/schemas/GPUCapacity"
         utilization:
@@ -1219,6 +1224,7 @@ components:
         labels:
           env: production
           tier: gpu
+        status: Running
         gpu_capacity:
           available: 6
           total: 8
@@ -1272,7 +1278,11 @@ components:
         health_url:
           type: string
           format: uri
-          description: Gateway-reachable health endpoint for this cluster
+          description: Gateway-reachable readiness endpoint for this cluster
+        inference_url:
+          type: string
+          format: uri
+          description: Gateway-reachable inference proxy base URL for this cluster
 
     AgentMetricsReport:
       type: object

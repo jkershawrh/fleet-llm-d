@@ -2,9 +2,15 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
+
+type testSQLStateError string
+
+func (e testSQLStateError) Error() string    { return "database error" }
+func (e testSQLStateError) SQLState() string { return string(e) }
 
 // ---------------------------------------------------------------------------
 // Interface contract tests — run against the in-memory implementations to
@@ -261,5 +267,15 @@ func TestPGClientFromDB(t *testing.T) {
 	}
 	if pg.db != nil {
 		t.Fatal("expected nil db")
+	}
+}
+
+func TestHasSQLState(t *testing.T) {
+	err := fmt.Errorf("insert cluster: %w", testSQLStateError("23505"))
+	if !hasSQLState(err, "23505") {
+		t.Fatal("expected wrapped unique-violation SQLSTATE to match")
+	}
+	if hasSQLState(err, "23503") {
+		t.Fatal("unexpected foreign-key SQLSTATE match")
 	}
 }

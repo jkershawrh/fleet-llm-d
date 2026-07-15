@@ -146,6 +146,12 @@ agent:
   controlPlaneConfigMap:
     existingConfigMap: fleet-control-plane
     key: url
+  # Local llm-d EPP endpoint that receives proxied inference requests.
+  upstreamURL: http://localhost:8000
+  # URLs reachable from the hub gateway. Spoke deployments normally expose
+  # the agent proxy through a cross-cluster Service, Route, or load balancer.
+  advertisedHealthURL: ""
+  advertisedInferenceURL: ""
   # Empty preserves the binary default. Set this to the real, TLS-protected
   # Prometheus endpoint for production metrics reporting.
   localPrometheusURL: ""

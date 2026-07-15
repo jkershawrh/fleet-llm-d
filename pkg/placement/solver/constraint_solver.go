@@ -23,6 +23,7 @@ type ClusterInfo struct {
 	Name        string            `json:"name"`
 	Region      string            `json:"region"`
 	Labels      map[string]string `json:"labels"`
+	Status      string            `json:"status"`
 	GPUCapacity GPUCapacity       `json:"gpu_capacity"`
 	Utilization float64           `json:"utilization"`
 }

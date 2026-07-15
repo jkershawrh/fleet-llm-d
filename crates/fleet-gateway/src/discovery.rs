@@ -14,6 +14,8 @@ struct DiscoveredCluster {
     id: String,
     #[serde(default, alias = "Labels")]
     labels: HashMap<String, String>,
+    #[serde(default, alias = "Status")]
+    status: String,
 }
 
 /// Poll the controller for registered clusters and keep the health checker in sync.
@@ -61,16 +63,22 @@ async fn sync_once(
 
     let mut desired = HashSet::new();
     for cluster in clusters {
+        if is_explicitly_unhealthy(&cluster.status) {
+            continue;
+        }
         let Some(health_url) = cluster.labels.get("health_url") else {
             continue;
         };
-        if health_url.is_empty() {
+        let Some(inference_url) = cluster.labels.get("inference_url") else {
+            continue;
+        };
+        if health_url.is_empty() || inference_url.is_empty() {
             continue;
         }
         let cluster_id = ClusterId(cluster.id);
         desired.insert(cluster_id.clone());
         health_checker
-            .register_cluster_with_url(cluster_id, health_url.clone())
+            .register_cluster(cluster_id, health_url.clone(), inference_url.clone())
             .await;
     }
 
@@ -82,6 +90,13 @@ async fn sync_once(
     Ok(())
 }
 
+fn is_explicitly_unhealthy(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "unhealthy" | "degraded" | "failed" | "offline"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,13 +106,13 @@ mod tests {
     #[test]
     fn accepts_controller_cluster_shape() {
         let cluster: DiscoveredCluster = serde_json::from_str(
-            r#"{"id":"spoke-1","labels":{"health_url":"http://spoke-1/healthz"}}"#,
+            r#"{"id":"spoke-1","status":"Running","labels":{"health_url":"http://spoke-1/readyz","inference_url":"http://spoke-1"}}"#,
         )
         .unwrap();
         assert_eq!(cluster.id, "spoke-1");
         assert_eq!(
             cluster.labels.get("health_url").map(String::as_str),
-            Some("http://spoke-1/healthz")
+            Some("http://spoke-1/readyz")
         );
     }
 
@@ -108,7 +123,11 @@ mod tests {
             get(|| async {
                 Json(serde_json::json!([{
                     "id": "spoke-1",
-                    "labels": {"health_url": "http://spoke-1/healthz"}
+                    "status": "Running",
+                    "labels": {
+                        "health_url": "http://spoke-1/readyz",
+                        "inference_url": "http://spoke-1"
+                    }
                 }]))
             }),
         );
@@ -125,6 +144,46 @@ mod tests {
         let cluster_id = ClusterId("spoke-1".to_string());
         assert!(checker.snapshot().await.contains_key(&cluster_id));
         assert!(!checker.snapshot().await[&cluster_id].healthy);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn sync_removes_cluster_reported_as_degraded() {
+        let app = Router::new().route(
+            "/api/v1/clusters",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "id": "spoke-1",
+                    "status": "Degraded",
+                    "labels": {
+                        "health_url": "http://spoke-1/readyz",
+                        "inference_url": "http://spoke-1"
+                    }
+                }]))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let checker = HealthChecker::new(Duration::from_secs(10));
+        checker
+            .register_cluster(
+                ClusterId("spoke-1".to_string()),
+                "http://spoke-1/readyz".to_string(),
+                "http://spoke-1".to_string(),
+            )
+            .await;
+
+        sync_once(
+            &reqwest::Client::new(),
+            &format!("http://{address}"),
+            None,
+            &checker,
+        )
+        .await
+        .unwrap();
+
+        assert!(checker.snapshot().await.is_empty());
         server.abort();
     }
 }

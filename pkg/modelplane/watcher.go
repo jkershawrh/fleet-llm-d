@@ -94,30 +94,33 @@ func (w *ModelPlaneWatcher) OnEndpointChange(fn func([]ModelEndpoint)) {
 // Start begins polling the ModelPlane API. It performs an initial poll then
 // starts a background goroutine that polls on each tick of the interval.
 func (w *ModelPlaneWatcher) Start(ctx context.Context) error {
+	go w.Run(ctx)
+	return nil
+}
+
+// Run polls ModelPlane until ctx is cancelled. It blocks so a leadership
+// coordinator can wait until the watcher has fully stopped before restarting.
+func (w *ModelPlaneWatcher) Run(ctx context.Context) {
 	if err := w.PollOnce(ctx); err != nil {
 		log.Printf("WARNING: initial ModelPlane poll failed: %v (will retry on next tick)", err)
 	}
 
-	go func() {
-		ticker := time.NewTicker(w.interval)
-		defer ticker.Stop()
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
 
-		log.Println("ModelPlane watcher started")
-		defer log.Println("ModelPlane watcher stopped")
+	log.Println("ModelPlane watcher started")
+	defer log.Println("ModelPlane watcher stopped")
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := w.PollOnce(ctx); err != nil {
-					log.Printf("ModelPlane poll error: %v", err)
-				}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.PollOnce(ctx); err != nil {
+				log.Printf("ModelPlane poll error: %v", err)
 			}
 		}
-	}()
-
-	return nil
+	}
 }
 
 // PollOnce fetches all three resource types from the ModelPlane API and

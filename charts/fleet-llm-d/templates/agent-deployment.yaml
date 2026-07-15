@@ -67,6 +67,16 @@ spec:
               {{- end }}
             - name: FLEET_PROXY_PORT
               value: {{ .Values.agent.ports.proxy | quote }}
+            - name: FLEET_UPSTREAM_URL
+              value: {{ .Values.agent.upstreamURL | quote }}
+            {{- with .Values.agent.advertisedHealthURL }}
+            - name: FLEET_CLUSTER_HEALTH_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.agent.advertisedInferenceURL }}
+            - name: FLEET_CLUSTER_INFERENCE_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.agent.localPrometheusURL }}
             - name: FLEET_LOCAL_PROMETHEUS_URL
               value: {{ . | quote }}

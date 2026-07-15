@@ -36,6 +36,15 @@ pub struct HealthPolicy {
     pub probe_timeout: Duration,
 }
 
+/// Gateway-reachable endpoints advertised by a cluster agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterEndpoint {
+    /// Endpoint used to decide whether the inference proxy is ready.
+    pub health_url: String,
+    /// Base URL used to forward inference traffic.
+    pub inference_url: String,
+}
+
 impl Default for HealthPolicy {
     fn default() -> Self {
         Self {
@@ -54,8 +63,8 @@ pub struct HealthChecker {
     policy: HealthPolicy,
     /// Current health state of all known clusters.
     state: Arc<RwLock<HashMap<ClusterId, ClusterHealth>>>,
-    /// Map of cluster ID to health endpoint URL.
-    endpoints: Arc<RwLock<HashMap<ClusterId, String>>>,
+    /// Map of cluster ID to its health and inference endpoints.
+    endpoints: Arc<RwLock<HashMap<ClusterId, ClusterEndpoint>>>,
 }
 
 impl HealthChecker {
@@ -74,17 +83,27 @@ impl HealthChecker {
         self.state.read().await.clone()
     }
 
-    /// Register a cluster with a specific health endpoint URL.
-    pub async fn register_cluster_with_url(&self, cluster_id: ClusterId, url: String) {
-        let has_endpoint = !url.is_empty();
+    /// Register a cluster with health and inference endpoints.
+    pub async fn register_cluster(
+        &self,
+        cluster_id: ClusterId,
+        health_url: String,
+        inference_url: String,
+    ) {
+        let has_endpoint = !health_url.is_empty() && !inference_url.is_empty();
+        let endpoint = ClusterEndpoint {
+            health_url,
+            inference_url,
+        };
         let endpoint_changed = if has_endpoint {
             let previous = self
                 .endpoints
                 .write()
                 .await
-                .insert(cluster_id.clone(), url.clone());
-            previous.as_deref() != Some(url.as_str())
+                .insert(cluster_id.clone(), endpoint.clone());
+            previous.as_ref() != Some(&endpoint)
         } else {
+            self.endpoints.write().await.remove(&cluster_id);
             false
         };
         let mut state = self.state.write().await;
@@ -92,7 +111,7 @@ impl HealthChecker {
             .entry(cluster_id.clone())
             .or_insert_with(|| ClusterHealth {
                 cluster_id: cluster_id.clone(),
-                healthy: !has_endpoint,
+                healthy: false,
                 latency_ms: 0.0,
                 last_check: Utc::now(),
                 consecutive_failures: 0,
@@ -109,6 +128,30 @@ impl HealthChecker {
         self.state.write().await.remove(cluster_id);
     }
 
+    /// Return routable endpoints whose latest readiness probe succeeded.
+    pub async fn healthy_inference_endpoints(&self) -> Vec<(ClusterId, String)> {
+        let endpoints = self.endpoints.read().await.clone();
+        let state = self.state.read().await;
+        let mut healthy: Vec<_> = endpoints
+            .into_iter()
+            .filter_map(|(cluster_id, endpoint)| {
+                state
+                    .get(&cluster_id)
+                    .filter(|health| health.healthy)
+                    .map(|health| (health.latency_ms, cluster_id, endpoint.inference_url))
+            })
+            .collect();
+        healthy.sort_by(|left, right| {
+            left.0
+                .partial_cmp(&right.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        healthy
+            .into_iter()
+            .map(|(_, cluster_id, inference_url)| (cluster_id, inference_url))
+            .collect()
+    }
+
     /// Start the periodic health check loop. Runs until cancelled.
     pub async fn run(&self) -> anyhow::Result<()> {
         tracing::info!(
@@ -122,62 +165,67 @@ impl HealthChecker {
         loop {
             ticker.tick().await;
 
-            let cluster_ids: Vec<ClusterId> = { self.state.read().await.keys().cloned().collect() };
+            self.probe_once().await;
+        }
+    }
 
-            let endpoints = self.endpoints.read().await.clone();
-            let client = reqwest::Client::builder()
-                .timeout(self.policy.probe_timeout)
-                .build()
-                .unwrap_or_default();
+    /// Probe every registered health endpoint once.
+    pub async fn probe_once(&self) {
+        let cluster_ids: Vec<ClusterId> = { self.state.read().await.keys().cloned().collect() };
 
-            for cluster_id in &cluster_ids {
-                let url = match endpoints.get(cluster_id) {
-                    Some(u) if !u.is_empty() => u.clone(),
-                    _ => {
-                        tracing::debug!(cluster = %cluster_id, "no endpoint configured, skipping probe");
-                        continue;
+        let endpoints = self.endpoints.read().await.clone();
+        let client = reqwest::Client::builder()
+            .timeout(self.policy.probe_timeout)
+            .build()
+            .unwrap_or_default();
+
+        for cluster_id in &cluster_ids {
+            let url = match endpoints.get(cluster_id) {
+                Some(endpoint) if !endpoint.health_url.is_empty() => endpoint.health_url.clone(),
+                _ => {
+                    tracing::debug!(cluster = %cluster_id, "no endpoint configured, skipping probe");
+                    continue;
+                }
+            };
+
+            let start = std::time::Instant::now();
+            let probe_result = client.get(&url).send().await;
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+            let mut state = self.state.write().await;
+            if let Some(health) = state.get_mut(cluster_id) {
+                health.last_check = Utc::now();
+                match probe_result {
+                    Ok(resp) if resp.status().is_success() => {
+                        health.latency_ms = elapsed_ms;
+                        health.consecutive_failures = 0;
+                        if !health.healthy {
+                            tracing::info!(cluster = %cluster_id, latency_ms = elapsed_ms, "cluster recovered");
+                        }
+                        health.healthy = true;
                     }
-                };
-
-                let start = std::time::Instant::now();
-                let probe_result = client.get(&url).send().await;
-                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-                let mut state = self.state.write().await;
-                if let Some(health) = state.get_mut(cluster_id) {
-                    health.last_check = Utc::now();
-                    match probe_result {
-                        Ok(resp) if resp.status().is_success() => {
-                            health.latency_ms = elapsed_ms;
-                            health.consecutive_failures = 0;
-                            if !health.healthy {
-                                tracing::info!(cluster = %cluster_id, latency_ms = elapsed_ms, "cluster recovered");
-                            }
-                            health.healthy = true;
+                    Ok(resp) => {
+                        health.consecutive_failures += 1;
+                        tracing::warn!(
+                            cluster = %cluster_id,
+                            status = %resp.status(),
+                            failures = health.consecutive_failures,
+                            "probe returned non-success"
+                        );
+                        if health.consecutive_failures >= self.policy.failure_threshold {
+                            health.healthy = false;
                         }
-                        Ok(resp) => {
-                            health.consecutive_failures += 1;
-                            tracing::warn!(
-                                cluster = %cluster_id,
-                                status = %resp.status(),
-                                failures = health.consecutive_failures,
-                                "probe returned non-success"
-                            );
-                            if health.consecutive_failures >= self.policy.failure_threshold {
-                                health.healthy = false;
-                            }
-                        }
-                        Err(e) => {
-                            health.consecutive_failures += 1;
-                            tracing::warn!(
-                                cluster = %cluster_id,
-                                error = %e,
-                                failures = health.consecutive_failures,
-                                "probe failed"
-                            );
-                            if health.consecutive_failures >= self.policy.failure_threshold {
-                                health.healthy = false;
-                            }
+                    }
+                    Err(e) => {
+                        health.consecutive_failures += 1;
+                        tracing::warn!(
+                            cluster = %cluster_id,
+                            error = %e,
+                            failures = health.consecutive_failures,
+                            "probe failed"
+                        );
+                        if health.consecutive_failures >= self.policy.failure_threshold {
+                            health.healthy = false;
                         }
                     }
                 }
@@ -201,10 +249,18 @@ mod tests {
     async fn snapshot_returns_all_clusters() {
         let checker = HealthChecker::new(Duration::from_secs(10));
         checker
-            .register_cluster_with_url(ClusterId("c1".to_string()), "http://c1/healthz".to_string())
+            .register_cluster(
+                ClusterId("c1".to_string()),
+                "http://c1/readyz".to_string(),
+                "http://c1".to_string(),
+            )
             .await;
         checker
-            .register_cluster_with_url(ClusterId("c2".to_string()), "http://c2/healthz".to_string())
+            .register_cluster(
+                ClusterId("c2".to_string()),
+                "http://c2/readyz".to_string(),
+                "http://c2".to_string(),
+            )
             .await;
         let snap = checker.snapshot().await;
         assert_eq!(snap.len(), 2);
@@ -215,7 +271,11 @@ mod tests {
         let checker = HealthChecker::new(Duration::from_secs(10));
         let cid = ClusterId("temp".to_string());
         checker
-            .register_cluster_with_url(cid.clone(), "http://temp/healthz".to_string())
+            .register_cluster(
+                cid.clone(),
+                "http://temp/readyz".to_string(),
+                "http://temp".to_string(),
+            )
             .await;
         checker.unregister_cluster(&cid).await;
         assert!(!checker.snapshot().await.contains_key(&cid));
@@ -227,7 +287,11 @@ mod tests {
         let checker = HealthChecker::new(Duration::from_secs(10));
         let cid = ClusterId("remote".to_string());
         checker
-            .register_cluster_with_url(cid.clone(), "http://remote/healthz".to_string())
+            .register_cluster(
+                cid.clone(),
+                "http://remote/readyz".to_string(),
+                "http://remote".to_string(),
+            )
             .await;
         assert!(!checker.snapshot().await[&cid].healthy);
     }
