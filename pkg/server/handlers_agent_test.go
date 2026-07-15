@@ -19,7 +19,7 @@ func TestAgentIngestionRoutes(t *testing.T) {
 		"phase":"Running","gpu_available":4,"gpu_total":8,"healthy":true,
 		"health_url":"http://spoke-1.example/healthz"
 	}`)
-	if status.Code != http.StatusOK {
+	if status.Code != http.StatusOK && status.Code != http.StatusCreated {
 		t.Fatalf("status report returned %d: %s", status.Code, status.Body.String())
 	}
 	record, err := fc.ClusterRepo.Get(context.Background(), "spoke-1")

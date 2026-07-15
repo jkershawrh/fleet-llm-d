@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -161,7 +162,10 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 
 func (fc *FleetController) leaderGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if fc.LeaderElector != nil && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !fc.LeaderElector.IsLeader() {
+		if fc.LeaderElector != nil &&
+			r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions &&
+			!strings.HasPrefix(r.URL.Path, "/api/v1/agent/") &&
+			!fc.LeaderElector.IsLeader() {
 			w.Header().Set("Retry-After", "3")
 			writeError(w, http.StatusServiceUnavailable, "standby: mutating requests are handled by the elected leader")
 			return
@@ -207,6 +211,9 @@ func (fc *FleetController) runControlPlaneWatchers(ctx context.Context) {
 				cancel()
 				cancel = nil
 				active = false
+				// Allow the old watcher goroutines to observe context
+				// cancellation before the next leader check can restart them.
+				time.Sleep(500 * time.Millisecond)
 			}
 
 			select {

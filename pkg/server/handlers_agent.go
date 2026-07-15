@@ -58,43 +58,63 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	record, err := fc.ClusterRepo.Get(r.Context(), report.ClusterID)
-	created := false
-	if err != nil {
-		record = &postgres.ClusterRecord{ID: report.ClusterID, RegisteredAt: time.Now().UTC()}
-		created = true
-	}
-	record.Name = report.Name
-	record.Region = report.Region
-	record.GPUAvailable = report.GPUAvailable
-	record.GPUTotal = report.GPUTotal
-	record.Status = report.Phase
+	status := report.Phase
 	if !report.Healthy {
-		record.Status = "Unhealthy"
+		status = "Unhealthy"
 	}
-	if record.Labels == nil {
-		record.Labels = make(map[string]string)
-	}
+	labels := map[string]string{}
 	if report.HealthURL != "" {
-		record.Labels["health_url"] = report.HealthURL
-	} else {
-		delete(record.Labels, "health_url")
+		labels["health_url"] = report.HealthURL
 	}
 
-	if created {
-		err = fc.ClusterRepo.Create(r.Context(), *record)
-	} else {
-		err = fc.ClusterRepo.Update(r.Context(), *record)
+	record, err := fc.ClusterRepo.Get(r.Context(), report.ClusterID)
+	if err == nil {
+		record.Name = report.Name
+		record.Region = report.Region
+		record.GPUAvailable = report.GPUAvailable
+		record.GPUTotal = report.GPUTotal
+		record.Status = status
+		if record.Labels == nil {
+			record.Labels = make(map[string]string)
+		}
+		for k, v := range labels {
+			record.Labels[k] = v
+		}
+		if report.HealthURL == "" {
+			delete(record.Labels, "health_url")
+		}
+		if err := fc.ClusterRepo.Update(r.Context(), *record); err != nil {
+			errorsTotal.Add(1)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "accepted", "created": false})
+		return
 	}
-	if err != nil {
+
+	// Cluster not found: attempt to create.
+	newRecord := postgres.ClusterRecord{
+		ID:           report.ClusterID,
+		Name:         report.Name,
+		Region:       report.Region,
+		GPUAvailable: report.GPUAvailable,
+		GPUTotal:     report.GPUTotal,
+		Status:       status,
+		Labels:       labels,
+		RegisteredAt: time.Now().UTC(),
+	}
+	if err := fc.ClusterRepo.Create(r.Context(), newRecord); err != nil {
+		// Handle duplicate: another request created it concurrently.
+		if strings.Contains(err.Error(), "already exists") {
+			writeJSON(w, http.StatusConflict, map[string]interface{}{"status": "conflict", "detail": "cluster already registered"})
+			return
+		}
 		errorsTotal.Add(1)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if created {
-		clustersGauge.Add(1)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "accepted", "created": created})
+	clustersGauge.Add(1)
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "accepted", "created": true})
 }
 
 func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Request) {

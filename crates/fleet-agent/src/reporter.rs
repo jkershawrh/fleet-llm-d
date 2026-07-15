@@ -89,29 +89,31 @@ impl MetricsReporter {
         loop {
             interval.tick().await;
 
-            let status = ClusterStatus {
-                id: self.cluster_id.clone(),
-                name: format!("cluster-{}", self.cluster_id),
-                region: String::new(),
-                phase: "Running".to_string(),
-                gpu_available: 0,
-                gpu_total: 0,
-                healthy: true,
-            };
-
-            if let Err(e) = self.report_status(&status).await {
-                tracing::warn!(error = %e, "failed to report status");
-            }
-
-            match self.scrape_metrics().await {
+            let scrape_ok = match self.scrape_metrics().await {
                 Ok(metrics) => {
                     if let Err(e) = self.report_metrics(&metrics).await {
                         tracing::warn!(error = %e, "failed to report metrics");
                     }
+                    true
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "failed to scrape local prometheus");
+                    false
                 }
+            };
+
+            let status = ClusterStatus {
+                id: self.cluster_id.clone(),
+                name: format!("cluster-{}", self.cluster_id),
+                region: String::new(),
+                phase: if scrape_ok { "Running" } else { "Degraded" }.to_string(),
+                gpu_available: 0,
+                gpu_total: 0,
+                healthy: scrape_ok,
+            };
+
+            if let Err(e) = self.report_status(&status).await {
+                tracing::warn!(error = %e, "failed to report status");
             }
         }
     }
