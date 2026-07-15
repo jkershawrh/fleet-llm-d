@@ -29,6 +29,7 @@ spec:
     spec:
       serviceAccountName: {{ default (printf "%s-agent" (include "fleet-llm-d.fullname" .)) .Values.agent.serviceAccount.name }}
       automountServiceAccountToken: true
+      enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
