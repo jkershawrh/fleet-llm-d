@@ -7,7 +7,7 @@ Usage:
     python3 test/soak/resilience_test.py \
         --gcl-url http://gcl-app.governed-cognitive-loop.svc:8000 \
         --fleet-url http://fleet-controller.fleet-llm-d.svc:8080 \
-        --deepfield-token oberon-deepfield-token-2026
+        --deepfield-token changeme-deepfield-token
 """
 
 from __future__ import annotations

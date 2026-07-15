@@ -26,7 +26,7 @@ spec:
             - "--port=8090"
           env:
             - name: FLEET_AUTH_SECRET
-              value: "oberon-fleet-secret-2026"
+              value: "changeme-fleet-secret"
           ports:
             - containerPort: 8090
               name: http

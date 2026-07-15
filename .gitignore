@@ -80,5 +80,17 @@ docs/internal/
 /fleet-controller
 /harness
 
-# Cluster credentials
+# Cluster credentials and secrets
 secrets/
+*.kubeconfig
+**/oberon.env
+
+# Claude Code session data (contains cluster credentials, settings)
+.claude/
+
+# Soak/harness results (may contain cluster URLs and metrics)
+test/harness/results/
+test/soak/results/
+
+# Container image build caches
+.git-backup-*

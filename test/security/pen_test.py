@@ -7,7 +7,7 @@ rate limit bypass, and large payload handling.
 Usage:
     python3 test/security/pen_test.py \
         --fleet-url http://fleet-controller.fleet-llm-d.svc:8080 \
-        --auth-secret oberon-fleet-secret-2026
+        --auth-secret changeme-fleet-secret
 """
 
 from __future__ import annotations
@@ -276,7 +276,7 @@ class PenTest:
 async def main():
     parser = argparse.ArgumentParser(description="Expanded penetration test suite")
     parser.add_argument("--fleet-url", default="http://fleet-controller.fleet-llm-d.svc:8080")
-    parser.add_argument("--auth-secret", default="oberon-fleet-secret-2026")
+    parser.add_argument("--auth-secret", default="changeme-fleet-secret")
     parser.add_argument("--timeout", type=float, default=15.0)
     args = parser.parse_args()
 
