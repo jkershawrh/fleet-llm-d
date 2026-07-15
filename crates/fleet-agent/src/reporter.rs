@@ -29,6 +29,8 @@ pub struct MetricsReporter {
     control_plane_token: Option<String>,
     /// Gateway-reachable health endpoint advertised with cluster status.
     health_url: String,
+    /// Gateway-reachable inference proxy base URL advertised with cluster status.
+    inference_url: String,
     /// Shared HTTP client with bounded request latency.
     http: reqwest::Client,
 }
@@ -47,6 +49,7 @@ impl MetricsReporter {
             collect_interval_secs: DEFAULT_COLLECT_INTERVAL_SECS,
             control_plane_token: None,
             health_url: String::new(),
+            inference_url: String::new(),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
@@ -69,6 +72,12 @@ impl MetricsReporter {
     /// Advertise a health URL that the fleet gateway can probe.
     pub fn with_health_url(mut self, health_url: String) -> Self {
         self.health_url = health_url;
+        self
+    }
+
+    /// Advertise the cluster inference proxy URL used by the fleet gateway.
+    pub fn with_inference_url(mut self, inference_url: String) -> Self {
+        self.inference_url = inference_url;
         self
     }
 
@@ -231,6 +240,7 @@ impl FleetReporter for MetricsReporter {
             "gpu_total": status.gpu_total,
             "healthy": status.healthy,
             "health_url": self.health_url,
+            "inference_url": self.inference_url,
         });
         self.post_json("/api/v1/agent/status", &body).await
     }

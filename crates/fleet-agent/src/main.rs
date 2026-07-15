@@ -73,6 +73,18 @@ pub struct FleetAgentConfig {
     #[arg(long, default_value = "", env = "FLEET_CLUSTER_HEALTH_URL")]
     pub cluster_health_url: String,
 
+    /// Gateway-reachable inference proxy base URL advertised to the control plane.
+    #[arg(long, default_value = "", env = "FLEET_CLUSTER_INFERENCE_URL")]
+    pub cluster_inference_url: String,
+
+    /// Local llm-d EPP endpoint that receives proxied inference requests.
+    #[arg(
+        long,
+        default_value = "http://localhost:8000",
+        env = "FLEET_UPSTREAM_URL"
+    )]
+    pub upstream_url: String,
+
     /// Port for the local inference proxy.
     #[arg(long, default_value = "8090", env = "FLEET_PROXY_PORT")]
     pub proxy_port: u16,
@@ -113,7 +125,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_interval(15)
     .with_token(config.control_plane_token.clone())
-    .with_health_url(config.cluster_health_url.clone());
+    .with_health_url(config.cluster_health_url.clone())
+    .with_inference_url(config.cluster_inference_url.clone());
     let enforcer = enforcer::PolicyEnforcerImpl::new(cluster_id.clone());
     let _ = enforcer.cluster_id();
     enforcer
@@ -132,8 +145,8 @@ async fn main() -> anyhow::Result<()> {
             denied_models: Vec::new(),
         })
         .await;
-    let proxy = proxy::LocalProxy::new(config.proxy_port)
-        .with_upstream("http://localhost:8000".to_string());
+    let proxy =
+        proxy::LocalProxy::new(config.proxy_port).with_upstream(config.upstream_url.clone());
     let _ = proxy.listen_port();
 
     // Spawn tasks

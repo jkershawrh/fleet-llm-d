@@ -50,6 +50,11 @@ kubectl -n fleet-llm-d create configmap fleet-control-plane \
   --from-literal=url=https://fleet-controller.example.com
 ```
 
+Set `agent.advertisedHealthURL` to the agent proxy `/readyz` endpoint and
+`agent.advertisedInferenceURL` to its base URL as reachable from the hub
+gateway. `agent.upstreamURL` identifies the local llm-d EPP that receives the
+forwarded request.
+
 ## Ports
 
 | Component | Port | Purpose |
@@ -64,8 +69,8 @@ kubectl -n fleet-llm-d create configmap fleet-control-plane \
 
 The package exposes only listeners the current binaries bind. Agent ports 8080
 and 9090 remain reserved CLI contracts and are not rendered as Services. Agent
-readiness stays false until synchronization and upstream forwarding exist;
-gateway readiness stays false until a real routing snapshot is installed. This
+readiness follows the configured upstream EPP; gateway readiness requires at
+least one successfully probed agent with a routable inference URL. This
 prevents scaffold processes from being counted as live provider evidence.
 
 The default gateway Service is `ClusterIP`. Enable the OpenShift Route or set a

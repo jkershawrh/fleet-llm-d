@@ -2,8 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ type agentStatusReport struct {
 	GPUTotal     int    `json:"gpu_total"`
 	Healthy      bool   `json:"healthy"`
 	HealthURL    string `json:"health_url"`
+	InferenceURL string `json:"inference_url"`
 }
 
 type agentMetricsReport struct {
@@ -57,38 +60,47 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "GPU capacity must satisfy 0 <= gpu_available <= gpu_total")
 		return
 	}
+	if err := validateAgentURL("health_url", report.HealthURL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateAgentURL("inference_url", report.InferenceURL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	status := report.Phase
-	if !report.Healthy {
+	status := strings.TrimSpace(report.Phase)
+	if status == "" {
+		if report.Healthy {
+			status = "Running"
+		} else {
+			status = "Unhealthy"
+		}
+	} else if !report.Healthy && status != "Degraded" && status != "Unhealthy" {
 		status = "Unhealthy"
 	}
 	labels := map[string]string{}
 	if report.HealthURL != "" {
 		labels["health_url"] = report.HealthURL
 	}
+	if report.InferenceURL != "" {
+		labels["inference_url"] = report.InferenceURL
+	}
 
 	record, err := fc.ClusterRepo.Get(r.Context(), report.ClusterID)
 	if err == nil {
-		record.Name = report.Name
-		record.Region = report.Region
-		record.GPUAvailable = report.GPUAvailable
-		record.GPUTotal = report.GPUTotal
-		record.Status = status
-		if record.Labels == nil {
-			record.Labels = make(map[string]string)
-		}
-		for k, v := range labels {
-			record.Labels[k] = v
-		}
-		if report.HealthURL == "" {
-			delete(record.Labels, "health_url")
-		}
+		applyAgentStatus(record, report, status)
 		if err := fc.ClusterRepo.Update(r.Context(), *record); err != nil {
 			errorsTotal.Add(1)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "accepted", "created": false})
+		return
+	}
+	if !errors.Is(err, postgres.ErrClusterNotFound) {
+		errorsTotal.Add(1)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -104,9 +116,21 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		RegisteredAt: time.Now().UTC(),
 	}
 	if err := fc.ClusterRepo.Create(r.Context(), newRecord); err != nil {
-		// Handle duplicate: another request created it concurrently.
-		if strings.Contains(err.Error(), "already exists") {
-			writeJSON(w, http.StatusConflict, map[string]interface{}{"status": "conflict", "detail": "cluster already registered"})
+		if errors.Is(err, postgres.ErrClusterAlreadyExists) {
+			// Another report won the create race. Complete the idempotent upsert.
+			record, getErr := fc.ClusterRepo.Get(r.Context(), report.ClusterID)
+			if getErr != nil {
+				errorsTotal.Add(1)
+				writeError(w, http.StatusInternalServerError, getErr.Error())
+				return
+			}
+			applyAgentStatus(record, report, status)
+			if updateErr := fc.ClusterRepo.Update(r.Context(), *record); updateErr != nil {
+				errorsTotal.Add(1)
+				writeError(w, http.StatusInternalServerError, updateErr.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"status": "accepted", "created": false})
 			return
 		}
 		errorsTotal.Add(1)
@@ -115,6 +139,38 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 	}
 	clustersGauge.Add(1)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "accepted", "created": true})
+}
+
+func applyAgentStatus(record *postgres.ClusterRecord, report agentStatusReport, status string) {
+	record.Name = report.Name
+	record.Region = report.Region
+	record.GPUAvailable = report.GPUAvailable
+	record.GPUTotal = report.GPUTotal
+	record.Status = status
+	if record.Labels == nil {
+		record.Labels = make(map[string]string)
+	}
+	for label, value := range map[string]string{
+		"health_url":    report.HealthURL,
+		"inference_url": report.InferenceURL,
+	} {
+		if value == "" {
+			delete(record.Labels, label)
+		} else {
+			record.Labels[label] = value
+		}
+	}
+}
+
+func validateAgentURL(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("%s must be an absolute HTTP(S) URL", field)
+	}
+	return nil
 }
 
 func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Request) {

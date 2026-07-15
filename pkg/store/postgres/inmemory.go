@@ -41,7 +41,7 @@ func (r *InMemoryClusterRepository) Create(_ context.Context, cluster ClusterRec
 		cluster.ID = generateID()
 	}
 	if _, exists := r.clusters[cluster.ID]; exists {
-		return fmt.Errorf("cluster %q already exists", cluster.ID)
+		return fmt.Errorf("%w: %q", ErrClusterAlreadyExists, cluster.ID)
 	}
 	now := time.Now()
 	if cluster.RegisteredAt.IsZero() {
@@ -60,7 +60,7 @@ func (r *InMemoryClusterRepository) Get(_ context.Context, id string) (*ClusterR
 
 	c, ok := r.clusters[id]
 	if !ok {
-		return nil, fmt.Errorf("cluster %q not found", id)
+		return nil, fmt.Errorf("%w: %q", ErrClusterNotFound, id)
 	}
 	return &c, nil
 }
@@ -81,7 +81,7 @@ func (r *InMemoryClusterRepository) Update(_ context.Context, cluster ClusterRec
 	defer r.mu.Unlock()
 
 	if _, ok := r.clusters[cluster.ID]; !ok {
-		return fmt.Errorf("cluster %q not found", cluster.ID)
+		return fmt.Errorf("%w: %q", ErrClusterNotFound, cluster.ID)
 	}
 	cluster.UpdatedAt = time.Now()
 	r.clusters[cluster.ID] = cluster
@@ -93,7 +93,7 @@ func (r *InMemoryClusterRepository) Delete(_ context.Context, id string) error {
 	defer r.mu.Unlock()
 
 	if _, ok := r.clusters[id]; !ok {
-		return fmt.Errorf("cluster %q not found", id)
+		return fmt.Errorf("%w: %q", ErrClusterNotFound, id)
 	}
 	delete(r.clusters, id)
 	return nil

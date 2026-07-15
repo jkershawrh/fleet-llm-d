@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -164,7 +164,6 @@ func (fc *FleetController) leaderGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fc.LeaderElector != nil &&
 			r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions &&
-			!strings.HasPrefix(r.URL.Path, "/api/v1/agent/") &&
 			!fc.LeaderElector.IsLeader() {
 			w.Header().Set("Retry-After", "3")
 			writeError(w, http.StatusServiceUnavailable, "standby: mutating requests are handled by the elected leader")
@@ -175,55 +174,78 @@ func (fc *FleetController) leaderGate(next http.Handler) http.Handler {
 }
 
 func (fc *FleetController) runControlPlaneWatchers(ctx context.Context) {
-	start := func(watcherCtx context.Context) {
-		if fc.CRDWatcher != nil {
-			if err := fc.CRDWatcher.Start(watcherCtx); err != nil {
-				log.Printf("WARNING: CRD watcher failed to start: %v", err)
-			}
-		}
-		if fc.ModelPlaneWatcher != nil {
-			if err := fc.ModelPlaneWatcher.Start(watcherCtx); err != nil {
-				log.Printf("WARNING: ModelPlane watcher failed to start: %v", err)
-			}
-		}
+	workers := make([]func(context.Context), 0, 2)
+	if fc.CRDWatcher != nil {
+		workers = append(workers, fc.CRDWatcher.Run)
+	}
+	if fc.ModelPlaneWatcher != nil {
+		workers = append(workers, fc.ModelPlaneWatcher.Run)
 	}
 
 	if fc.LeaderElector == nil {
-		start(ctx)
+		startWatcherGroup(ctx, workers)
 		return
 	}
 
-	go func() {
-		ticker := time.NewTicker(250 * time.Millisecond)
-		defer ticker.Stop()
-		var cancel context.CancelFunc
-		active := false
-		for {
-			leader := fc.LeaderElector.IsLeader()
-			if leader && !active {
-				var leaderCtx context.Context
-				leaderCtx, cancel = context.WithCancel(ctx)
-				active = true
-				log.Println("leader acquired: starting control-plane watchers")
-				start(leaderCtx)
-			} else if !leader && active {
-				log.Println("leadership lost: stopping control-plane watchers")
-				cancel()
-				cancel = nil
-				active = false
-				// Allow the old watcher goroutines to observe context
-				// cancellation before the next leader check can restart them.
-				time.Sleep(500 * time.Millisecond)
-			}
+	go runLeaderScopedWorkers(ctx, fc.LeaderElector.IsLeader, 250*time.Millisecond, workers)
+}
 
-			select {
-			case <-ctx.Done():
-				if cancel != nil {
-					cancel()
-				}
-				return
-			case <-ticker.C:
-			}
+func startWatcherGroup(ctx context.Context, workers []func(context.Context)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		wg.Add(len(workers))
+		for _, worker := range workers {
+			worker := worker
+			go func() {
+				defer wg.Done()
+				worker(ctx)
+			}()
 		}
+		wg.Wait()
 	}()
+	return done
+}
+
+func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval time.Duration, workers []func(context.Context)) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	var cancel context.CancelFunc
+	var done <-chan struct{}
+	stop := func() {
+		if cancel == nil {
+			return
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			log.Println("WARNING: watcher stop timed out after 10s, proceeding with leadership transition")
+		}
+		cancel = nil
+		done = nil
+	}
+	defer stop()
+
+	for {
+		leader := isLeader()
+		if leader && cancel == nil {
+			leaderCtx, leaderCancel := context.WithCancel(ctx)
+			cancel = leaderCancel
+			done = startWatcherGroup(leaderCtx, workers)
+			log.Println("leader acquired: started control-plane watchers")
+		} else if !leader && cancel != nil {
+			log.Println("leadership lost: stopping control-plane watchers")
+			stop()
+			log.Println("leadership lost: control-plane watchers stopped")
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

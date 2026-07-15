@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -142,6 +143,9 @@ func (c *PGClient) CreateCluster(ctx context.Context, cluster ClusterRecord) err
 		cluster.GPUAvailable, cluster.GPUTotal, defaultString(cluster.Status, "pending"),
 		cluster.RegisteredAt, cluster.UpdatedAt,
 	)
+	if hasSQLState(err, "23505") {
+		return fmt.Errorf("%w: %q", ErrClusterAlreadyExists, cluster.ID)
+	}
 	return err
 }
 
@@ -159,7 +163,7 @@ func (c *PGClient) GetCluster(ctx context.Context, id string) (*ClusterRecord, e
 		&rec.RegisteredAt, &rec.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("cluster %q not found", id)
+		return nil, fmt.Errorf("%w: %q", ErrClusterNotFound, id)
 	}
 	if err != nil {
 		return nil, err
@@ -914,6 +918,11 @@ func expectOneRow(res sql.Result, entity, id string) error {
 		return fmt.Errorf("%s %q not found", entity, id)
 	}
 	return nil
+}
+
+func hasSQLState(err error, state string) bool {
+	var stateErr interface{ SQLState() string }
+	return errors.As(err, &stateErr) && stateErr.SQLState() == state
 }
 
 // unmarshalJSONFields unmarshals the four JSONB tenant fields.

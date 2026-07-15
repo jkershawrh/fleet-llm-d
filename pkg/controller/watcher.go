@@ -126,35 +126,36 @@ func (w *CRDWatcher) getPlacementPolicy(ctx context.Context, ref string) (v1alph
 	return resource.Spec, nil
 }
 
-// Start begins polling the Kubernetes API for CRD changes. It performs an
-// initial poll, then starts a background goroutine that polls on each tick
-// of the configured interval. The goroutine exits when ctx is cancelled.
-// Start returns nil immediately.
+// Start begins polling the Kubernetes API for CRD changes in the background.
+// The goroutine exits when ctx is cancelled. Start returns nil immediately.
 func (w *CRDWatcher) Start(ctx context.Context) error {
+	go w.Run(ctx)
+	return nil
+}
+
+// Run polls the Kubernetes API until ctx is cancelled. Unlike Start, Run
+// blocks so callers coordinating leadership can wait for complete shutdown.
+func (w *CRDWatcher) Run(ctx context.Context) {
 	if err := w.pollOnce(ctx); err != nil {
 		log.Printf("WARNING: initial CRD poll failed: %v (will retry on next tick)", err)
 	}
 
-	go func() {
-		ticker := time.NewTicker(w.pollInterval)
-		defer ticker.Stop()
+	ticker := time.NewTicker(w.pollInterval)
+	defer ticker.Stop()
 
-		log.Println("CRD watcher started")
-		defer log.Println("CRD watcher stopped")
+	log.Println("CRD watcher started")
+	defer log.Println("CRD watcher stopped")
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := w.pollOnce(ctx); err != nil {
-					log.Printf("CRD poll error: %v", err)
-				}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.pollOnce(ctx); err != nil {
+				log.Printf("CRD poll error: %v", err)
 			}
 		}
-	}()
-
-	return nil
+	}
 }
 
 // pollOnce fetches the current list of FleetInferencePool CRDs from the

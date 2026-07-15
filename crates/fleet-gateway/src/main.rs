@@ -11,8 +11,10 @@ mod health;
 mod metrics;
 mod router;
 
+use axum::body::{to_bytes, Body};
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::header::{CONNECTION, HOST, TRANSFER_ENCODING};
+use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
 use axum::Router;
@@ -21,6 +23,8 @@ use clap::Parser;
 use fleet_common::{ClusterId, ModelId, TenantId};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tracing::info;
 
 /// Configuration for the fleet-gateway, parsed from CLI arguments.
@@ -59,6 +63,27 @@ pub struct FleetGatewayConfig {
     pub control_plane_token: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct GatewayState {
+    health_checker: health::HealthChecker,
+    http: reqwest::Client,
+    next_cluster: Arc<AtomicUsize>,
+}
+
+impl GatewayState {
+    fn new(health_checker: health::HealthChecker) -> Self {
+        Self {
+            health_checker,
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_default(),
+            next_cluster: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -83,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
         health::HealthChecker::new(std::time::Duration::from_secs(config.health_interval_secs));
     let router = router::FleetRouter::new();
     let metrics = metrics::GatewayMetrics::new();
+    let gateway_state = GatewayState::new(health_checker.clone());
     bootstrap_runtime_contracts(&router, &metrics, &config.lb_strategy).await?;
 
     // Spawn tasks
@@ -107,9 +133,10 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let gateway_port = config.gateway_port;
+    let gateway_server_state = gateway_state.clone();
     let gateway_handle = tokio::spawn(async move {
         info!("gateway HTTP server task started");
-        run_gateway_server(gateway_port).await
+        run_gateway_server(gateway_port, gateway_server_state).await
     });
 
     let metrics_port = config.metrics_port;
@@ -188,8 +215,8 @@ async fn bootstrap_runtime_contracts(
     Ok(())
 }
 
-async fn run_gateway_server(port: u16) -> anyhow::Result<()> {
-    let app = Router::new().fallback(any(gateway_unavailable));
+async fn run_gateway_server(port: u16, state: GatewayState) -> anyhow::Result<()> {
+    let app = Router::new().fallback(any(gateway_proxy)).with_state(state);
     serve(port, app).await
 }
 
@@ -202,11 +229,14 @@ async fn run_health_server(port: u16, health_checker: health::HealthChecker) -> 
 }
 
 async fn gateway_ready(State(health_checker): State<health::HealthChecker>) -> impl IntoResponse {
-    let snapshot = health_checker.snapshot().await;
-    if snapshot.values().any(|cluster| cluster.healthy) {
-        (StatusCode::OK, "ready")
+    if health_checker
+        .healthy_inference_endpoints()
+        .await
+        .is_empty()
+    {
+        (StatusCode::SERVICE_UNAVAILABLE, "no routable clusters")
     } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "no healthy clusters")
+        (StatusCode::OK, "ready")
     }
 }
 
@@ -217,11 +247,63 @@ async fn run_metrics_server(port: u16) -> anyhow::Result<()> {
     serve(port, app).await
 }
 
-async fn gateway_unavailable() -> impl IntoResponse {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        "gateway routing policy is not configured",
-    )
+async fn gateway_proxy(
+    State(state): State<GatewayState>,
+    request: Request<Body>,
+) -> Response<Body> {
+    let endpoints = state.health_checker.healthy_inference_endpoints().await;
+    if endpoints.is_empty() {
+        return gateway_error(StatusCode::SERVICE_UNAVAILABLE, "no routable clusters");
+    }
+    let index = state.next_cluster.fetch_add(1, Ordering::Relaxed) % endpoints.len();
+    let (cluster_id, base_url) = &endpoints[index];
+    let (parts, body) = request.into_parts();
+    let body = match to_bytes(body, 16 * 1024 * 1024).await {
+        Ok(body) => body,
+        Err(error) => return gateway_error(StatusCode::PAYLOAD_TOO_LARGE, &error.to_string()),
+    };
+    let path = parts
+        .uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
+    let target = format!("{}{}", base_url.trim_end_matches('/'), path);
+    let mut headers = parts.headers;
+    remove_hop_by_hop_headers(&mut headers);
+    if let Ok(value) = HeaderValue::from_str(&cluster_id.to_string()) {
+        headers.insert("x-fleet-target-cluster", value);
+    }
+
+    let upstream = match state
+        .http
+        .request(parts.method, target)
+        .headers(headers)
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => return gateway_error(StatusCode::BAD_GATEWAY, &error.to_string()),
+    };
+    let status = upstream.status();
+    let mut headers = upstream.headers().clone();
+    remove_hop_by_hop_headers(&mut headers);
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+    *response.status_mut() = status;
+    *response.headers_mut() = headers;
+    response
+}
+
+fn remove_hop_by_hop_headers(headers: &mut HeaderMap) {
+    headers.remove(HOST);
+    headers.remove(CONNECTION);
+    headers.remove(TRANSFER_ENCODING);
+}
+
+fn gateway_error(status: StatusCode, message: &str) -> Response<Body> {
+    let mut response = Response::new(Body::from(message.to_string()));
+    *response.status_mut() = status;
+    response
 }
 
 async fn serve(port: u16, app: Router) -> anyhow::Result<()> {
@@ -229,4 +311,55 @@ async fn serve(port: u16, app: Router) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use axum::routing::{any, get};
+
+    #[tokio::test]
+    async fn ready_gateway_forwards_to_a_probed_cluster() {
+        let upstream = Router::new()
+            .route("/readyz", get(|| async { "ready" }))
+            .route(
+                "/v1/models",
+                any(|headers: HeaderMap| async move {
+                    headers
+                        .get("x-fleet-target-cluster")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("")
+                        .to_string()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let checker = health::HealthChecker::new(std::time::Duration::from_secs(10));
+        checker
+            .register_cluster(
+                ClusterId("spoke-1".to_string()),
+                format!("http://{address}/readyz"),
+                format!("http://{address}"),
+            )
+            .await;
+        checker.probe_once().await;
+
+        assert_eq!(
+            gateway_ready(State(checker.clone()))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::OK
+        );
+        let request = Request::builder()
+            .uri("/v1/models")
+            .body(Body::empty())
+            .unwrap();
+        let response = gateway_proxy(State(GatewayState::new(checker)), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"spoke-1");
+        server.abort();
+    }
 }
