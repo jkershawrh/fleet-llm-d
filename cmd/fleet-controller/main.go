@@ -1619,6 +1619,9 @@ func main() {
 		if err := pgClient.Ping(context.Background()); err != nil {
 			log.Fatalf("failed to ping postgres: %v", err)
 		}
+		if err := pgClient.EnsureSchema(context.Background()); err != nil {
+			log.Fatalf("failed to initialize postgres schema: %v", err)
+		}
 		log.Println("connected to PostgreSQL — using persistent stores")
 
 		fc.ClusterRepo = postgres.NewPGClusterRepository(pgClient)

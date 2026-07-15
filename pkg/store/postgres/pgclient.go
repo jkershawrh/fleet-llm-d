@@ -51,6 +51,75 @@ func (c *PGClient) Ping(ctx context.Context) error {
 	return c.db.PingContext(ctx)
 }
 
+// EnsureSchema creates all required tables if they do not already exist.
+func (c *PGClient) EnsureSchema(ctx context.Context) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS clusters (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name TEXT NOT NULL UNIQUE, region TEXT NOT NULL,
+			labels JSONB NOT NULL DEFAULT '{}',
+			gpu_available INT NOT NULL DEFAULT 0, gpu_total INT NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'pending',
+			registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
+		`CREATE TABLE IF NOT EXISTS fleet_pools (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name TEXT NOT NULL UNIQUE, model_name TEXT NOT NULL, model_source TEXT NOT NULL,
+			placement_policy JSONB NOT NULL DEFAULT '{}',
+			routing_policy JSONB NOT NULL DEFAULT '{}',
+			scaling_policy JSONB NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
+		`CREATE TABLE IF NOT EXISTS tenants (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name TEXT NOT NULL UNIQUE, priority INT NOT NULL DEFAULT 0,
+			quotas JSONB NOT NULL DEFAULT '{}',
+			rate_limit JSONB NOT NULL DEFAULT '{}',
+			cost_control JSONB NOT NULL DEFAULT '{}',
+			cluster_scope JSONB NOT NULL DEFAULT '[]',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
+		`CREATE TABLE IF NOT EXISTS tenant_usage (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			tenant_id UUID NOT NULL, model TEXT NOT NULL, cluster_id UUID,
+			tokens_consumed BIGINT NOT NULL DEFAULT 0,
+			cost_usd NUMERIC NOT NULL DEFAULT 0,
+			request_count BIGINT NOT NULL DEFAULT 0,
+			period_start TIMESTAMPTZ NOT NULL, period_end TIMESTAMPTZ NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS rollouts (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			pool_id UUID NOT NULL, model_version TEXT NOT NULL,
+			strategy JSONB NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL DEFAULT 'pending',
+			current_weight INT NOT NULL DEFAULT 0,
+			started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			completed_at TIMESTAMPTZ)`,
+		`CREATE TABLE IF NOT EXISTS fleet_events (
+			id UUID NOT NULL DEFAULT gen_random_uuid(),
+			event_type TEXT NOT NULL, payload JSONB NOT NULL DEFAULT '{}',
+			source TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		) PARTITION BY RANGE (created_at)`,
+	}
+	for _, stmt := range statements {
+		if _, err := c.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("schema init: %w", err)
+		}
+	}
+	now := time.Now()
+	partName := fmt.Sprintf("fleet_events_%d_%02d", now.Year(), now.Month())
+	start := fmt.Sprintf("%d-%02d-01", now.Year(), now.Month())
+	nextMonth := now.AddDate(0, 1, 0)
+	end := fmt.Sprintf("%d-%02d-01", nextMonth.Year(), nextMonth.Month())
+	partSQL := fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %s PARTITION OF fleet_events FOR VALUES FROM ('%s') TO ('%s')",
+		partName, start, end)
+	if _, err := c.db.ExecContext(ctx, partSQL); err != nil {
+		return fmt.Errorf("partition init: %w", err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // ClusterRepository implementation
 // ---------------------------------------------------------------------------
