@@ -428,6 +428,10 @@ func (fc *FleetController) handleTenantUsage(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "tenant id is required")
 		return
 	}
+	if len(id) > 256 || strings.ContainsAny(id, "'\";\n\r") {
+		writeError(w, http.StatusBadRequest, "invalid tenant id")
+		return
+	}
 	// Default to current month.
 	now := time.Now()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)

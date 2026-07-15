@@ -4,3 +4,4 @@ RUN pip install --no-cache-dir httpx
 COPY test/soak/ecosystem_soak.py .
 COPY test/soak/resilience_test.py .
 ENTRYPOINT ["python3", "-u", "ecosystem_soak.py"]
+COPY test/security/pen_test.py .
