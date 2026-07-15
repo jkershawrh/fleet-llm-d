@@ -1,6 +1,6 @@
-# The default is deliberately a one-controller development profile. The
-# controller does not yet implement leader election, so no profile scales it
-# above one replica or describes it as HA.
+# The default remains a one-controller development profile. Kubernetes
+# deployments use Lease-based leader election and may be scaled when their
+# state backends are shared.
 profile: standalone-dev
 
 nameOverride: ""

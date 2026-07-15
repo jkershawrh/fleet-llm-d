@@ -53,6 +53,11 @@ spec:
             - --ledger-mode=disabled
             - --kube-api=https://kubernetes.default.svc
             - --namespace=fleet-llm-d
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534

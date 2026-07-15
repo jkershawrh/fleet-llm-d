@@ -29,6 +29,8 @@ tags:
     description: Tenant listing and usage tracking
   - name: metrics
     description: Fleet-wide and per-model metrics
+  - name: agents
+    description: Authenticated per-cluster status, metrics, and event ingestion
   - name: rollouts
     description: Model rollout lifecycle (create, promote, rollback)
   - name: intents
@@ -263,6 +265,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlatformMetrics"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------- agent ingestion ----------
+  /api/v1/agent/status:
+    post:
+      operationId: reportAgentStatus
+      summary: Upsert a cluster status report from a fleet agent
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentStatusReport"
+      responses:
+        "200":
+          description: Status accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/agent/metrics:
+    post:
+      operationId: reportAgentMetrics
+      summary: Record aggregate inference metrics from a fleet agent
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentMetricsReport"
+      responses:
+        "202":
+          description: Metrics accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/agent/events:
+    post:
+      operationId: reportAgentEvent
+      summary: Publish a structured event from a fleet agent
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentEventReport"
+      responses:
+        "202":
+          description: Event accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1188,6 +1248,67 @@ components:
         region: eu-west-1
         labels:
           env: staging
+
+    AgentStatusReport:
+      type: object
+      required: [cluster_id, name, phase, gpu_available, gpu_total, healthy]
+      properties:
+        cluster_id:
+          type: string
+        name:
+          type: string
+        region:
+          type: string
+        phase:
+          type: string
+        gpu_available:
+          type: integer
+          minimum: 0
+        gpu_total:
+          type: integer
+          minimum: 0
+        healthy:
+          type: boolean
+        health_url:
+          type: string
+          format: uri
+          description: Gateway-reachable health endpoint for this cluster
+
+    AgentMetricsReport:
+      type: object
+      required: [cluster_id, throughput_tps, ttft_p50_ms, queue_depth, gpu_utilization, kv_cache_hit_rate]
+      properties:
+        cluster_id:
+          type: string
+        throughput_tps:
+          type: number
+          minimum: 0
+        ttft_p50_ms:
+          type: number
+          minimum: 0
+        ttft_p99_ms:
+          type: number
+          minimum: 0
+        queue_depth:
+          type: integer
+          minimum: 0
+        gpu_utilization:
+          type: number
+          minimum: 0
+        kv_cache_hit_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    AgentEventReport:
+      type: object
+      required: [cluster_id, event]
+      properties:
+        cluster_id:
+          type: string
+        event:
+          description: Structured fleet event emitted by the agent
+
 
     PoolInfo:
       type: object

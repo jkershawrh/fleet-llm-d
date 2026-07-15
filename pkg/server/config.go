@@ -9,10 +9,17 @@ import (
 	"os"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
+	"github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
+
+// ConfigureLeaderElection enables Kubernetes Lease-based active/passive
+// ownership for mutating APIs and control-plane watchers.
+func (fc *FleetController) ConfigureLeaderElection(elector *controller.LeaderElector) {
+	fc.LeaderElector = elector
+}
 
 // OverrideWithPostgres replaces in-memory repositories with PostgreSQL-backed
 // stores. The caller is responsible for closing the database connection.

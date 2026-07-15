@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,7 +29,8 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 	// Wrap the API server mux with auth middleware and rate limiting.
 	mux := fc.SetupRoutes(mode)
 	exempt := defaultExemptPaths(rateLimitExempt)
-	var handler http.Handler = auth.AuthorizationMiddleware(exempt, mux)
+	var handler http.Handler = fc.leaderGate(mux)
+	handler = auth.AuthorizationMiddleware(exempt, handler)
 	handler = auth.AuthMiddleware(authCfg, exempt, handler)
 	if rateLimiter != nil {
 		handler = auth.RateLimitMiddlewareWithExemptions(rateLimiter, exempt, handler)
@@ -48,6 +51,14 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 		WriteTimeout: 10 * time.Second,
 	}
 
+	if fc.LeaderElector != nil {
+		go func() {
+			if err := fc.LeaderElector.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("leader election stopped: %v", err)
+			}
+		}()
+	}
+
 	// Start gRPC (JSON-RPC) server when grpcPort is configured.
 	if grpcPort > 0 {
 		rpcSvc := fleetgrpc.NewFleetService(
@@ -64,6 +75,9 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 			},
 		)
 		rpcSvc.SetRegisterCluster(func(req fleetgrpc.RegisterClusterRequest) (*fleetgrpc.RegisterClusterResponse, error) {
+			if fc.LeaderElector != nil && !fc.LeaderElector.IsLeader() {
+				return nil, fmt.Errorf("standby: mutating requests are handled by the elected leader")
+			}
 			reg := client.ClusterRegistration{
 				ID:     req.ID,
 				Name:   req.Name,
@@ -112,25 +126,10 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 		}
 	}()
 
-	// Start CRD and ModelPlane watchers only when running control plane.
+	// Start CRD and ModelPlane watchers only while this instance owns the
+	// Kubernetes Lease. Without leader election they retain legacy behavior.
 	if mode != "inference" {
-		// Start CRD watcher if Kubernetes API is configured.
-		if fc.CRDWatcher != nil {
-			if err := fc.CRDWatcher.Start(ctx); err != nil {
-				log.Printf("WARNING: CRD watcher failed to start: %v", err)
-			} else {
-				log.Println("CRD watcher started for FleetInferencePool resources")
-			}
-		}
-
-		// Start ModelPlane watcher if configured.
-		if fc.ModelPlaneWatcher != nil {
-			if err := fc.ModelPlaneWatcher.Start(ctx); err != nil {
-				log.Printf("WARNING: ModelPlane watcher failed to start: %v", err)
-			} else {
-				log.Println("ModelPlane watcher started")
-			}
-		}
+		fc.runControlPlaneWatchers(ctx)
 	}
 
 	// Mark as ready.
@@ -159,4 +158,72 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 
 	log.Println("fleet-controller stopped")
 	return shutdownErr
+}
+
+func (fc *FleetController) leaderGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fc.LeaderElector != nil &&
+			r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions &&
+			!strings.HasPrefix(r.URL.Path, "/api/v1/agent/") &&
+			!fc.LeaderElector.IsLeader() {
+			w.Header().Set("Retry-After", "3")
+			writeError(w, http.StatusServiceUnavailable, "standby: mutating requests are handled by the elected leader")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (fc *FleetController) runControlPlaneWatchers(ctx context.Context) {
+	start := func(watcherCtx context.Context) {
+		if fc.CRDWatcher != nil {
+			if err := fc.CRDWatcher.Start(watcherCtx); err != nil {
+				log.Printf("WARNING: CRD watcher failed to start: %v", err)
+			}
+		}
+		if fc.ModelPlaneWatcher != nil {
+			if err := fc.ModelPlaneWatcher.Start(watcherCtx); err != nil {
+				log.Printf("WARNING: ModelPlane watcher failed to start: %v", err)
+			}
+		}
+	}
+
+	if fc.LeaderElector == nil {
+		start(ctx)
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		var cancel context.CancelFunc
+		active := false
+		for {
+			leader := fc.LeaderElector.IsLeader()
+			if leader && !active {
+				var leaderCtx context.Context
+				leaderCtx, cancel = context.WithCancel(ctx)
+				active = true
+				log.Println("leader acquired: starting control-plane watchers")
+				start(leaderCtx)
+			} else if !leader && active {
+				log.Println("leadership lost: stopping control-plane watchers")
+				cancel()
+				cancel = nil
+				active = false
+				// Allow the old watcher goroutines to observe context
+				// cancellation before the next leader check can restart them.
+				time.Sleep(500 * time.Millisecond)
+			}
+
+			select {
+			case <-ctx.Done():
+				if cancel != nil {
+					cancel()
+				}
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }

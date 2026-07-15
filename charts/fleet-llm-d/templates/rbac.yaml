@@ -8,6 +8,9 @@ metadata:
     app.kubernetes.io/name: fleet-controller
     app.kubernetes.io/component: controller
 rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["fleet.llm-d.ai"]
     resources:
       - fleetclusters

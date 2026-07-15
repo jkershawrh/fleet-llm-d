@@ -12,19 +12,19 @@ import (
 
 // GPUCapacity describes the GPU resources available on a cluster.
 type GPUCapacity struct {
-	Available int
-	Total     int
-	Types     []string
+	Available int      `json:"available"`
+	Total     int      `json:"total"`
+	Types     []string `json:"types"`
 }
 
 // ClusterInfo holds the metadata and resource state for a candidate cluster.
 type ClusterInfo struct {
-	ID          string
-	Name        string
-	Region      string
-	Labels      map[string]string
-	GPUCapacity GPUCapacity
-	Utilization float64
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Region      string            `json:"region"`
+	Labels      map[string]string `json:"labels"`
+	GPUCapacity GPUCapacity       `json:"gpu_capacity"`
+	Utilization float64           `json:"utilization"`
 }
 
 // PlacementDecision records the solver's recommendation for a single cluster.

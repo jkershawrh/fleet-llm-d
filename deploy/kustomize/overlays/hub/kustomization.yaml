@@ -14,7 +14,8 @@ patches:
       metadata:
         name: fleet-controller
       spec:
-        # One active controller until leader election is implemented.
+        # Conservative default; Lease election supports standby replicas once
+        # shared state and external dependencies are configured.
         replicas: 1
         template:
           spec:

@@ -69,50 +69,43 @@ impl HealthChecker {
         }
     }
 
-    /// Override the default health policy.
-    pub fn with_policy(mut self, policy: HealthPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
     /// Get a snapshot of the current health state for all clusters.
     pub async fn snapshot(&self) -> HashMap<ClusterId, ClusterHealth> {
         self.state.read().await.clone()
     }
 
-    /// Check whether a specific cluster is healthy.
-    pub async fn is_healthy(&self, cluster_id: &ClusterId) -> bool {
-        self.state
-            .read()
-            .await
-            .get(cluster_id)
-            .is_some_and(|h| h.healthy)
-    }
-
-    /// Register a cluster endpoint to monitor.
-    pub async fn register_cluster(&self, cluster_id: ClusterId) {
-        self.register_cluster_with_url(cluster_id, String::new()).await;
-    }
-
     /// Register a cluster with a specific health endpoint URL.
     pub async fn register_cluster_with_url(&self, cluster_id: ClusterId, url: String) {
+        let has_endpoint = !url.is_empty();
+        let endpoint_changed = if has_endpoint {
+            let previous = self
+                .endpoints
+                .write()
+                .await
+                .insert(cluster_id.clone(), url.clone());
+            previous.as_deref() != Some(url.as_str())
+        } else {
+            false
+        };
         let mut state = self.state.write().await;
-        state
+        let health = state
             .entry(cluster_id.clone())
             .or_insert_with(|| ClusterHealth {
                 cluster_id: cluster_id.clone(),
-                healthy: true,
+                healthy: !has_endpoint,
                 latency_ms: 0.0,
                 last_check: Utc::now(),
                 consecutive_failures: 0,
             });
-        if !url.is_empty() {
-            self.endpoints.write().await.insert(cluster_id, url);
+        if endpoint_changed {
+            health.healthy = false;
+            health.consecutive_failures = 0;
         }
     }
 
     /// Remove a cluster from monitoring.
     pub async fn unregister_cluster(&self, cluster_id: &ClusterId) {
+        self.endpoints.write().await.remove(cluster_id);
         self.state.write().await.remove(cluster_id);
     }
 
@@ -131,7 +124,7 @@ impl HealthChecker {
 
             let cluster_ids: Vec<ClusterId> = { self.state.read().await.keys().cloned().collect() };
 
-            let endpoints = self.endpoints.read().await;
+            let endpoints = self.endpoints.read().await.clone();
             let client = reqwest::Client::builder()
                 .timeout(self.policy.probe_timeout)
                 .build()
@@ -198,25 +191,21 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn register_and_check_health() {
-        let checker = HealthChecker::new(Duration::from_secs(10));
-        let cid = ClusterId("test-cluster".to_string());
-        checker.register_cluster(cid.clone()).await;
-        assert!(checker.is_healthy(&cid).await);
-    }
-
-    #[tokio::test]
     async fn unregistered_cluster_is_unhealthy() {
         let checker = HealthChecker::new(Duration::from_secs(10));
         let cid = ClusterId("unknown".to_string());
-        assert!(!checker.is_healthy(&cid).await);
+        assert!(!checker.snapshot().await.contains_key(&cid));
     }
 
     #[tokio::test]
     async fn snapshot_returns_all_clusters() {
         let checker = HealthChecker::new(Duration::from_secs(10));
-        checker.register_cluster(ClusterId("c1".to_string())).await;
-        checker.register_cluster(ClusterId("c2".to_string())).await;
+        checker
+            .register_cluster_with_url(ClusterId("c1".to_string()), "http://c1/healthz".to_string())
+            .await;
+        checker
+            .register_cluster_with_url(ClusterId("c2".to_string()), "http://c2/healthz".to_string())
+            .await;
         let snap = checker.snapshot().await;
         assert_eq!(snap.len(), 2);
     }
@@ -225,9 +214,22 @@ mod tests {
     async fn unregister_removes_cluster() {
         let checker = HealthChecker::new(Duration::from_secs(10));
         let cid = ClusterId("temp".to_string());
-        checker.register_cluster(cid.clone()).await;
+        checker
+            .register_cluster_with_url(cid.clone(), "http://temp/healthz".to_string())
+            .await;
         checker.unregister_cluster(&cid).await;
-        assert!(!checker.is_healthy(&cid).await);
+        assert!(!checker.snapshot().await.contains_key(&cid));
+        assert!(!checker.endpoints.read().await.contains_key(&cid));
+    }
+
+    #[tokio::test]
+    async fn endpoint_requires_a_successful_probe_before_healthy() {
+        let checker = HealthChecker::new(Duration::from_secs(10));
+        let cid = ClusterId("remote".to_string());
+        checker
+            .register_cluster_with_url(cid.clone(), "http://remote/healthz".to_string())
+            .await;
+        assert!(!checker.snapshot().await[&cid].healthy);
     }
 
     #[test]
@@ -241,14 +243,5 @@ mod tests {
         };
         let json = serde_json::to_string(&h).unwrap();
         assert!(json.contains("c1"));
-    }
-
-    #[test]
-    fn with_policy_updates_probe_timeout() {
-        let checker = HealthChecker::new(Duration::from_secs(10)).with_policy(HealthPolicy {
-            failure_threshold: 2,
-            probe_timeout: Duration::from_secs(1),
-        });
-        assert_eq!(checker.policy.probe_timeout, Duration::from_secs(1));
     }
 }

@@ -19,6 +19,10 @@ func (fc *FleetController) handleReadyz(w http.ResponseWriter, _ *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
+	if fc.LeaderElector != nil && !fc.LeaderElector.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "standby: not the elected leader")
+		return
+	}
 	if fc.CRDWatcher != nil && !fc.CRDWatcher.Ready() {
 		writeError(w, http.StatusServiceUnavailable, "Kubernetes fleet API is not ready")
 		return
@@ -63,6 +67,11 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 		// Metrics
 		mux.HandleFunc("GET /api/v1/metrics/fleet", fc.handleFleetMetrics)
 		mux.HandleFunc("GET /api/v1/metrics/model/{model}", fc.handleModelMetrics)
+
+		// Per-cluster agent ingestion
+		mux.HandleFunc("POST /api/v1/agent/status", fc.handleAgentStatus)
+		mux.HandleFunc("POST /api/v1/agent/metrics", fc.handleAgentMetrics)
+		mux.HandleFunc("POST /api/v1/agent/events", fc.handleAgentEvent)
 
 		// Rollouts
 		mux.HandleFunc("GET /api/v1/rollouts", fc.handleListRollouts)

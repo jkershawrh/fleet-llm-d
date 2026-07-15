@@ -6,10 +6,12 @@
 //! optimal cluster based on health, load, latency, cost, and placement policies.
 
 mod balancer;
+mod discovery;
 mod health;
 mod metrics;
 mod router;
 
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
@@ -51,6 +53,10 @@ pub struct FleetGatewayConfig {
     /// Load-balancing strategy to use (weighted, latency, cost).
     #[arg(long, default_value = "weighted", env = "FLEET_LB_STRATEGY")]
     pub lb_strategy: String,
+
+    /// Optional bearer token for authenticated control-plane discovery.
+    #[arg(long, env = "FLEET_CONTROL_PLANE_TOKEN")]
+    pub control_plane_token: Option<String>,
 }
 
 #[tokio::main]
@@ -77,13 +83,27 @@ async fn main() -> anyhow::Result<()> {
         health::HealthChecker::new(std::time::Duration::from_secs(config.health_interval_secs));
     let router = router::FleetRouter::new();
     let metrics = metrics::GatewayMetrics::new();
-    bootstrap_runtime_contracts(&health_checker, &router, &metrics, &config.lb_strategy).await?;
+    bootstrap_runtime_contracts(&router, &metrics, &config.lb_strategy).await?;
 
     // Spawn tasks
     let health_checker_for_task = health_checker.clone();
     let health_checker_handle = tokio::spawn(async move {
         info!("health checker task started");
         health_checker_for_task.run().await
+    });
+
+    let discovery_checker = health_checker.clone();
+    let discovery_url = config.control_plane_url.clone();
+    let discovery_token = config.control_plane_token.clone();
+    let discovery_handle = tokio::spawn(async move {
+        info!(control_plane = %discovery_url, "cluster discovery task started");
+        discovery::run(
+            discovery_url,
+            discovery_token,
+            discovery_checker,
+            std::time::Duration::from_secs(10),
+        )
+        .await
     });
 
     let gateway_port = config.gateway_port;
@@ -99,13 +119,15 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let health_port = config.health_port;
+    let health_server_checker = health_checker.clone();
     let health_server_handle = tokio::spawn(async move {
         info!("health server task started");
-        run_health_server(health_port).await
+        run_health_server(health_port, health_server_checker).await
     });
 
     tokio::select! {
         result = health_checker_handle => info!(?result, "health checker exited"),
+        result = discovery_handle => info!(?result, "cluster discovery exited"),
         result = gateway_handle => info!(?result, "gateway server exited"),
         result = metrics_handle => info!(?result, "metrics server exited"),
         result = health_server_handle => info!(?result, "health server exited"),
@@ -115,22 +137,11 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn bootstrap_runtime_contracts(
-    health_checker: &health::HealthChecker,
     router: &router::FleetRouter,
     metrics: &metrics::GatewayMetrics,
     strategy: &str,
 ) -> anyhow::Result<()> {
     let cluster_id = ClusterId("bootstrap".to_string());
-    health_checker.register_cluster(cluster_id.clone()).await;
-    let _healthy = health_checker.is_healthy(&cluster_id).await;
-    let _snapshot = health_checker.snapshot().await;
-    health_checker.unregister_cluster(&cluster_id).await;
-
-    let _policy_checker = health::HealthChecker::new(std::time::Duration::from_secs(1))
-        .with_policy(health::HealthPolicy {
-            failure_threshold: 2,
-            probe_timeout: std::time::Duration::from_millis(500),
-        });
 
     metrics.record_request("bootstrap", "bootstrap-model", "bootstrap-tenant", 0.001);
     metrics.record_routing_decision("bootstrap", strategy);
@@ -182,19 +193,21 @@ async fn run_gateway_server(port: u16) -> anyhow::Result<()> {
     serve(port, app).await
 }
 
-async fn run_health_server(port: u16) -> anyhow::Result<()> {
+async fn run_health_server(port: u16, health_checker: health::HealthChecker) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route(
-            "/readyz",
-            get(|| async {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "routing snapshot is not configured",
-                )
-            }),
-        );
+        .route("/readyz", get(gateway_ready))
+        .with_state(health_checker);
     serve(port, app).await
+}
+
+async fn gateway_ready(State(health_checker): State<health::HealthChecker>) -> impl IntoResponse {
+    let snapshot = health_checker.snapshot().await;
+    if snapshot.values().any(|cluster| cluster.healthy) {
+        (StatusCode::OK, "ready")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "no healthy clusters")
+    }
 }
 
 async fn run_metrics_server(port: u16) -> anyhow::Result<()> {

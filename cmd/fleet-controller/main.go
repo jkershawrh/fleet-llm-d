@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
+	fleetcontroller "github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/server"
@@ -54,6 +55,17 @@ func main() {
 	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
 	if err != nil {
 		log.Fatalf("invalid immutable-ledger configuration: %v", err)
+	}
+	if *kubeAPI != "" {
+		identity := os.Getenv("POD_NAME")
+		if identity == "" {
+			identity, err = os.Hostname()
+			if err != nil || identity == "" {
+				log.Fatalf("leader election requires POD_NAME or a resolvable hostname")
+			}
+		}
+		fc.ConfigureLeaderElection(fleetcontroller.NewLeaderElector(*kubeAPI, *namespace, identity))
+		log.Printf("leader election enabled (identity=%s, namespace=%s)", identity, *namespace)
 	}
 
 	// Configure GCL DecisionPackage verification if signing keys are present.
