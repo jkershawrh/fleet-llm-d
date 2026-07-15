@@ -22,3 +22,4 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 hyper = { version = "1", features = ["full"] }
 hyper-util = "0.1"
+reqwest = { workspace = true }

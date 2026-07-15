@@ -54,6 +54,8 @@ pub struct HealthChecker {
     policy: HealthPolicy,
     /// Current health state of all known clusters.
     state: Arc<RwLock<HashMap<ClusterId, ClusterHealth>>>,
+    /// Map of cluster ID to health endpoint URL.
+    endpoints: Arc<RwLock<HashMap<ClusterId, String>>>,
 }
 
 impl HealthChecker {
@@ -63,6 +65,7 @@ impl HealthChecker {
             interval,
             policy: HealthPolicy::default(),
             state: Arc::new(RwLock::new(HashMap::new())),
+            endpoints: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -88,16 +91,24 @@ impl HealthChecker {
 
     /// Register a cluster endpoint to monitor.
     pub async fn register_cluster(&self, cluster_id: ClusterId) {
+        self.register_cluster_with_url(cluster_id, String::new()).await;
+    }
+
+    /// Register a cluster with a specific health endpoint URL.
+    pub async fn register_cluster_with_url(&self, cluster_id: ClusterId, url: String) {
         let mut state = self.state.write().await;
         state
             .entry(cluster_id.clone())
             .or_insert_with(|| ClusterHealth {
-                cluster_id,
+                cluster_id: cluster_id.clone(),
                 healthy: true,
                 latency_ms: 0.0,
                 last_check: Utc::now(),
                 consecutive_failures: 0,
             });
+        if !url.is_empty() {
+            self.endpoints.write().await.insert(cluster_id, url);
+        }
     }
 
     /// Remove a cluster from monitoring.
@@ -120,12 +131,63 @@ impl HealthChecker {
 
             let cluster_ids: Vec<ClusterId> = { self.state.read().await.keys().cloned().collect() };
 
+            let endpoints = self.endpoints.read().await;
+            let client = reqwest::Client::builder()
+                .timeout(self.policy.probe_timeout)
+                .build()
+                .unwrap_or_default();
+
             for cluster_id in &cluster_ids {
-                // TODO: perform actual HTTP/gRPC probe against the cluster
-                // endpoint. On success, reset consecutive_failures and update
-                // latency. On failure, increment consecutive_failures and mark
-                // unhealthy if threshold exceeded.
-                tracing::debug!(cluster = %cluster_id, "probing cluster (stub)");
+                let url = match endpoints.get(cluster_id) {
+                    Some(u) if !u.is_empty() => u.clone(),
+                    _ => {
+                        tracing::debug!(cluster = %cluster_id, "no endpoint configured, skipping probe");
+                        continue;
+                    }
+                };
+
+                let start = std::time::Instant::now();
+                let probe_result = client.get(&url).send().await;
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                let mut state = self.state.write().await;
+                if let Some(health) = state.get_mut(cluster_id) {
+                    health.last_check = Utc::now();
+                    match probe_result {
+                        Ok(resp) if resp.status().is_success() => {
+                            health.latency_ms = elapsed_ms;
+                            health.consecutive_failures = 0;
+                            if !health.healthy {
+                                tracing::info!(cluster = %cluster_id, latency_ms = elapsed_ms, "cluster recovered");
+                            }
+                            health.healthy = true;
+                        }
+                        Ok(resp) => {
+                            health.consecutive_failures += 1;
+                            tracing::warn!(
+                                cluster = %cluster_id,
+                                status = %resp.status(),
+                                failures = health.consecutive_failures,
+                                "probe returned non-success"
+                            );
+                            if health.consecutive_failures >= self.policy.failure_threshold {
+                                health.healthy = false;
+                            }
+                        }
+                        Err(e) => {
+                            health.consecutive_failures += 1;
+                            tracing::warn!(
+                                cluster = %cluster_id,
+                                error = %e,
+                                failures = health.consecutive_failures,
+                                "probe failed"
+                            );
+                            if health.consecutive_failures >= self.policy.failure_threshold {
+                                health.healthy = false;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
