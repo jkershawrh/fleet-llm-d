@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ecosystem-soak-standard
+  name: ecosystem-soak-72hr
   namespace: fleet-llm-d
 spec:
   backoffLimit: 0
@@ -22,7 +22,7 @@ spec:
             - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
             - "--ledger-url=http://ledger-gateway.sovereign-ai-lab.svc:28099"
             - "--deepfield-token=oberon-deepfield-token-2026"
-            - "--profile=standard"
+            - "--profile=72hr"
             - "--timeout=15"
           resources:
             requests:

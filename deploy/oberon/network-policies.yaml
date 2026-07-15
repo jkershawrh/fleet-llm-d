@@ -2,81 +2,37 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: default-deny-all
+  name: default-deny-ingress
   namespace: fleet-llm-d
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
-    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-fleet-controller
+  name: allow-fleet-controller-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
     matchLabels:
-      app: fleet-controller
+      app.kubernetes.io/name: fleet-controller
   policyTypes:
     - Ingress
-    - Egress
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: governed-cognitive-loop
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-ingress
-        - podSelector:
-            matchLabels:
-              app: ecosystem-soak
-        - podSelector:
-            matchLabels:
-              app: resilience-test
-        - podSelector:
-            matchLabels:
-              app: fleet-agent-sim
+        - namespaceSelector: {}
       ports:
         - port: 8080
           protocol: TCP
         - port: 9091
           protocol: TCP
-  egress:
-    - to: []
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    - to:
-        - podSelector:
-            matchLabels:
-              app: mock-inference
-      ports:
-        - port: 8080
-          protocol: TCP
-    - to:
-        - podSelector:
-            matchLabels:
-              app: modelplane-mock
-      ports:
-        - port: 8090
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: sovereign-ai-lab
-      ports:
-        - port: 28099
-          protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-mock-inference
+  name: allow-mock-inference-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
@@ -88,7 +44,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: fleet-controller
+              app.kubernetes.io/name: fleet-controller
       ports:
         - port: 8080
           protocol: TCP
@@ -96,7 +52,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-modelplane-mock
+  name: allow-modelplane-mock-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
@@ -108,7 +64,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: fleet-controller
+              app.kubernetes.io/name: fleet-controller
       ports:
         - port: 8090
           protocol: TCP
@@ -116,7 +72,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-deepfield-fleet
+  name: allow-deepfield-fleet-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
@@ -126,12 +82,7 @@ spec:
     - Ingress
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: governed-cognitive-loop
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-ingress
+        - namespaceSelector: {}
       ports:
         - port: 8000
           protocol: TCP
@@ -139,32 +90,37 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-grafana
+  name: allow-grafana-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
     matchLabels:
-      app: fleet-grafana
+      app.kubernetes.io/name: fleet-grafana
   policyTypes:
     - Ingress
-    - Egress
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-ingress
+        - namespaceSelector: {}
       ports:
         - port: 3000
           protocol: TCP
-  egress:
-    - to: []
-      ports:
-        - port: 53
-          protocol: UDP
-    - to:
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-postgres-ingress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app: fleet-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
         - podSelector:
             matchLabels:
-              app: fleet-controller
+              app.kubernetes.io/name: fleet-controller
       ports:
-        - port: 9091
+        - port: 5432
           protocol: TCP

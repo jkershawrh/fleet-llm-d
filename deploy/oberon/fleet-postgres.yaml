@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-postgres
+  namespace: fleet-llm-d
+  labels:
+    app: fleet-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fleet-postgres
+  template:
+    metadata:
+      labels:
+        app: fleet-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          env:
+            - name: POSTGRESQL_USER
+              value: fleet
+            - name: POSTGRESQL_PASSWORD
+              value: fleet
+            - name: POSTGRESQL_DATABASE
+              value: fleet_llm_d
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-postgres
+  namespace: fleet-llm-d
+spec:
+  selector:
+    app: fleet-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
