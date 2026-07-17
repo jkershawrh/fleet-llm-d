@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: semantic-router
+  namespace: fleet-llm-d
+  labels:
+    app: semantic-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: semantic-router
+  template:
+    metadata:
+      labels:
+        app: semantic-router
+    spec:
+      containers:
+        - name: semantic-router
+          image: ghcr.io/vllm-project/semantic-router/extproc:latest
+          ports:
+            - containerPort: 8080
+              name: grpc
+            - containerPort: 9090
+              name: health
+            - containerPort: 9190
+              name: metrics
+          env:
+            - name: HF_HOME
+              value: /tmp/hf-cache
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+          volumeMounts:
+            - name: models
+              mountPath: /app/models
+            - name: hf-cache
+              mountPath: /tmp/hf-cache
+            - name: cache
+              mountPath: /.cache
+            - name: vector-store
+              mountPath: /var/lib/vsr
+            - name: config
+              mountPath: /app/config/config.yaml
+              subPath: config.yaml
+          startupProbe:
+            httpGet:
+              path: /startup-status
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /startup-status
+              port: 9090
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /startup-status
+              port: 9090
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 6Gi
+      volumes:
+        - name: models
+          emptyDir: {}
+        - name: hf-cache
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: vector-store
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: semantic-router-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: semantic-router
+  namespace: fleet-llm-d
+  labels:
+    app: semantic-router
+spec:
+  selector:
+    app: semantic-router
+  ports:
+    - name: grpc
+      port: 8080
+      targetPort: 8080
+    - name: health
+      port: 9090
+      targetPort: 9090
+    - name: metrics
+      port: 9190
+      targetPort: 9190
