@@ -15,6 +15,26 @@ spec:
       labels:
         app: semantic-router
     spec:
+      initContainers:
+        - name: patch-config
+          image: ghcr.io/vllm-project/semantic-router/extproc:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp -a /app/config/* /config-out/
+              sed -i 's/method: fuzzy/method: ngram/' /config-out/config.yaml
+              sed -i 's/fuzzy_match: true/ngram_threshold: 0.4/' /config-out/config.yaml
+              sed -i 's/fuzzy_threshold: 82/ngram_arity: 3/' /config-out/config.yaml
+              sed -i '/semantic_cache:/,/enabled:/{s/enabled: true/enabled: false/}' /config-out/config.yaml
+              # TODO(Issue #2067): remove when upstream fixes OnceLock factory race.
+              # The multimodal model wins the global factory, blocking mmBERT/qwen3
+              # text embedding registration. No config-only workaround exists.
+              # Disabling multimodal causes OOM; switching model_type still hits -1.
+              echo "Config patched:"
+              diff /app/config/config.yaml /config-out/config.yaml || true
+          volumeMounts:
+            - name: config-patched
+              mountPath: /config-out
       containers:
         - name: semantic-router
           image: ghcr.io/vllm-project/semantic-router/extproc:latest
@@ -42,9 +62,8 @@ spec:
               mountPath: /.cache
             - name: vector-store
               mountPath: /var/lib/vsr
-            - name: config
-              mountPath: /app/config/config.yaml
-              subPath: config.yaml
+            - name: config-patched
+              mountPath: /app/config
           startupProbe:
             httpGet:
               path: /startup-status
@@ -80,9 +99,8 @@ spec:
           emptyDir: {}
         - name: vector-store
           emptyDir: {}
-        - name: config
-          configMap:
-            name: semantic-router-config
+        - name: config-patched
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
