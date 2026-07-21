@@ -301,6 +301,19 @@ async fn gateway_proxy(
     if let Ok(value) = HeaderValue::from_str(&cluster_id.to_string()) {
         headers.insert("x-fleet-target-cluster", value);
     }
+    if !headers.contains_key("traceparent") {
+        let trace_id = format!(
+            "00-{:032x}-{:016x}-01",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            state.next_cluster.load(Ordering::Relaxed) as u128
+        );
+        if let Ok(value) = HeaderValue::from_str(&trace_id) {
+            headers.insert("traceparent", value);
+        }
+    }
 
     let upstream = match state
         .http

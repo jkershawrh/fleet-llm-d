@@ -14,6 +14,23 @@ import (
 	"time"
 )
 
+// Token counters for inference cost metering. Read by the metrics server.
+var (
+	TokensTotal           atomic.Int64
+	PromptTokensTotal     atomic.Int64
+	CompletionTokensTotal atomic.Int64
+)
+
+var traceIDCounter atomic.Uint64
+
+func generateTraceparent() string {
+	seq := traceIDCounter.Add(1)
+	ts := uint64(time.Now().UnixNano())
+	traceID := fmt.Sprintf("%016x%016x", ts, seq)
+	spanID := fmt.Sprintf("%016x", seq)
+	return fmt.Sprintf("00-%s-%s-01", traceID, spanID)
+}
+
 // proxyStripHeaders lists headers that must not be forwarded to inference
 // backends.  This prevents leaking client credentials and removes hop-by-hop
 // headers that are meaningless on the backend leg.
@@ -258,6 +275,10 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 	}
 	proxyReq.Header.Set("Content-Type", "application/json")
 
+	if proxyReq.Header.Get("Traceparent") == "" {
+		proxyReq.Header.Set("Traceparent", generateTraceparent())
+	}
+
 	resp, err := p.http.Do(proxyReq)
 	if err != nil {
 		writeProxyError(w, http.StatusBadGateway, "backend request failed: "+err.Error())
@@ -303,9 +324,29 @@ func (p *InferenceProxy) ProxyRequest(w http.ResponseWriter, r *http.Request, ba
 			}
 		}
 	} else {
-		// Non-streaming: copy entire response body.
-		io.Copy(w, resp.Body)
+		// Non-streaming: tee the response to extract token usage.
+		var buf bytes.Buffer
+		io.Copy(w, io.TeeReader(resp.Body, &buf))
+		p.recordTokenUsage(backend, buf.Bytes())
 	}
+}
+
+type usageInfo struct {
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+func (p *InferenceProxy) recordTokenUsage(backend *Backend, body []byte) {
+	var resp usageInfo
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage.TotalTokens == 0 {
+		return
+	}
+	TokensTotal.Add(int64(resp.Usage.TotalTokens))
+	PromptTokensTotal.Add(int64(resp.Usage.PromptTokens))
+	CompletionTokensTotal.Add(int64(resp.Usage.CompletionTokens))
 }
 
 // chatMessage represents a single message in an OpenAI chat request.

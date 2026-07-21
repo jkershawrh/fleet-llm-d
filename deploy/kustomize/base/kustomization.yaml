@@ -7,4 +7,5 @@ resources:
   - fleet-gateway.yaml
   - rbac.yaml
   - network-policies.yaml
+  - servicemonitors.yaml
   - ../../../api/crds

@@ -1,0 +1,52 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fleet-controller
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fleet-gateway
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-gateway
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-gateway
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fleet-agent
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-agent
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-agent
+  namespaceSelector:
+    any: true
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
