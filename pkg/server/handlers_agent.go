@@ -240,6 +240,60 @@ func (fc *FleetController) handleAgentEvent(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
+func (fc *FleetController) handleAgentPolicies(w http.ResponseWriter, r *http.Request) {
+	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
+	clusterID := r.PathValue("cluster_id")
+	if clusterID == "" {
+		writeError(w, http.StatusBadRequest, "cluster_id is required")
+		return
+	}
+
+	type quotaEntry struct {
+		MaxRPS             float64 `json:"max_rps"`
+		MaxConcurrent      uint64  `json:"max_concurrent"`
+		MaxTokensPerMinute uint64  `json:"max_tokens_per_minute"`
+	}
+	type placementEntry struct {
+		AllowedModels []string `json:"allowed_models"`
+		DeniedModels  []string `json:"denied_models"`
+	}
+	type policyResponse struct {
+		Quotas    map[string]quotaEntry `json:"quotas"`
+		Placement *placementEntry       `json:"placement,omitempty"`
+	}
+
+	resp := policyResponse{
+		Quotas: make(map[string]quotaEntry),
+	}
+
+	tenants, err := fc.TenantRepo.List(r.Context())
+	if err != nil {
+		errorsTotal.Inc()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, t := range tenants {
+		q := quotaEntry{MaxRPS: 100, MaxConcurrent: 100, MaxTokensPerMinute: 1_000_000}
+		if quotas := t.Quotas; quotas != nil {
+			if v, ok := quotas["maxTokensPerMinute"]; ok {
+				if f, ok := v.(float64); ok {
+					q.MaxTokensPerMinute = uint64(f)
+				}
+			}
+			if v, ok := quotas["maxConcurrentRequests"]; ok {
+				if f, ok := v.(float64); ok {
+					q.MaxConcurrent = uint64(f)
+					q.MaxRPS = f * 10
+				}
+			}
+		}
+		resp.Quotas[t.ID] = q
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func decodeAgentReport(w http.ResponseWriter, r *http.Request, target interface{}) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()

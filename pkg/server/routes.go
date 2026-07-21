@@ -72,6 +72,7 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 		mux.HandleFunc("POST /api/v1/agent/status", fc.handleAgentStatus)
 		mux.HandleFunc("POST /api/v1/agent/metrics", fc.handleAgentMetrics)
 		mux.HandleFunc("POST /api/v1/agent/events", fc.handleAgentEvent)
+		mux.HandleFunc("GET /api/v1/agent/policies/{cluster_id}", fc.handleAgentPolicies)
 
 		// Rollouts
 		mux.HandleFunc("GET /api/v1/rollouts", fc.handleListRollouts)

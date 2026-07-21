@@ -8,8 +8,38 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fleet_common::{ClusterId, FleetError, ModelId, PolicyEnforcer, TenantId};
+use serde::Deserialize;
 use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
+
+#[derive(Debug, Deserialize)]
+struct PolicySyncResponse {
+    #[serde(default)]
+    quotas: HashMap<String, QuotaEntry>,
+    placement: Option<PlacementEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuotaEntry {
+    #[serde(default = "default_rps")]
+    max_rps: f64,
+    #[serde(default = "default_concurrent")]
+    max_concurrent: u64,
+    #[serde(default = "default_tokens")]
+    max_tokens_per_minute: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlacementEntry {
+    #[serde(default)]
+    allowed_models: Vec<String>,
+    #[serde(default)]
+    denied_models: Vec<String>,
+}
+
+fn default_rps() -> f64 { 100.0 }
+fn default_concurrent() -> u64 { 100 }
+fn default_tokens() -> u64 { 1_000_000 }
 
 /// Tenant-level quota configuration.
 #[derive(Debug, Clone)]
@@ -89,13 +119,53 @@ impl PolicyEnforcerImpl {
 
     /// Start the policy sync loop that periodically fetches updated policies
     /// from the control plane. Runs until cancelled.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self, control_plane_url: &str, token: &str) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting policy enforcer sync");
 
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/v1/agent/policies/{}", control_plane_url.trim_end_matches('/'), self.cluster_id);
         let mut interval = time::interval(Duration::from_secs(30));
+
         loop {
             interval.tick().await;
-            tracing::debug!(cluster_id = %self.cluster_id, "policy sync tick completed");
+
+            let mut req = client.get(&url);
+            if !token.is_empty() {
+                req = req.bearer_auth(token);
+            }
+
+            match req.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<PolicySyncResponse>().await {
+                        Ok(policy) => {
+                            for (tid, q) in policy.quotas {
+                                self.set_quota(
+                                    TenantId(tid),
+                                    TenantQuota {
+                                        max_rps: q.max_rps,
+                                        max_concurrent: q.max_concurrent,
+                                        max_tokens_per_minute: q.max_tokens_per_minute,
+                                    },
+                                ).await;
+                            }
+                            if let Some(p) = policy.placement {
+                                self.set_placement(PlacementConstraint {
+                                    allowed_models: p.allowed_models.into_iter().map(ModelId).collect(),
+                                    denied_models: p.denied_models.into_iter().map(ModelId).collect(),
+                                }).await;
+                            }
+                            tracing::debug!(cluster_id = %self.cluster_id, "policy sync completed");
+                        }
+                        Err(e) => tracing::warn!(error = %e, "failed to parse policy response"),
+                    }
+                }
+                Ok(resp) => {
+                    tracing::debug!(status = resp.status().as_u16(), "policy endpoint returned non-success");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "policy sync request failed");
+                }
+            }
         }
     }
 }

@@ -160,9 +160,11 @@ async fn main() -> anyhow::Result<()> {
         reporter.run().await
     });
 
+    let enforcer_cp_url = config.control_plane_url.clone();
+    let enforcer_token = config.control_plane_token.clone().unwrap_or_default();
     let enforcer_handle = tokio::spawn(async move {
         info!("policy enforcer task started");
-        enforcer.run().await
+        enforcer.run(&enforcer_cp_url, &enforcer_token).await
     });
 
     let proxy_handle = tokio::spawn(async move {

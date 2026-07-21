@@ -1,94 +1,187 @@
 //! Kubernetes resource watcher for local llm-d workloads.
 //!
-//! Watches InferencePool custom resources, Pods bearing llm-d labels, and Node
-//! resources via kube-rs, forwarding events to a [`ResourceEventHandler`].
+//! Watches Pods bearing llm-d labels and Node resources via kube-rs,
+//! forwarding events to a [`ResourceEventHandler`].
 
 use fleet_common::ClusterId;
+use futures::TryStreamExt;
+use k8s_openapi::api::core::v1::{Node, Pod};
+use kube::{
+    api::{Api, ListParams},
+    runtime::watcher::{self, Event},
+    Client,
+};
 use serde::{Deserialize, Serialize};
-use tokio::time::{self, Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Metadata about a watched Kubernetes resource.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceMeta {
-    /// Kubernetes namespace.
     pub namespace: String,
-    /// Resource name.
     pub name: String,
-    /// Resource kind (e.g. `InferencePool`, `Pod`, `Node`).
     pub kind: String,
-    /// Resource version from the Kubernetes API.
     pub resource_version: String,
 }
 
 /// The kinds of Kubernetes resources the watcher monitors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchedResource {
-    /// An llm-d InferencePool custom resource.
     InferencePool,
-    /// A Pod with llm-d labels (e.g. `app.kubernetes.io/part-of=llm-d`).
     Pod,
-    /// A cluster Node.
     Node,
 }
 
 /// Trait for handling resource lifecycle events from the Kubernetes API.
 #[allow(async_fn_in_trait)]
 pub trait ResourceEventHandler: Send + Sync {
-    /// Called when a new resource is observed.
     async fn on_add(&self, meta: &ResourceMeta) -> anyhow::Result<()>;
-
-    /// Called when an existing resource is modified.
     async fn on_update(&self, old: &ResourceMeta, new: &ResourceMeta) -> anyhow::Result<()>;
-
-    /// Called when a resource is deleted.
     async fn on_delete(&self, meta: &ResourceMeta) -> anyhow::Result<()>;
 }
+
+type Seen = Arc<RwLock<HashMap<String, ResourceMeta>>>;
 
 /// Watches local Kubernetes resources relevant to llm-d and dispatches events.
 #[derive(Debug, Clone)]
 pub struct ResourceWatcher {
-    /// The cluster this watcher belongs to.
     cluster_id: ClusterId,
+    namespace: String,
 }
 
 impl ResourceWatcher {
-    /// Create a new [`ResourceWatcher`] for the given cluster.
     pub fn new(cluster_id: ClusterId) -> Self {
-        Self { cluster_id }
+        Self {
+            cluster_id,
+            namespace: "default".to_string(),
+        }
     }
 
-    /// Returns the cluster this watcher is bound to.
+    pub fn with_namespace(mut self, ns: impl Into<String>) -> Self {
+        self.namespace = ns.into();
+        self
+    }
+
     pub fn cluster_id(&self) -> &ClusterId {
         &self.cluster_id
     }
 
-    /// Start watching all resource types. This method runs until cancelled.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the Kubernetes client cannot be initialised or the
-    /// watch stream terminates unexpectedly.
+    /// Start watching Pods (with llm-d labels) and Nodes. Runs until cancelled.
     pub async fn run(&self, handler: impl ResourceEventHandler) -> anyhow::Result<()> {
-        tracing::info!(cluster_id = %self.cluster_id, "starting resource watcher");
+        let client = match Client::try_default().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "kube client unavailable, falling back to heartbeat mode");
+                return self.run_heartbeat_fallback(&handler).await;
+            }
+        };
 
-        let mut interval = time::interval(Duration::from_secs(30));
+        tracing::info!(cluster_id = %self.cluster_id, namespace = %self.namespace, "starting resource watcher");
+
+        let pod_seen: Seen = Arc::new(RwLock::new(HashMap::new()));
+        let node_seen: Seen = Arc::new(RwLock::new(HashMap::new()));
+
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &self.namespace);
+        let nodes: Api<Node> = Api::all(client);
+
+        let pod_lp = ListParams::default().labels("app.kubernetes.io/part-of=llm-d");
+        let node_lp = ListParams::default();
+
+        let pod_seen_c = pod_seen.clone();
+        let pod_stream = async {
+            let stream = watcher::watcher(pods, watcher::Config::default().labels("app.kubernetes.io/part-of=llm-d"));
+            futures::pin_mut!(stream);
+            while let Some(event) = stream.try_next().await? {
+                handle_event(&handler, &pod_seen_c, "Pod", &self.namespace, event).await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+
+        let node_seen_c = node_seen.clone();
+        let ns = self.namespace.clone();
+        let node_stream = async {
+            let stream = watcher::watcher(nodes, watcher::Config::default());
+            futures::pin_mut!(stream);
+            while let Some(event) = stream.try_next().await? {
+                handle_event(&handler, &node_seen_c, "Node", &ns, event).await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+
+        tokio::select! {
+            r = pod_stream => r?,
+            r = node_stream => r?,
+        }
+
+        Ok(())
+    }
+
+    async fn run_heartbeat_fallback(&self, handler: &impl ResourceEventHandler) -> anyhow::Result<()> {
+        tracing::info!(cluster_id = %self.cluster_id, "using heartbeat fallback (no kube API access)");
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
             let meta = ResourceMeta {
-                namespace: "default".to_string(),
+                namespace: self.namespace.clone(),
                 name: self.cluster_id.to_string(),
                 kind: "Heartbeat".to_string(),
                 resource_version: chrono::Utc::now().timestamp().to_string(),
             };
             handler.on_add(&meta).await?;
-            handler.on_update(&meta, &meta).await?;
-            handler.on_delete(&meta).await?;
-            tracing::debug!(
-                cluster_id = %self.cluster_id,
-                "resource watcher poll completed"
-            );
         }
     }
+}
+
+async fn handle_event<K>(
+    handler: &impl ResourceEventHandler,
+    seen: &Seen,
+    kind: &str,
+    namespace: &str,
+    event: Event<K>,
+) -> anyhow::Result<()>
+where
+    K: kube::Resource,
+{
+    match event {
+        Event::Apply(obj) | Event::InitApply(obj) => {
+            let name = obj.meta().name.clone().unwrap_or_default();
+            let rv = obj.meta().resource_version.clone().unwrap_or_default();
+            let ns = obj.meta().namespace.clone().unwrap_or_else(|| namespace.to_string());
+            let meta = ResourceMeta {
+                namespace: ns,
+                name: name.clone(),
+                kind: kind.to_string(),
+                resource_version: rv,
+            };
+            let mut map = seen.write().await;
+            if let Some(old) = map.get(&name) {
+                let old_clone = old.clone();
+                map.insert(name, meta.clone());
+                drop(map);
+                handler.on_update(&old_clone, &meta).await?;
+            } else {
+                map.insert(name, meta.clone());
+                drop(map);
+                handler.on_add(&meta).await?;
+            }
+        }
+        Event::Delete(obj) => {
+            let name = obj.meta().name.clone().unwrap_or_default();
+            let rv = obj.meta().resource_version.clone().unwrap_or_default();
+            let ns = obj.meta().namespace.clone().unwrap_or_else(|| namespace.to_string());
+            let meta = ResourceMeta {
+                namespace: ns,
+                name: name.clone(),
+                kind: kind.to_string(),
+                resource_version: rv,
+            };
+            seen.write().await.remove(&name);
+            handler.on_delete(&meta).await?;
+        }
+        Event::Init | Event::InitDone => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -103,10 +196,7 @@ mod tests {
 
     #[test]
     fn watched_resource_equality() {
-        assert_eq!(
-            WatchedResource::InferencePool,
-            WatchedResource::InferencePool
-        );
+        assert_eq!(WatchedResource::InferencePool, WatchedResource::InferencePool);
         assert_ne!(WatchedResource::Pod, WatchedResource::Node);
     }
 
@@ -120,5 +210,11 @@ mod tests {
         };
         let json = serde_json::to_string(&meta).unwrap();
         assert!(json.contains("InferencePool"));
+    }
+
+    #[test]
+    fn watcher_with_namespace() {
+        let w = ResourceWatcher::new(ClusterId("c1".to_string())).with_namespace("fleet-llm-d");
+        assert_eq!(w.namespace, "fleet-llm-d");
     }
 }

@@ -195,8 +195,11 @@ fn parse_prometheus_metrics(body: &str) -> InferenceMetrics {
             ttft_p99 = ttft_p99.max(value);
         } else if name.contains("queue_depth") {
             queue_depth = queue_depth.saturating_add(value.max(0.0) as u64);
-        } else if name.contains("gpu_utilization") {
+        } else if name.contains("gpu_utilization") || name == "habana_device_utilization" {
             gpu_util_total += value;
+            gpu_util_samples += 1;
+        } else if name == "habana_device_memory_used_bytes" {
+            gpu_util_total += value / (96.0 * 1024.0 * 1024.0 * 1024.0);
             gpu_util_samples += 1;
         } else if name.contains("kv_cache_hit_rate") {
             kv_cache_hit_rate_total += value;
@@ -348,5 +351,23 @@ mod tests {
         assert_eq!(metrics.queue_depth, 5);
         assert_eq!(metrics.gpu_utilization, 70.0);
         assert_eq!(metrics.kv_cache_hit_rate, 0.9);
+    }
+
+    #[test]
+    fn prometheus_parser_recognizes_gaudi_metrics() {
+        let metrics = parse_prometheus_metrics(
+            r#"
+            habana_device_utilization{device="0"} 0.75
+            habana_device_utilization{device="1"} 0.85
+            inference_throughput_tps 50.0
+            inference_ttft_p50_ms 15
+            inference_ttft_p99_ms 45
+            inference_queue_depth 3
+            kv_cache_hit_rate 0.6
+            "#,
+        );
+        assert_eq!(metrics.throughput_tps, 50.0);
+        assert!((metrics.gpu_utilization - 0.8).abs() < 0.01);
+        assert_eq!(metrics.queue_depth, 3);
     }
 }
