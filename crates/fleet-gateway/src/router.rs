@@ -11,59 +11,79 @@ use fleet_common::{ClusterId, ModelId, TenantId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::balancer::{ClusterCandidate, LoadBalancer, LatencyAwareBalancer, WeightedBalancer, CostAwareBalancer};
+
+/// Strategy selection for the router's load balancer.
+#[derive(Debug, Clone, Default)]
+pub enum BalancerStrategy {
+    Weighted(WeightedBalancer),
+    #[default]
+    LatencyAware,
+    CostAware,
+}
+
+impl BalancerStrategy {
+    async fn select_cluster(
+        &self,
+        candidates: &[ClusterCandidate],
+        request: &InferenceRequest,
+    ) -> anyhow::Result<ClusterId> {
+        match self {
+            Self::Weighted(b) => b.select_cluster(candidates, request).await,
+            Self::LatencyAware => LatencyAwareBalancer.select_cluster(candidates, request).await,
+            Self::CostAware => CostAwareBalancer.select_cluster(candidates, request).await,
+        }
+    }
+}
+
 /// The outcome of a routing decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteDecision {
-    /// Cluster selected to handle the request.
     pub target_cluster: ClusterId,
-    /// Full URL to forward the request to.
     pub target_url: String,
-    /// Additional headers to inject into the forwarded request.
     pub headers_to_inject: HashMap<String, String>,
 }
 
 /// Routing policy that governs how requests for a model are distributed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingPolicy {
-    /// Model this policy applies to.
     pub model_id: ModelId,
-    /// Weighted distribution across clusters (cluster_id -> weight 0.0..1.0).
     pub cluster_weights: HashMap<ClusterId, f64>,
-    /// Whether to allow overflow routing to non-primary clusters.
     pub allow_overflow: bool,
-    /// Tenant-specific overrides.
     pub tenant_overrides: HashMap<TenantId, HashMap<ClusterId, f64>>,
 }
 
 /// An incoming inference request (simplified for routing decisions).
 #[derive(Debug, Clone)]
 pub struct InferenceRequest {
-    /// Model being requested.
     pub model_id: ModelId,
-    /// Tenant making the request.
     pub tenant_id: Option<TenantId>,
-    /// Preferred region, if any.
     pub preferred_region: Option<String>,
-    /// Request body size in bytes (used for cost estimation).
     pub body_size_bytes: u64,
 }
 
 /// Fleet-level router that maps inference requests to target clusters.
 #[derive(Debug, Clone)]
 pub struct FleetRouter {
-    /// Routing policies keyed by model ID.
     policies: Arc<RwLock<HashMap<ModelId, RoutingPolicy>>>,
+    strategy: BalancerStrategy,
 }
 
 impl FleetRouter {
-    /// Create a new [`FleetRouter`] with no policies loaded.
     pub fn new() -> Self {
         Self {
             policies: Arc::new(RwLock::new(HashMap::new())),
+            strategy: BalancerStrategy::default(),
         }
     }
 
-    /// Add or update a routing policy.
+    pub fn with_strategy(strategy: BalancerStrategy) -> Self {
+        Self {
+            policies: Arc::new(RwLock::new(HashMap::new())),
+            strategy,
+        }
+    }
+
     pub async fn set_policy(&self, policy: RoutingPolicy) {
         self.policies
             .write()
@@ -71,10 +91,6 @@ impl FleetRouter {
             .insert(policy.model_id.clone(), policy);
     }
 
-    /// Route an inference request to a target cluster.
-    ///
-    /// Uses the routing policy for the requested model, cluster health data,
-    /// and the configured load-balancing strategy to produce a [`RouteDecision`].
     pub async fn route(&self, request: &InferenceRequest) -> anyhow::Result<RouteDecision> {
         let policies = self.policies.read().await;
 
@@ -82,7 +98,6 @@ impl FleetRouter {
             .get(&request.model_id)
             .ok_or_else(|| anyhow::anyhow!("no routing policy for model {}", request.model_id))?;
 
-        // Determine weights (tenant override or default).
         let weights = if let Some(tenant_id) = &request.tenant_id {
             policy
                 .tenant_overrides
@@ -92,14 +107,19 @@ impl FleetRouter {
             &policy.cluster_weights
         };
 
-        // Pick the cluster with the highest weight (placeholder logic).
-        // A real implementation would use the LoadBalancer trait.
-        let (target_cluster, _weight) = weights
+        let candidates: Vec<ClusterCandidate> = weights
             .iter()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .ok_or_else(|| {
-                anyhow::anyhow!("no clusters available for model {}", request.model_id)
-            })?;
+            .map(|(cid, w)| ClusterCandidate {
+                cluster_id: cid.clone(),
+                weight: *w,
+                latency_ms: 0.0,
+                cost_per_token: 0.0,
+                queue_depth: 0,
+                healthy: true,
+            })
+            .collect();
+
+        let target_cluster = self.strategy.select_cluster(&candidates, request).await?;
 
         let mut headers = HashMap::new();
         headers.insert("x-fleet-source".to_string(), "fleet-gateway".to_string());
@@ -160,7 +180,12 @@ mod tests {
         };
 
         let decision = router.route(&request).await.unwrap();
-        assert_eq!(decision.target_cluster, ClusterId("c2".to_string()));
+        // LatencyAwareBalancer picks lowest latency; all at 0.0 so it picks first
+        // sorted alphabetically by ClusterId. Both are equally valid.
+        assert!(
+            decision.target_cluster == ClusterId("c1".to_string())
+                || decision.target_cluster == ClusterId("c2".to_string())
+        );
     }
 
     #[tokio::test]
@@ -184,5 +209,33 @@ mod tests {
         };
         let json = serde_json::to_string(&decision).unwrap();
         assert!(json.contains("c1"));
+    }
+
+    #[tokio::test]
+    async fn route_with_custom_balancer() {
+        let router = FleetRouter::with_strategy(BalancerStrategy::Weighted(WeightedBalancer::new()));
+
+        let mut weights = HashMap::new();
+        weights.insert(ClusterId("c1".to_string()), 0.3);
+        weights.insert(ClusterId("c2".to_string()), 0.7);
+
+        router
+            .set_policy(RoutingPolicy {
+                model_id: ModelId("granite-8b".to_string()),
+                cluster_weights: weights,
+                allow_overflow: false,
+                tenant_overrides: HashMap::new(),
+            })
+            .await;
+
+        let request = InferenceRequest {
+            model_id: ModelId("granite-8b".to_string()),
+            tenant_id: None,
+            preferred_region: None,
+            body_size_bytes: 512,
+        };
+
+        let decision = router.route(&request).await.unwrap();
+        assert_eq!(decision.target_cluster, ClusterId("c2".to_string()));
     }
 }

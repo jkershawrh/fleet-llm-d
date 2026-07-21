@@ -3,6 +3,7 @@ package scorer
 import (
 	"context"
 	"math"
+	"strconv"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
@@ -101,9 +102,20 @@ func NewLocalityScorer() *LocalityScorer {
 	return &LocalityScorer{}
 }
 
-// Score returns a locality-based score for the cluster. Without explicit
-// source locality information in the pool, returns a neutral score.
+// Score returns a locality-based score. When a dataLocality affinity is present,
+// clusters in the same region as the pool's preferred region get 1.0, others 0.3.
 func (s *LocalityScorer) Score(ctx context.Context, cluster solver.ClusterInfo, pool v1alpha1.FleetInferencePoolSpec, policy v1alpha1.PlacementPolicySpec) (float64, error) {
+	for _, aff := range policy.Affinity {
+		if aff.Type == "dataLocality" {
+			preferred := cluster.Labels["preferred_region"]
+			if preferred != "" && cluster.Region == preferred {
+				return 1.0, nil
+			}
+			if preferred != "" {
+				return 0.3, nil
+			}
+		}
+	}
 	return 0.5, nil
 }
 
@@ -116,8 +128,13 @@ func NewKVCacheAffinityScorer() *KVCacheAffinityScorer {
 	return &KVCacheAffinityScorer{}
 }
 
-// Score returns a KV cache affinity score for the cluster. Without explicit
-// cache hit rate data in the cluster info, returns a neutral score.
+// Score returns a KV cache affinity score. Uses the KVCacheHitRate field from
+// cluster labels if available, otherwise returns a neutral score.
 func (s *KVCacheAffinityScorer) Score(ctx context.Context, cluster solver.ClusterInfo, pool v1alpha1.FleetInferencePoolSpec, policy v1alpha1.PlacementPolicySpec) (float64, error) {
+	if rate, ok := cluster.Labels["kv_cache_hit_rate"]; ok {
+		if parsed, err := strconv.ParseFloat(rate, 64); err == nil && parsed >= 0 && parsed <= 1 {
+			return parsed, nil
+		}
+	}
 	return 0.5, nil
 }

@@ -3,7 +3,10 @@ package collector
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -166,6 +169,65 @@ func (c *PrometheusCollector) ScrapeOnce(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("scraping %s: %w", c.scrapeURL, err)
 	}
 	defer resp.Body.Close()
-	// TODO: parse Prometheus exposition format and populate c.metrics.
-	return 0, nil
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return 0, fmt.Errorf("reading response: %w", err)
+	}
+
+	pool := parsePrometheusText(string(body))
+	c.Add(ClusterMetrics{
+		ClusterID: "scraped",
+		Pools:     []PoolMetrics{pool},
+		Timestamp: time.Now().UTC(),
+	})
+	return len(body), nil
+}
+
+func parsePrometheusText(body string) PoolMetrics {
+	var pm PoolMetrics
+	pm.PoolName = "scraped"
+	var gpuTotal, gpuCount float64
+
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.SplitN(parts[0], "{", 2)[0]
+		val, err := strconv.ParseFloat(parts[1], 64)
+		if err != nil {
+			continue
+		}
+
+		switch {
+		case strings.Contains(name, "throughput") && !strings.HasSuffix(name, "_total"):
+			pm.Throughput_TPS += val
+		case strings.Contains(name, "ttft") && strings.Contains(name, "p50"):
+			if val > pm.TTFT_P50_Ms {
+				pm.TTFT_P50_Ms = val
+			}
+		case strings.Contains(name, "ttft") && strings.Contains(name, "p99"):
+			if val > pm.TTFT_P99_Ms {
+				pm.TTFT_P99_Ms = val
+			}
+		case strings.Contains(name, "queue_depth"):
+			pm.QueueDepth += int(val)
+		case strings.Contains(name, "gpu_utilization") || name == "habana_device_utilization":
+			gpuTotal += val
+			gpuCount++
+		case strings.Contains(name, "kv_cache_hit_rate"):
+			pm.KVCacheHitRate = val
+		case strings.Contains(name, "cpu_utilization"):
+			pm.CPUUtilization = val
+		}
+	}
+
+	if gpuCount > 0 {
+		pm.GPUUtilization = gpuTotal / gpuCount
+	}
+	return pm
 }

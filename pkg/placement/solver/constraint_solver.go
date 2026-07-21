@@ -43,13 +43,25 @@ type ConstraintSolver interface {
 	Solve(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, clusters []ClusterInfo, policy v1alpha1.PlacementPolicySpec) ([]PlacementDecision, error)
 }
 
+// ExternalScorer scores a cluster for placement. Implementations live in the
+// scorer package to avoid circular imports.
+type ExternalScorer interface {
+	Score(ctx context.Context, cluster ClusterInfo, pool v1alpha1.FleetInferencePoolSpec, policy v1alpha1.PlacementPolicySpec) (float64, error)
+}
+
 // defaultConstraintSolver is the built-in implementation of ConstraintSolver.
-type defaultConstraintSolver struct{}
+type defaultConstraintSolver struct {
+	scorer ExternalScorer
+}
 
 // NewConstraintSolver returns a new ConstraintSolver using the default
 // implementation.
 func NewConstraintSolver() ConstraintSolver {
 	return &defaultConstraintSolver{}
+}
+
+func NewConstraintSolverWithScorer(scorer ExternalScorer) ConstraintSolver {
+	return &defaultConstraintSolver{scorer: scorer}
 }
 
 // Solve filters clusters by constraints, scores them using affinity rules,
@@ -96,7 +108,16 @@ func (s *defaultConstraintSolver) Solve(ctx context.Context, pool v1alpha1.Fleet
 	// Build placement decisions with affinity-based scores.
 	decisions := make([]PlacementDecision, 0, len(eligible))
 	for _, cluster := range eligible {
-		score := scoreCluster(cluster, policy.Affinity)
+		var score float64
+		if s.scorer != nil {
+			var err error
+			score, err = s.scorer.Score(ctx, cluster, pool, policy)
+			if err != nil {
+				return nil, fmt.Errorf("scorer error for cluster %s: %w", cluster.ID, err)
+			}
+		} else {
+			score = scoreCluster(cluster, policy.Affinity)
+		}
 		gpuType := requestedGPUType
 		if gpuType == "" && len(cluster.GPUCapacity.Types) > 0 {
 			gpuType = cluster.GPUCapacity.Types[0]
