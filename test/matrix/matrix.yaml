@@ -3,15 +3,15 @@
 # Status values: red (not passing), amber (partial), green (all passing).
 
 metadata:
-  generated_at: "2026-07-07T00:00:00Z"
+  generated_at: "2026-07-21T00:00:00Z"
   version: "0.2.0"
   project: fleet-llm-d
   description: >
-    Test matrix updated after code review remediation. Unit tests green
-    for all 10 capabilities (283 tests). BDD green for routing and
-    compliance (security RBAC depth). Contract green for routing, ledger,
-    and compliance (architecture proofs A51-A54). Integration, e2e, and
-    benchmark suites remain red.
+    Test matrix updated after Phase 1-6 roadmap implementation complete.
+    Unit tests green for all 10 capabilities. BDD green for 8 capabilities
+    (55 scenarios across placement, routing, autoscaling, lifecycle, tenant,
+    observability, kv-transfer, compliance). Contract green for routing,
+    ledger, and compliance. Integration, e2e, and benchmark suites remain red.
 
 capabilities:
 
@@ -22,10 +22,10 @@ capabilities:
       passing: 27
       coverage: 85
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 9
+      passing: 9
+      coverage: 65
     contract:
       status: red
       tests: 0
@@ -55,8 +55,8 @@ capabilities:
       coverage: 85
     bdd:
       status: green
-      tests: 4
-      passing: 4
+      tests: 7
+      passing: 7
       coverage: 60
     contract:
       status: green
@@ -86,10 +86,10 @@ capabilities:
       passing: 16
       coverage: 75
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 5
+      passing: 5
+      coverage: 55
     contract:
       status: red
       tests: 0
@@ -118,10 +118,10 @@ capabilities:
       passing: 12
       coverage: 71
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 7
+      passing: 7
+      coverage: 60
     contract:
       status: red
       tests: 0
@@ -150,10 +150,10 @@ capabilities:
       passing: 26
       coverage: 85
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 60
     contract:
       status: red
       tests: 0
@@ -182,10 +182,10 @@ capabilities:
       passing: 12
       coverage: 72
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 8
+      passing: 8
+      coverage: 65
     contract:
       status: red
       tests: 0
@@ -214,10 +214,10 @@ capabilities:
       passing: 14
       coverage: 73
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
     contract:
       status: red
       tests: 0
@@ -311,8 +311,8 @@ capabilities:
       coverage: 65
     bdd:
       status: green
-      tests: 10
-      passing: 10
+      tests: 7
+      passing: 7
       coverage: 70
     contract:
       status: green
@@ -337,11 +337,11 @@ capabilities:
 
 summary:
   total_cells: 60          # 10 capabilities x 6 test types
-  red: 44                  # down from 50 — 6 cells moved to green
+  red: 39                  # down from 44 — 5 BDD cells moved to green
   amber: 0
-  green: 16                # up from 10: routing bdd+contract, compliance bdd+contract, ledger contract, + 10 unit
-  total_tests: 283
-  total_passing: 283
+  green: 21                # up from 16: 10 unit + 8 BDD + 3 contract
+  total_tests: 251
+  total_passing: 251
   overall_coverage: 80
 
 red_green_rubric:
