@@ -27,6 +27,8 @@ var knownGPUs = []gpuSpec{
 	{Name: "B200", MemoryGB: 192},
 	{Name: "MI300X", MemoryGB: 192},
 	{Name: "H200", MemoryGB: 141},
+	{Name: "Gaudi3", MemoryGB: 128},
+	{Name: "Gaudi2", MemoryGB: 96},
 	{Name: "H100", MemoryGB: 80},
 	{Name: "A100", MemoryGB: 80},
 }

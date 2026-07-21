@@ -9,7 +9,7 @@ func TestDefaultPricingTable(t *testing.T) {
 	pt := DefaultPricingTable()
 
 	gpuTypes := pt.ListGPUTypes()
-	expected := []string{"A100", "B200", "CPU", "H100", "H200", "L40", "MI300X"}
+	expected := []string{"A100", "B200", "CPU", "Gaudi2", "Gaudi3", "H100", "H200", "L40", "MI300X", "Xeon6"}
 	if len(gpuTypes) != len(expected) {
 		t.Fatalf("expected %d GPU types, got %d: %v", len(expected), len(gpuTypes), gpuTypes)
 	}
@@ -116,8 +116,8 @@ func TestListGPUTypes(t *testing.T) {
 	pt := DefaultPricingTable()
 
 	types := pt.ListGPUTypes()
-	if len(types) != 7 {
-		t.Fatalf("expected 7 GPU types, got %d: %v", len(types), types)
+	if len(types) != 10 {
+		t.Fatalf("expected 10 GPU types, got %d: %v", len(types), types)
 	}
 
 	// Verify sorted order.
@@ -130,8 +130,8 @@ func TestListGPUTypes(t *testing.T) {
 	// Add a custom GPU and verify it appears.
 	pt.SetPricing(GPUPricing{GPUType: "TPUv5", CostPerHour: 6.00, MemoryGB: 128, PricingTier: "on-demand"})
 	types = pt.ListGPUTypes()
-	if len(types) != 8 {
-		t.Fatalf("expected 8 GPU types after adding TPUv5, got %d: %v", len(types), types)
+	if len(types) != 11 {
+		t.Fatalf("expected 11 GPU types after adding TPUv5, got %d: %v", len(types), types)
 	}
 
 	foundTPUv5 := false

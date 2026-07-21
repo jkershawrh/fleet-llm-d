@@ -51,7 +51,19 @@ func DefaultPricingTable() *PricingTable {
 		{GPUType: "L40", CostPerHour: 1.80, MemoryGB: 48, PricingTier: "on-demand"},
 		{GPUType: "L40", CostPerHour: 1.08, MemoryGB: 48, PricingTier: "reserved-1yr"},
 		{GPUType: "L40", CostPerHour: 0.54, MemoryGB: 48, PricingTier: "spot"},
-		// CPU
+		// Intel Gaudi 3
+		{GPUType: "Gaudi3", CostPerHour: 3.80, MemoryGB: 128, PricingTier: "on-demand"},
+		{GPUType: "Gaudi3", CostPerHour: 2.28, MemoryGB: 128, PricingTier: "reserved-1yr"},
+		{GPUType: "Gaudi3", CostPerHour: 1.14, MemoryGB: 128, PricingTier: "spot"},
+		// Intel Gaudi 2
+		{GPUType: "Gaudi2", CostPerHour: 2.50, MemoryGB: 96, PricingTier: "on-demand"},
+		{GPUType: "Gaudi2", CostPerHour: 1.50, MemoryGB: 96, PricingTier: "reserved-1yr"},
+		{GPUType: "Gaudi2", CostPerHour: 0.75, MemoryGB: 96, PricingTier: "spot"},
+		// Intel Xeon 6 (CPU inference)
+		{GPUType: "Xeon6", CostPerHour: 0.85, MemoryGB: 0, PricingTier: "on-demand"},
+		{GPUType: "Xeon6", CostPerHour: 0.51, MemoryGB: 0, PricingTier: "reserved-1yr"},
+		{GPUType: "Xeon6", CostPerHour: 0.25, MemoryGB: 0, PricingTier: "spot"},
+		// CPU (generic)
 		{GPUType: "CPU", CostPerHour: 0.50, MemoryGB: 0, PricingTier: "on-demand"},
 		{GPUType: "CPU", CostPerHour: 0.30, MemoryGB: 0, PricingTier: "reserved-1yr"},
 		{GPUType: "CPU", CostPerHour: 0.15, MemoryGB: 0, PricingTier: "spot"},

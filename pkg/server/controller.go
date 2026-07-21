@@ -226,3 +226,37 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		RolloutRepo:        postgres.NewInMemoryRolloutRepository(),
 	}, nil
 }
+
+// BuildClusterHealth assembles routing-ready ClusterHealth entries by combining
+// cluster records from the repository with live metrics from the collector.
+func (fc *FleetController) BuildClusterHealth(ctx context.Context) []policy.ClusterHealth {
+	clusters, err := fc.ClusterRepo.List(ctx)
+	if err != nil {
+		return nil
+	}
+	allMetrics, _ := fc.MetricsCollector.CollectAll(ctx)
+	metricsMap := make(map[string]collector.PoolMetrics)
+	for _, cm := range allMetrics {
+		if len(cm.Pools) > 0 {
+			metricsMap[cm.ClusterID] = cm.Pools[0]
+		}
+	}
+
+	var result []policy.ClusterHealth
+	for _, c := range clusters {
+		ch := policy.ClusterHealth{
+			ClusterID:         c.ID,
+			Healthy:           c.Status == "Running" || c.Status == "Healthy",
+			AvailableSlots:    c.GPUAvailable,
+			CapacityRemaining: float64(c.GPUAvailable) / float64(max(c.GPUTotal, 1)),
+			Region:            c.Region,
+		}
+		if pm, ok := metricsMap[c.ID]; ok {
+			ch.KVCacheHitRate = pm.KVCacheHitRate
+			ch.LatencyMs = pm.TTFT_P99_Ms
+			ch.CurrentLoad = pm.GPUUtilization
+		}
+		result = append(result, ch)
+	}
+	return result
+}

@@ -8,5 +8,6 @@
 //! the NIXL SDK via [`nixl_bridge`].
 
 pub mod coordinator;
+pub mod grpc_transport;
 pub mod nixl_bridge;
 pub mod protocol;
