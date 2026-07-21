@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -365,12 +365,12 @@ func (p *InferenceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if prompt != "" {
 			mappedModel, tier, confidence, classifyErr := p.SemanticRouter.Classify(prompt)
 			if classifyErr != nil {
-				log.Printf("semantic routing failed, falling back to default: %v", classifyErr)
+				slog.Warn("semantic routing failed, falling back to default", "error", classifyErr)
 			} else if mappedModel != "" {
 				req.Model = mappedModel
 				w.Header().Set("X-Semantic-Tier", tier)
 				w.Header().Set("X-Semantic-Confidence", fmt.Sprintf("%.2f", confidence))
-				log.Printf("semantic routing: tier=%s model=%s confidence=%.2f", tier, mappedModel, confidence)
+				slog.Info("semantic routing", "tier", tier, "model", mappedModel, "confidence", confidence)
 				// Rewrite the body with the resolved model name
 				body = bytes.Replace(body, []byte(`"auto"`), []byte(fmt.Sprintf(`%q`, mappedModel)), 1)
 			}

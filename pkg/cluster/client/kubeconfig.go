@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -115,7 +115,7 @@ func (c *KubeconfigClusterClient) RegisterCluster(ctx context.Context, reg Clust
 
 	tlsCfg, tlsErr := tlsutil.NewTLSConfig(c.tlsOpts)
 	if tlsErr != nil {
-		log.Printf("WARNING: failed to build TLS config: %v, falling back to InsecureSkipVerify", tlsErr)
+		slog.Warn("failed to build TLS config, falling back to InsecureSkipVerify", "error", tlsErr)
 		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
 	}
 

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
@@ -31,7 +31,7 @@ func (fc *FleetController) OverrideWithPostgres(db *sql.DB) error {
 	if err := pgClient.EnsureSchema(context.Background()); err != nil {
 		return fmt.Errorf("failed to initialize postgres schema: %w", err)
 	}
-	log.Println("connected to PostgreSQL — using persistent stores")
+	slog.Info("connected to PostgreSQL — using persistent stores")
 
 	fc.ClusterRepo = postgres.NewPGClusterRepository(pgClient)
 	fc.ClusterClient = client.NewRepositoryClusterClient(fc.ClusterRepo)
@@ -63,7 +63,7 @@ func (fc *FleetController) RegisterBackendsFromJSON(backendsJSON string) error {
 			Healthy:    true,
 			LatencyMs:  500,
 		})
-		log.Printf("registered backend: model=%s url=%s runtime=%s", b.Model, b.URL, b.Runtime)
+		slog.Info("registered backend", "model", b.Model, "url", b.URL, "runtime", b.Runtime)
 	}
 	return nil
 }
@@ -80,26 +80,26 @@ func (fc *FleetController) WireModelPlane(apiURL, namespace string) {
 	watcher.OnClusterChange(func(clusters []modelplane.InferenceCluster) {
 		for _, c := range clusters {
 			if _, err := bridge.RecordClusterProvisioned(context.Background(), c); err != nil {
-				log.Printf("failed to record cluster provisioned %s: %v", c.Name, err)
+				slog.Info("failed to record cluster provisioned %s: %v", c.Name, err)
 			}
 		}
 	})
 	watcher.OnDeploymentChange(func(deployments []modelplane.ModelDeployment) {
 		for _, d := range deployments {
 			if _, err := bridge.RecordDeploymentCreated(context.Background(), d); err != nil {
-				log.Printf("failed to record deployment created %s: %v", d.Name, err)
+				slog.Info("failed to record deployment created %s: %v", d.Name, err)
 			}
 		}
 	})
 	watcher.OnEndpointChange(func(endpoints []modelplane.ModelEndpoint) {
 		for _, e := range endpoints {
 			if _, err := bridge.RecordEndpointReady(context.Background(), e); err != nil {
-				log.Printf("failed to record endpoint ready %s: %v", e.Name, err)
+				slog.Info("failed to record endpoint ready %s: %v", e.Name, err)
 			}
 		}
 	})
 
 	fc.ModelPlaneWatcher = watcher
 	fc.ModelPlaneBridge = bridge
-	log.Printf("ModelPlane integration enabled (api=%s, namespace=%s)", apiURL, namespace)
+	slog.Info("ModelPlane integration enabled (api=%s, namespace=%s)", apiURL, namespace)
 }

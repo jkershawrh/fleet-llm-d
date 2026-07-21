@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -59,14 +59,14 @@ func AuthMiddleware(cfg Config, exempt []string, next http.Handler) http.Handler
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			writeAuthError(w, "missing Authorization header")
-			log.Printf("fleet.security.auth.failed: remote=%s reason=missing_header path=%s",
+			slog.Info("fleet.security.auth.failed: remote=%s reason=missing_header path=%s",
 				r.RemoteAddr, r.URL.Path)
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
 			writeAuthError(w, "invalid Authorization header format, expected 'Bearer <token>'")
-			log.Printf("fleet.security.auth.failed: remote=%s reason=invalid_header_format path=%s",
+			slog.Info("fleet.security.auth.failed: remote=%s reason=invalid_header_format path=%s",
 				r.RemoteAddr, r.URL.Path)
 			return
 		}
@@ -77,8 +77,7 @@ func AuthMiddleware(cfg Config, exempt []string, next http.Handler) http.Handler
 		claims, err := ValidateToken(cfg.Secret, token)
 		if err != nil {
 			writeAuthError(w, err.Error())
-			log.Printf("fleet.security.auth.failed: remote=%s reason=%s path=%s",
-				r.RemoteAddr, err.Error(), r.URL.Path)
+			slog.Warn("auth failed", "remote", r.RemoteAddr, "reason", err.Error(), "path", r.URL.Path)
 			return
 		}
 
@@ -111,14 +110,14 @@ func AuthorizationMiddleware(exempt []string, next http.Handler) http.Handler {
 
 		if !CheckPermission(claims.Role, r.Method) {
 			writeAuthorizationError(w, "role is not allowed to perform this action")
-			log.Printf("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=method",
+			slog.Info("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=method",
 				claims.Subject, claims.Role, r.Method, r.URL.Path)
 			return
 		}
 
 		if claims.Role == RoleTenant && !tenantRequestAllowed(claims.Subject, r.Method, r.URL.Path) {
 			writeAuthorizationError(w, "tenant is not allowed to access this resource")
-			log.Printf("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=tenant_scope",
+			slog.Info("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=tenant_scope",
 				claims.Subject, claims.Role, r.Method, r.URL.Path)
 			return
 		}

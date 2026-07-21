@@ -7,7 +7,7 @@ import (
 // handleListPools returns all fleet inference pools. It merges data from
 // the reconciler (which tracks live CRD state) with the repository.
 func (fc *FleetController) handleListPools(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 
 	// Prefer reconciler state when available -- it reflects live CRD watches.
 	if fc.Reconciler != nil {
@@ -21,7 +21,7 @@ func (fc *FleetController) handleListPools(w http.ResponseWriter, r *http.Reques
 	// Fall back to the store-backed repository.
 	pools, err := fc.PoolRepo.List(r.Context())
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -30,7 +30,7 @@ func (fc *FleetController) handleListPools(w http.ResponseWriter, r *http.Reques
 
 // handleGetPoolState returns the reconciled state for a single pool by name.
 func (fc *FleetController) handleGetPoolState(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "pool name is required")
@@ -38,7 +38,7 @@ func (fc *FleetController) handleGetPoolState(w http.ResponseWriter, r *http.Req
 	}
 	state, err := fc.Reconciler.GetPoolState(name)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

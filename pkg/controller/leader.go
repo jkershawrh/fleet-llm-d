@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -80,7 +80,7 @@ func (le *LeaderElector) IsLeader() bool {
 
 // Run starts the leader election loop. Blocks until context is cancelled.
 func (le *LeaderElector) Run(ctx context.Context) error {
-	log.Printf("leader election started (identity=%s, namespace=%s)", le.identity, le.namespace)
+	slog.Info("leader election started", "identity", le.identity, "namespace", le.namespace)
 
 	for {
 		select {
@@ -93,21 +93,21 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 		lease, err := le.getLease(ctx)
 		if err != nil {
 			if !errors.Is(err, errLeaseNotFound) {
-				log.Printf("leader election: failed to read lease: %v", err)
+				slog.Warn("leader election: failed to read lease", "error", err)
 				if !waitForLeaderRetry(ctx) {
 					return ctx.Err()
 				}
 				continue
 			}
 			if err := le.createLease(ctx); err != nil {
-				log.Printf("leader election: failed to create lease: %v", err)
+				slog.Warn("leader election: failed to create lease", "error", err)
 				if !waitForLeaderRetry(ctx) {
 					return ctx.Err()
 				}
 				continue
 			}
 			le.isLeader.Store(true)
-			log.Printf("leader election: acquired lease (new)")
+			slog.Info("leader election: acquired lease (new)")
 			le.renewLoop(ctx)
 			continue
 		}
@@ -120,14 +120,14 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 
 		if le.isExpired(lease) {
 			if err := le.acquireLease(ctx, lease); err != nil {
-				log.Printf("leader election: failed to acquire expired lease: %v", err)
+				slog.Warn("leader election: failed to acquire expired lease", "error", err)
 				if !waitForLeaderRetry(ctx) {
 					return ctx.Err()
 				}
 				continue
 			}
 			le.isLeader.Store(true)
-			log.Printf("leader election: acquired expired lease")
+			slog.Info("leader election: acquired expired lease")
 			le.renewLoop(ctx)
 			continue
 		}
@@ -149,7 +149,7 @@ func (le *LeaderElector) renewLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := le.renewLease(ctx); err != nil {
-				log.Printf("leader election: lost lease: %v", err)
+				slog.Warn("leader election: lost lease", "error", err)
 				le.isLeader.Store(false)
 				return
 			}

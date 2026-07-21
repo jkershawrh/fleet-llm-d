@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -34,7 +34,7 @@ func NewModelPlaneActuator(apiServer, token string, tlsOpts ...tlsutil.TLSOption
 
 	tlsCfg, err := tlsutil.NewTLSConfig(opts)
 	if err != nil {
-		log.Printf("failed to build configured ModelPlane TLS trust: %v", err)
+		slog.Warn("failed to build configured ModelPlane TLS trust", "error", err)
 		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
 	tlsCfg.MinVersion = tls.VersionTLS13

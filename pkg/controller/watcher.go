@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -72,7 +72,7 @@ func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, t
 
 	tlsCfg, err := tlsutil.NewTLSConfig(opts)
 	if err != nil {
-		log.Printf("failed to build configured TLS trust: %v", err)
+		slog.Warn("failed to build configured TLS trust", "error", err)
 		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
 	tlsCfg.MinVersion = tls.VersionTLS13
@@ -137,14 +137,14 @@ func (w *CRDWatcher) Start(ctx context.Context) error {
 // blocks so callers coordinating leadership can wait for complete shutdown.
 func (w *CRDWatcher) Run(ctx context.Context) {
 	if err := w.pollOnce(ctx); err != nil {
-		log.Printf("WARNING: initial CRD poll failed: %v (will retry on next tick)", err)
+		slog.Warn("initial CRD poll failed, will retry on next tick", "error", err)
 	}
 
 	ticker := time.NewTicker(w.pollInterval)
 	defer ticker.Stop()
 
-	log.Println("CRD watcher started")
-	defer log.Println("CRD watcher stopped")
+	slog.Info("CRD watcher started")
+	defer slog.Info("CRD watcher stopped")
 
 	for {
 		select {
@@ -152,7 +152,7 @@ func (w *CRDWatcher) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := w.pollOnce(ctx); err != nil {
-				log.Printf("CRD poll error: %v", err)
+				slog.Warn("CRD poll error", "error", err)
 			}
 		}
 	}
@@ -217,7 +217,7 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 		if !exists {
 			added++
 			if err := w.reconciler.ReconcilePool(ctx, spec); err != nil {
-				log.Printf("reconcile (add) %q failed: %v", name, err)
+				slog.Info("reconcile (add) %q failed: %v", name, err)
 				continue
 			}
 			nextSeen[name] = spec
@@ -226,13 +226,13 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 
 		changed, err := specsChanged(prev, spec)
 		if err != nil {
-			log.Printf("spec comparison for %q failed: %v", name, err)
+			slog.Info("spec comparison for %q failed: %v", name, err)
 			continue
 		}
 		if changed {
 			modified++
 			if err := w.reconciler.ReconcilePool(ctx, spec); err != nil {
-				log.Printf("reconcile (modify) %q failed: %v", name, err)
+				slog.Info("reconcile (modify) %q failed: %v", name, err)
 				continue
 			}
 			nextSeen[name] = spec
@@ -244,7 +244,7 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 		if _, exists := current[name]; !exists {
 			deleted++
 			if err := w.reconciler.DeletePool(ctx, name); err != nil {
-				log.Printf("reconcile (delete) %q failed: %v", name, err)
+				slog.Info("reconcile (delete) %q failed: %v", name, err)
 				continue
 			}
 			delete(nextSeen, name)
@@ -253,8 +253,7 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 
 	w.lastSeen = nextSeen
 
-	log.Printf("polled %d pools, %d added, %d modified, %d deleted",
-		len(current), added, modified, deleted)
+	slog.Info("polled pools", "total", len(current), "added", added, "modified", modified, "deleted", deleted)
 
 	return nil
 }

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
@@ -20,7 +20,7 @@ import (
 // handleIntent is the v1 compatibility adapter. Non-terminal work is reported
 // as deferred; "executed" is reserved for a verified SUCCEEDED operation.
 func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	var intent intents.FleetIntent
 	if err := json.NewDecoder(r.Body).Decode(&intent); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
@@ -29,7 +29,7 @@ func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) 
 
 	submission, err := fc.submitIntent(r.Context(), intent)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -131,13 +131,13 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 		ChainPosition: receipt.ChainPosition, WrittenTS: receipt.Timestamp.UnixMilli(), InputHash: payloadHash,
 		Purpose: intents.ReceiptPurposeAdmission,
 	}); attachErr != nil {
-		log.Printf("intent %s admitted without attached immutable-ledger proof: %v", submission.IntentID, attachErr)
+		slog.Info("intent %s admitted without attached immutable-ledger proof: %v", submission.IntentID, attachErr)
 	}
 	return submission, nil
 }
 
 func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	var intent intents.FleetIntent
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
@@ -185,7 +185,7 @@ func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.R
 	}
 	submission, err := fc.submitIntent(r.Context(), intent)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

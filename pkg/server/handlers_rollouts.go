@@ -16,10 +16,10 @@ type rolloutCreateRequest struct {
 
 // handleListRollouts returns all rollouts.
 func (fc *FleetController) handleListRollouts(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	rollouts, err := fc.RolloutRepo.List(r.Context())
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -28,10 +28,10 @@ func (fc *FleetController) handleListRollouts(w http.ResponseWriter, r *http.Req
 
 // handleCreateRollout creates a new rollout.
 func (fc *FleetController) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	var req rolloutCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
@@ -48,7 +48,7 @@ func (fc *FleetController) handleCreateRollout(w http.ResponseWriter, r *http.Re
 		CurrentWeight: 0,
 	}
 	if err := fc.RolloutRepo.Create(r.Context(), record); err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -62,7 +62,7 @@ func (fc *FleetController) handleCreateRollout(w http.ResponseWriter, r *http.Re
 
 // handlePromoteRollout promotes a canary rollout.
 func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "rollout id is required")
@@ -70,7 +70,7 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 	}
 	state, err := fc.RolloutController.AdvanceRollout(r.Context(), id)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -79,7 +79,7 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 
 // handleRollbackRollout rolls back a rollout.
 func (fc *FleetController) handleRollbackRollout(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "rollout id is required")
@@ -87,7 +87,7 @@ func (fc *FleetController) handleRollbackRollout(w http.ResponseWriter, r *http.
 	}
 	state, err := fc.RolloutController.RollbackRollout(r.Context(), id)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

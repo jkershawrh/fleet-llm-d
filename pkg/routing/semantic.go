@@ -3,7 +3,7 @@ package routing
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -30,7 +30,7 @@ type SemanticRouter struct {
 func NewSemanticRouter(classifierURL string, tierModels map[string]string) *SemanticRouter {
 	enabled := classifierURL != "" && len(tierModels) > 0
 	if enabled {
-		log.Printf("semantic routing enabled: classifier=%s tiers=%v", classifierURL, tierModels)
+		slog.Info("semantic routing enabled: classifier=%s tiers=%v", classifierURL, tierModels)
 	}
 	return &SemanticRouter{
 		classifierURL: classifierURL,

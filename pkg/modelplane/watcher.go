@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -44,7 +44,7 @@ func NewModelPlaneWatcher(apiServer, namespace, token string, tlsOpts ...tlsutil
 
 	tlsCfg, err := tlsutil.NewTLSConfig(opts)
 	if err != nil {
-		log.Printf("failed to build configured ModelPlane TLS trust: %v", err)
+		slog.Warn("failed to build configured ModelPlane TLS trust", "error", err)
 		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
 	tlsCfg.MinVersion = tls.VersionTLS13
@@ -102,14 +102,14 @@ func (w *ModelPlaneWatcher) Start(ctx context.Context) error {
 // coordinator can wait until the watcher has fully stopped before restarting.
 func (w *ModelPlaneWatcher) Run(ctx context.Context) {
 	if err := w.PollOnce(ctx); err != nil {
-		log.Printf("WARNING: initial ModelPlane poll failed: %v (will retry on next tick)", err)
+		slog.Warn("initial ModelPlane poll failed, will retry on next tick", "error", err)
 	}
 
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
-	log.Println("ModelPlane watcher started")
-	defer log.Println("ModelPlane watcher stopped")
+	slog.Info("ModelPlane watcher started")
+	defer slog.Info("ModelPlane watcher stopped")
 
 	for {
 		select {
@@ -117,7 +117,7 @@ func (w *ModelPlaneWatcher) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := w.PollOnce(ctx); err != nil {
-				log.Printf("ModelPlane poll error: %v", err)
+				slog.Warn("ModelPlane poll error", "error", err)
 			}
 		}
 	}

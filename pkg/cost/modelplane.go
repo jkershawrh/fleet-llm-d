@@ -2,7 +2,7 @@ package cost
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
@@ -54,16 +54,16 @@ func ComputeDeploymentCost(md modelplane.ModelDeployment, clusters []modelplane.
 	for _, name := range targetClusters {
 		cluster, ok := clusterMap[name]
 		if !ok {
-			log.Printf("WARNING: cluster %q in deployment %s not found — replicas will be redistributed", name, md.Name)
+			slog.Info("WARNING: cluster %q in deployment %s not found — replicas will be redistributed", name, md.Name)
 			continue
 		}
 		if len(cluster.Pools) == 0 {
-			log.Printf("WARNING: cluster %q has no GPU pools — replicas will be redistributed", name)
+			slog.Warn("cluster has no GPU pools, replicas will be redistributed", "cluster", name)
 			continue
 		}
 		gpuType := cluster.Pools[0].GPUType
 		if _, err := table.CostPerHour(gpuType, "on-demand"); err != nil {
-			log.Printf("WARNING: GPU type %q on cluster %q has no pricing — replicas will be redistributed", gpuType, name)
+			slog.Info("WARNING: GPU type %q on cluster %q has no pricing — replicas will be redistributed", gpuType, name)
 			continue
 		}
 		priceableClusters = append(priceableClusters, name)

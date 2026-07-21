@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -265,7 +265,7 @@ func (r *Reconciler) WatchEndpoint() http.HandlerFunc {
 			return
 		}
 
-		log.Printf("watch event: type=%s model=%s", event.Type, event.Object.Model.Name)
+		slog.Info("watch event: type=%s model=%s", event.Type, event.Object.Model.Name)
 
 		switch event.Type {
 		case "ADDED", "MODIFIED":

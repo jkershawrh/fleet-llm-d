@@ -6,10 +6,10 @@ import (
 
 // handleVerifyChains verifies all ledger decision chains.
 func (fc *FleetController) handleVerifyChains(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	results, err := fc.FleetRecorder.VerifyAllChains(r.Context())
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

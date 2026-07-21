@@ -10,10 +10,10 @@ import (
 
 // handleListTenants returns all tenants.
 func (fc *FleetController) handleListTenants(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	tenants, err := fc.TenantRepo.List(r.Context())
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -22,7 +22,7 @@ func (fc *FleetController) handleListTenants(w http.ResponseWriter, r *http.Requ
 
 // handleTenantUsage returns usage for a specific tenant.
 func (fc *FleetController) handleTenantUsage(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "tenant id is required")
@@ -40,7 +40,7 @@ func (fc *FleetController) handleTenantUsage(w http.ResponseWriter, r *http.Requ
 	period := metering.TimePeriod{Start: start, End: end}
 	usage, err := fc.UsageTracker.GetUsage(r.Context(), id, period)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

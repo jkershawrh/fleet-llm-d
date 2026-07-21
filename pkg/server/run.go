@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,7 +54,7 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 	if fc.LeaderElector != nil {
 		go func() {
 			if err := fc.LeaderElector.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("leader election stopped: %v", err)
+				slog.Warn("leader election stopped", "error", err)
 			}
 		}()
 	}
@@ -100,28 +100,28 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 			return fmt.Errorf("grpc server: %w", err)
 		}
 		defer grpcListener.Close()
-		log.Printf("grpc server listening on :%d", grpcPort)
+		slog.Info("grpc server listening", "port", grpcPort)
 	}
 
 	// Start metrics server.
 	go func() {
-		log.Printf("metrics server listening on :%d", metricsPort)
+		slog.Info("metrics server listening", "port", metricsPort)
 		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("metrics server error: %v", err)
+			slog.Error("metrics server error", "error", err)
 		}
 	}()
 
 	// Start API server (with TLS if cert and key are provided).
 	go func() {
 		if tlsCert != "" && tlsKey != "" {
-			log.Printf("api server listening on :%d (TLS enabled)", port)
+			slog.Info("api server listening", "port", port, "tls", true)
 			if err := apiServer.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
-				log.Printf("api server error: %v", err)
+				slog.Error("api server error", "error", err)
 			}
 		} else {
-			log.Printf("api server listening on :%d", port)
+			slog.Info("api server listening", "port", port)
 			if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("api server error: %v", err)
+				slog.Error("api server error", "error", err)
 			}
 		}
 	}()
@@ -134,11 +134,11 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 
 	// Mark as ready.
 	fc.ready.Store(true)
-	log.Println("fleet-controller is ready")
+	slog.Info("fleet-controller is ready")
 
 	// Wait for shutdown signal.
 	<-ctx.Done()
-	log.Println("fleet-controller shutting down...")
+	slog.Info("fleet-controller shutting down...")
 
 	// Graceful shutdown with a 15-second deadline.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -156,7 +156,7 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 		}
 	}
 
-	log.Println("fleet-controller stopped")
+	slog.Info("fleet-controller stopped")
 	return shutdownErr
 }
 
@@ -248,9 +248,9 @@ func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval,
 			leaderCtx, leaderCancel := context.WithCancel(ctx)
 			cancel = leaderCancel
 			done = startWatcherGroup(leaderCtx, workers)
-			log.Println("leader acquired: started control-plane watchers")
+			slog.Info("leader acquired: started control-plane watchers")
 		} else if !leader && cancel != nil {
-			log.Println("leadership lost: stopping control-plane watchers")
+			slog.Info("leadership lost: stopping control-plane watchers")
 			requestStop()
 		}
 
@@ -271,7 +271,7 @@ func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval,
 						}
 					}
 				case <-timer.C:
-					log.Printf("WARNING: watcher shutdown still incomplete after %s", stopTimeout)
+					slog.Warn("watcher shutdown still incomplete", "timeout", stopTimeout)
 				}
 			}
 			return
@@ -281,14 +281,14 @@ func runLeaderScopedWorkers(ctx context.Context, isLeader func() bool, interval,
 			cancel = nil
 			done = nil
 			if wasStopping {
-				log.Println("leadership lost: control-plane watchers stopped")
+				slog.Info("leadership lost: control-plane watchers stopped")
 			} else {
-				log.Println("WARNING: control-plane watchers exited while leadership is active")
+				slog.Info("WARNING: control-plane watchers exited while leadership is active")
 			}
 		case <-stopDeadline:
 			stopTimer = nil
 			stopDeadline = nil
-			log.Printf("WARNING: watcher stop still incomplete after %s; restart remains blocked", stopTimeout)
+			slog.Warn("watcher stop still incomplete, restart remains blocked", "timeout", stopTimeout)
 		case <-ticker.C:
 		}
 	}

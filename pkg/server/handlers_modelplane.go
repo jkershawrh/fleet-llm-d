@@ -10,7 +10,7 @@ import (
 
 // handleModelPlaneClusters returns the most recently watched ModelPlane clusters.
 func (fc *FleetController) handleModelPlaneClusters(w http.ResponseWriter, _ *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	if fc.ModelPlaneWatcher == nil {
 		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
 		return
@@ -20,7 +20,7 @@ func (fc *FleetController) handleModelPlaneClusters(w http.ResponseWriter, _ *ht
 
 // handleModelPlaneDeployments returns the most recently watched ModelPlane deployments.
 func (fc *FleetController) handleModelPlaneDeployments(w http.ResponseWriter, _ *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	if fc.ModelPlaneWatcher == nil {
 		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
 		return
@@ -30,7 +30,7 @@ func (fc *FleetController) handleModelPlaneDeployments(w http.ResponseWriter, _ 
 
 // handleModelPlaneDeploymentCost returns the hourly cost of a ModelPlane deployment.
 func (fc *FleetController) handleModelPlaneDeploymentCost(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	if fc.ModelPlaneWatcher == nil {
 		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
 		return
@@ -59,7 +59,7 @@ func (fc *FleetController) handleModelPlaneDeploymentCost(w http.ResponseWriter,
 
 	hourlyCost, err := cost.ComputeDeploymentCost(*target, clusters, fc.PricingTable)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

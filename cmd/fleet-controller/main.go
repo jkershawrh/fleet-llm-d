@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
@@ -41,12 +41,24 @@ func main() {
 	allowOperatorJSONIntents := flag.Bool("allow-operator-json-intents", false, "Enable unsigned application/json v2 intent input for development/operator compatibility only")
 	flag.Parse()
 
-	log.Printf("fleet-controller starting (mode=%s, log-level=%s, ledger-mode=%s, ledger=%s, grpc-port=%d)", *mode, *logLevel, *ledgerMode, *ledgerEndpoint, *grpcPort)
+	// Configure structured JSON logging.
+	var level slog.Level
+	switch *logLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
-	// Build auth config from environment variable FLEET_AUTH_SECRET.
+	slog.Info("fleet-controller starting", "mode", *mode, "log_level", *logLevel, "ledger_mode", *ledgerMode, "ledger", *ledgerEndpoint, "grpc_port", *grpcPort)
+
 	authCfg := auth.ConfigFromEnv()
-	log.Printf("auth enabled=%v, TLS enabled=%v, kube-api=%q, namespace=%q, pg=%v, event-endpoint=%q",
-		authCfg.Enabled, *tlsCert != "" && *tlsKey != "", *kubeAPI, *namespace, *pgURL != "", *eventEndpoint)
+	slog.Info("configuration loaded", "auth_enabled", authCfg.Enabled, "tls_enabled", *tlsCert != "" && *tlsKey != "", "kube_api", *kubeAPI, "namespace", *namespace, "postgres", *pgURL != "", "event_endpoint", *eventEndpoint)
 
 	fc, err := server.NewFleetControllerWithLedgerConfig(ledger.Config{
 		Mode:     ledger.Mode(*ledgerMode),
@@ -54,77 +66,78 @@ func main() {
 		APIToken: os.Getenv("LEDGER_GATEWAY_API_TOKEN"),
 	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
 	if err != nil {
-		log.Fatalf("invalid immutable-ledger configuration: %v", err)
+		slog.Error("invalid immutable-ledger configuration", "error", err)
+		os.Exit(1)
 	}
 	if *kubeAPI != "" {
 		identity := os.Getenv("POD_NAME")
 		if identity == "" {
 			identity, err = os.Hostname()
 			if err != nil || identity == "" {
-				log.Fatalf("leader election requires POD_NAME or a resolvable hostname")
+				slog.Error("leader election requires POD_NAME or a resolvable hostname")
+				os.Exit(1)
 			}
 		}
 		fc.ConfigureLeaderElection(fleetcontroller.NewLeaderElector(*kubeAPI, *namespace, identity))
-		log.Printf("leader election enabled (identity=%s, namespace=%s)", identity, *namespace)
+		slog.Info("leader election enabled", "identity", identity, "namespace", *namespace)
 	}
 
-	// Configure GCL DecisionPackage verification if signing keys are present.
 	decisionKeys, err := server.DecisionPackageKeyringFromEnv()
 	if err != nil {
-		log.Fatalf("invalid GCL DecisionPackage verification configuration: %v", err)
+		slog.Error("invalid GCL DecisionPackage verification configuration", "error", err)
+		os.Exit(1)
 	}
 	if len(decisionKeys) > 0 {
 		fc.DecisionPackageDecoder = intents.NewGCLDecisionPackageDecoder(decisionKeys)
-		log.Printf("GCL DecisionPackage verification enabled with %d trusted key(s)", len(decisionKeys))
+		slog.Info("GCL DecisionPackage verification enabled", "trusted_keys", len(decisionKeys))
 	}
 	fc.AllowOperatorJSONIntents = server.OperatorJSONIntentsEnabled(*allowOperatorJSONIntents)
 	if fc.AllowOperatorJSONIntents {
-		log.Printf("WARNING: unsigned application/json v2 intent compatibility is enabled; do not use this ingress as GCL provenance")
+		slog.Warn("unsigned application/json v2 intent compatibility is enabled; do not use this ingress as GCL provenance")
 	}
 
 	fc.AuthSecret = authCfg.Secret
 	fc.InferenceProxy.SetMaxInflight(*maxInflight)
 
-	// Register additional backends from --backends JSON flag.
 	if *backends != "" {
 		if err := fc.RegisterBackendsFromJSON(*backends); err != nil {
-			log.Fatalf("%v", err)
+			slog.Error("failed to register backends", "error", err)
+			os.Exit(1)
 		}
 	}
 
-	// Override stores with PostgreSQL when --pg-url is set.
 	if *pgURL != "" {
 		db, err := sql.Open("postgres", *pgURL)
 		if err != nil {
-			log.Fatalf("failed to open postgres: %v", err)
+			slog.Error("failed to open postgres", "error", err)
+			os.Exit(1)
 		}
 		defer db.Close()
 		if err := fc.OverrideWithPostgres(db); err != nil {
-			log.Fatalf("%v", err)
+			slog.Error("postgres override failed", "error", err)
+			os.Exit(1)
 		}
 	}
 
 	fc.InitGauges(context.Background())
 
-	// Override event publisher when --event-endpoint is set.
 	if *eventEndpoint != "" {
 		fc.EventPublisher = events.NewLedgerAwarePublisher(events.NewHTTPEventPublisher(*eventEndpoint), fc.FleetRecorder)
-		log.Printf("event publishing enabled (endpoint=%s)", *eventEndpoint)
+		slog.Info("event publishing enabled", "endpoint", *eventEndpoint)
 	}
 
-	// Wire ModelPlane integration when --modelplane-api is set.
 	if *modelplaneAPI != "" {
 		fc.WireModelPlane(*modelplaneAPI, *modelplaneNamespace)
 	}
 
-	// Create rate limiter when rate limiting is enabled.
 	var rl *auth.RateLimiter
 	if *rateLimit > 0 {
 		rl = auth.NewRateLimiter(*rateLimit, *rateBurst)
-		log.Printf("rate limiting enabled (rate=%.0f/s, burst=%d)", *rateLimit, *rateBurst)
+		slog.Info("rate limiting enabled", "rate", *rateLimit, "burst", *rateBurst)
 	}
 
 	if err := fc.Run(context.Background(), *port, *metricsPort, *grpcPort, authCfg, *tlsCert, *tlsKey, *mode, rl, server.SplitCSV(*rateLimitExempt)); err != nil {
-		log.Fatal(err)
+		slog.Error("fleet-controller exited", "error", err)
+		os.Exit(1)
 	}
 }

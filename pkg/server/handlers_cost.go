@@ -11,13 +11,13 @@ import (
 
 // handleCostPricing returns the full GPU pricing table as JSON.
 func (fc *FleetController) handleCostPricing(w http.ResponseWriter, _ *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	writeJSON(w, http.StatusOK, fc.PricingTable.AllPrices())
 }
 
 // handleCostTokenomics computes token costs for a model across all GPU types.
 func (fc *FleetController) handleCostTokenomics(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	model := r.PathValue("model")
 	if model == "" {
 		writeError(w, http.StatusBadRequest, "model name is required")
@@ -50,7 +50,7 @@ func (fc *FleetController) handleCostTokenomics(w http.ResponseWriter, r *http.R
 
 // handleCostChargeback generates a chargeback report for a tenant.
 func (fc *FleetController) handleCostChargeback(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	tenant := r.PathValue("tenant")
 	if tenant == "" {
 		writeError(w, http.StatusBadRequest, "tenant id is required")
@@ -92,7 +92,7 @@ func (fc *FleetController) handleCostChargeback(w http.ResponseWriter, r *http.R
 
 // handleCostProjection projects monthly cost based on current usage rates.
 func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 
 	tokensPerDay := int64(10_000_000) // default
 	if tdStr := r.URL.Query().Get("tokens_per_day"); tdStr != "" {
@@ -119,7 +119,7 @@ func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.R
 
 	tc, err := cost.ComputeTokenCost(model, gpuType, tier, 1000, fc.PricingTable)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -137,7 +137,7 @@ func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.R
 
 // handleCostSavings compares current cost versus optimized placement cost.
 func (fc *FleetController) handleCostSavings(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 
 	currentMonthly := 5000.0
 	if cmStr := r.URL.Query().Get("current"); cmStr != "" {
@@ -165,11 +165,11 @@ func (fc *FleetController) handleCostSavings(w http.ResponseWriter, r *http.Requ
 
 // handleCostAlerts checks all tenant budgets and returns active alerts.
 func (fc *FleetController) handleCostAlerts(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 
 	tenants, err := fc.TenantRepo.List(r.Context())
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

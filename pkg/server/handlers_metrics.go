@@ -6,10 +6,10 @@ import (
 
 // handleFleetMetrics returns fleet-wide aggregated metrics.
 func (fc *FleetController) handleFleetMetrics(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	clusters, err := fc.ClusterClient.ListClusters(r.Context())
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -19,7 +19,7 @@ func (fc *FleetController) handleFleetMetrics(w http.ResponseWriter, r *http.Req
 	}
 	fleetMetrics, err := fc.MetricsFederator.FederateMetrics(r.Context(), clusterIDs)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -28,7 +28,7 @@ func (fc *FleetController) handleFleetMetrics(w http.ResponseWriter, r *http.Req
 
 // handleModelMetrics returns metrics for a specific model.
 func (fc *FleetController) handleModelMetrics(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	model := r.PathValue("model")
 	if model == "" {
 		writeError(w, http.StatusBadRequest, "model name is required")
@@ -36,7 +36,7 @@ func (fc *FleetController) handleModelMetrics(w http.ResponseWriter, r *http.Req
 	}
 	modelMetrics, err := fc.MetricsFederator.GetModelMetrics(r.Context(), model)
 	if err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

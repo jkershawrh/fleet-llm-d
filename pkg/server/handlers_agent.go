@@ -42,10 +42,11 @@ type agentEventReport struct {
 }
 
 func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var report agentStatusReport
 	if err := decodeAgentReport(w, r, &report); err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -91,7 +92,7 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 	if err == nil {
 		applyAgentStatus(record, report, status)
 		if err := fc.ClusterRepo.Update(r.Context(), *record); err != nil {
-			errorsTotal.Add(1)
+			errorsTotal.Inc()
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -99,7 +100,7 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !errors.Is(err, postgres.ErrClusterNotFound) {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -120,20 +121,20 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 			// Another report won the create race. Complete the idempotent upsert.
 			record, getErr := fc.ClusterRepo.Get(r.Context(), report.ClusterID)
 			if getErr != nil {
-				errorsTotal.Add(1)
+				errorsTotal.Inc()
 				writeError(w, http.StatusInternalServerError, getErr.Error())
 				return
 			}
 			applyAgentStatus(record, report, status)
 			if updateErr := fc.ClusterRepo.Update(r.Context(), *record); updateErr != nil {
-				errorsTotal.Add(1)
+				errorsTotal.Inc()
 				writeError(w, http.StatusInternalServerError, updateErr.Error())
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]interface{}{"status": "accepted", "created": false})
 			return
 		}
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -174,10 +175,10 @@ func validateAgentURL(field, value string) error {
 }
 
 func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	var report agentMetricsReport
 	if err := decodeAgentReport(w, r, &report); err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -203,14 +204,16 @@ func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Req
 		}},
 		Timestamp: time.Now().UTC(),
 	})
+	UpdateAgentMetrics(report.ClusterID, report.ThroughputTPS, report.TTFTP50MS, report.TTFTP99MS,
+		float64(report.QueueDepth), report.GPUUtilization, report.KVCacheHitRate)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
 func (fc *FleetController) handleAgentEvent(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	var report agentEventReport
 	if err := decodeAgentReport(w, r, &report); err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -230,7 +233,7 @@ func (fc *FleetController) handleAgentEvent(w http.ResponseWriter, r *http.Reque
 		Timestamp: time.Now().UTC(),
 		Payload:   payload,
 	}); err != nil {
-		errorsTotal.Add(1)
+		errorsTotal.Inc()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

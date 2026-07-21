@@ -115,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
     let health_checker =
         health::HealthChecker::new(std::time::Duration::from_secs(config.health_interval_secs));
     let router = router::FleetRouter::new();
-    let metrics = metrics::GatewayMetrics::new();
+    let metrics = std::sync::Arc::new(metrics::GatewayMetrics::new());
     let gateway_state = GatewayState::new(health_checker.clone());
     bootstrap_runtime_contracts(&router, &metrics, &config.lb_strategy).await?;
 
@@ -148,9 +148,10 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let metrics_port = config.metrics_port;
+    let metrics_for_server = metrics.clone();
     let metrics_handle = tokio::spawn(async move {
         info!("metrics server task started");
-        run_metrics_server(metrics_port).await
+        run_metrics_server(metrics_port, metrics_for_server).await
     });
 
     let health_port = config.health_port;
@@ -248,10 +249,29 @@ async fn gateway_ready(State(health_checker): State<health::HealthChecker>) -> i
     }
 }
 
-async fn run_metrics_server(port: u16) -> anyhow::Result<()> {
+async fn run_metrics_server(port: u16, metrics: std::sync::Arc<metrics::GatewayMetrics>) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route("/metrics", get(|| async { "# fleet_gateway metrics\n" }));
+        .route(
+            "/metrics",
+            get(move || {
+                let m = metrics.clone();
+                async move {
+                    let mut buf = String::new();
+                    if prometheus_client::encoding::text::encode(&mut buf, &m.registry).is_ok() {
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+                            buf,
+                        )
+                    } else {
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                            "# error encoding metrics\n".to_string(),
+                        )
+                    }
+                }
+            }),
+        );
     serve(port, app).await
 }
 

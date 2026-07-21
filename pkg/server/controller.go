@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -167,7 +167,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 				context.Background(),
 				pool.Model, clusterID, 1, "", "reconciler placement",
 			); err != nil {
-				log.Printf("failed to record placement for %s -> %s: %v", pool.Model, clusterID, err)
+				slog.Warn("failed to record placement", "model", pool.Model, "cluster", clusterID, "error", err)
 			}
 		}
 	})

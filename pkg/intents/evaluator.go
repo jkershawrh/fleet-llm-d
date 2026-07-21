@@ -3,7 +3,7 @@ package intents
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 )
 
 // PolicyConfig defines thresholds for intent evaluation.
@@ -54,7 +54,7 @@ func Evaluate(ctx context.Context, intent FleetIntent, policy PolicyConfig) Inte
 		}
 	}
 
-	log.Printf("intent %s (%s) accepted: %s", intent.ID, intent.Type, intent.Justification)
+	slog.Info("intent accepted", "id", intent.ID, "type", intent.Type, "justification", intent.Justification)
 
 	return IntentResponse{
 		IntentID: intent.ID,

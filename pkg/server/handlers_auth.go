@@ -11,7 +11,7 @@ import (
 // handleRefreshToken issues a new token with an extended expiry for
 // an authenticated caller. The original bearer token must still be valid.
 func (fc *FleetController) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
-	requestsTotal.Add(1)
+	requestsTotal.Inc()
 	claims := auth.GetClaims(r)
 	if claims == nil {
 		writeError(w, http.StatusUnauthorized, "valid token required for refresh")

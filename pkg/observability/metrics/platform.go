@@ -3,7 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -146,7 +146,7 @@ func (pc *PlatformCollector) collectGovernance(ctx context.Context, client *http
 	}
 	resp, err := client.Get(pc.GCLURL + "/api/v1/cycles")
 	if err != nil {
-		log.Printf("platform metrics: GCL unreachable: %v", err)
+		slog.Warn("platform metrics: GCL unreachable", "error", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -189,7 +189,7 @@ func (pc *PlatformCollector) collectClassification(ctx context.Context, client *
 	}
 	resp, err := client.Get(pc.DeepfieldURL + "/api/v1/classification/records")
 	if err != nil {
-		log.Printf("platform metrics: deepfield-fleet unreachable: %v", err)
+		slog.Warn("platform metrics: deepfield-fleet unreachable", "error", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -260,7 +260,7 @@ func (pc *PlatformCollector) collectLedger(ctx context.Context, client *http.Cli
 
 	resp, err := authenticatedGet(ctx, client, pc.LedgerURL+"/api/summary", pc.LedgerToken)
 	if err != nil {
-		log.Printf("platform metrics: ledger unreachable: %v", err)
+		slog.Warn("platform metrics: ledger unreachable", "error", err)
 		return nil
 	}
 	defer resp.Body.Close()
