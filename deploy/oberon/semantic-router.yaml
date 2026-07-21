@@ -6,7 +6,7 @@ metadata:
   labels:
     app: semantic-router
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: semantic-router
