@@ -58,6 +58,7 @@ impl ResourceWatcher {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_namespace(mut self, ns: impl Into<String>) -> Self {
         self.namespace = ns.into();
         self
@@ -85,8 +86,8 @@ impl ResourceWatcher {
         let pods: Api<Pod> = Api::namespaced(client.clone(), &self.namespace);
         let nodes: Api<Node> = Api::all(client);
 
-        let pod_lp = ListParams::default().labels("app.kubernetes.io/part-of=llm-d");
-        let node_lp = ListParams::default();
+        let _pod_lp = ListParams::default().labels("app.kubernetes.io/part-of=llm-d");
+        let _node_lp = ListParams::default();
 
         let pod_seen_c = pod_seen.clone();
         let pod_stream = async {

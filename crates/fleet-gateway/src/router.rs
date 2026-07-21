@@ -15,6 +15,7 @@ use crate::balancer::{ClusterCandidate, LoadBalancer, LatencyAwareBalancer, Weig
 
 /// Strategy selection for the router's load balancer.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub enum BalancerStrategy {
     Weighted(WeightedBalancer),
     #[default]
@@ -77,6 +78,7 @@ impl FleetRouter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_strategy(strategy: BalancerStrategy) -> Self {
         Self {
             policies: Arc::new(RwLock::new(HashMap::new())),

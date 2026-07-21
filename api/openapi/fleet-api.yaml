@@ -328,6 +328,29 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/agent/policies/{cluster_id}:
+    get:
+      operationId: getAgentPolicies
+      summary: Retrieve tenant quotas and placement constraints for a cluster
+      tags: [agents]
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Policy sync response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicySyncResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # ---------- rollouts ----------
   /api/v1/rollouts:
     get:
@@ -1319,6 +1342,32 @@ components:
         event:
           description: Structured fleet event emitted by the agent
 
+
+    PolicySyncResponse:
+      type: object
+      properties:
+        quotas:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              max_rps:
+                type: number
+              max_concurrent:
+                type: integer
+              max_tokens_per_minute:
+                type: integer
+        placement:
+          type: object
+          properties:
+            allowed_models:
+              type: array
+              items:
+                type: string
+            denied_models:
+              type: array
+              items:
+                type: string
 
     PoolInfo:
       type: object
