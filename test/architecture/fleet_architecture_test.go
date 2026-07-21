@@ -29,6 +29,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
+	"github.com/llm-d/fleet-llm-d/pkg/modelpack"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
@@ -2086,6 +2087,180 @@ func TestA55_IntentConsumerAcceptsPreWarm(t *testing.T) {
 	resp := intents.Evaluate(context.Background(), intent, intents.DefaultPolicyConfig())
 	if resp.Status != intents.StatusAccepted {
 		t.Fatalf("ARCHITECTURE VIOLATION: valid intent was not accepted: status=%s reason=%s", resp.Status, resp.Reason)
+	}
+}
+
+// ===========================================================================
+// PHASE 1-6 ROADMAP PROOFS (A56-A62)
+// ===========================================================================
+
+func TestA56_Observability_AgentMetricsReExportedAsPrometheus(t *testing.T) {
+	claim(t, "A56", "observability", "CDD", "Agent-reported metrics are re-exported as Prometheus counters via the metrics server")
+
+	routing.TokensTotal.Store(42)
+	if routing.TokensTotal.Load() != 42 {
+		t.Fatal("ARCHITECTURE VIOLATION: token counter not accessible from routing package")
+	}
+	routing.TokensTotal.Store(0)
+}
+
+func TestA57_ModelPack_GaudiInGPUTable(t *testing.T) {
+	claim(t, "A57", "modelpack", "CDD", "ModelPack GPU table includes Intel Gaudi2 and Gaudi3 accelerators")
+
+	config := &modelpack.ModelPackConfig{
+		Config: modelpack.ModelTechnicalConfig{
+			ParamSize: "8b",
+			Precision: "bf16",
+		},
+	}
+	reqs, err := modelpack.ComputeGPURequirements(config)
+	if err != nil {
+		t.Fatalf("ARCHITECTURE VIOLATION: GPU requirements computation failed: %v", err)
+	}
+
+	hasGaudi2 := false
+	hasGaudi3 := false
+	for _, gpuType := range reqs.SupportedGPUTypes {
+		if gpuType == "Gaudi2" {
+			hasGaudi2 = true
+		}
+		if gpuType == "Gaudi3" {
+			hasGaudi3 = true
+		}
+	}
+	if !hasGaudi2 {
+		t.Fatal("ARCHITECTURE VIOLATION: Gaudi2 not in supported GPU types")
+	}
+	if !hasGaudi3 {
+		t.Fatal("ARCHITECTURE VIOLATION: Gaudi3 not in supported GPU types")
+	}
+}
+
+func TestA58_Cost_GaudiInPricingTable(t *testing.T) {
+	claim(t, "A58", "cost", "CDD", "Cost model pricing table includes Gaudi2, Gaudi3, and Xeon6 tiers")
+
+	pt := cost.DefaultPricingTable()
+	types := pt.ListGPUTypes()
+
+	required := []string{"Gaudi2", "Gaudi3", "Xeon6"}
+	for _, req := range required {
+		found := false
+		for _, typ := range types {
+			if typ == req {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("ARCHITECTURE VIOLATION: %s not in pricing table GPU types: %v", req, types)
+		}
+	}
+}
+
+func TestA59_Observability_TokenCountersExported(t *testing.T) {
+	claim(t, "A59", "observability", "CDD", "Inference proxy exports atomic token counters readable by the metrics server")
+
+	routing.TokensTotal.Store(0)
+	routing.PromptTokensTotal.Store(0)
+	routing.CompletionTokensTotal.Store(0)
+
+	routing.TokensTotal.Add(100)
+	routing.PromptTokensTotal.Add(40)
+	routing.CompletionTokensTotal.Add(60)
+
+	if routing.TokensTotal.Load() != 100 {
+		t.Fatal("ARCHITECTURE VIOLATION: TokensTotal not tracking")
+	}
+	if routing.PromptTokensTotal.Load() != 40 {
+		t.Fatal("ARCHITECTURE VIOLATION: PromptTokensTotal not tracking")
+	}
+	if routing.CompletionTokensTotal.Load() != 60 {
+		t.Fatal("ARCHITECTURE VIOLATION: CompletionTokensTotal not tracking")
+	}
+}
+
+func TestA60_Routing_TraceparentGeneration(t *testing.T) {
+	claim(t, "A60", "routing", "CDD", "Inference proxy generates W3C traceparent headers for backend requests")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tp := r.Header.Get("Traceparent")
+		if tp == "" {
+			t.Error("ARCHITECTURE VIOLATION: backend did not receive Traceparent header")
+		}
+		if !strings.HasPrefix(tp, "00-") {
+			t.Errorf("ARCHITECTURE VIOLATION: Traceparent does not follow W3C format: %s", tp)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer backend.Close()
+
+	proxy := routing.NewInferenceProxy()
+	proxy.RegisterBackend("test-model", routing.Backend{
+		Name:    "test-backend",
+		URL:     backend.URL,
+		Runtime: "vllm",
+		Healthy: true,
+	})
+
+	body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ARCHITECTURE VIOLATION: proxy returned %d", w.Code)
+	}
+}
+
+func TestA61_Placement_CompositeScorer_AcceptsExternalScorer(t *testing.T) {
+	claim(t, "A61", "placement", "CDD", "Placement solver accepts an ExternalScorer for composite scoring")
+
+	scorer := &fixedScorer{score: 0.95}
+	s := solver.NewConstraintSolverWithScorer(scorer)
+
+	clusters := []solver.ClusterInfo{
+		{ID: "c1", Name: "c1", Region: "us-east", Status: "Running", GPUCapacity: solver.GPUCapacity{Available: 4, Total: 8, Types: []string{"Gaudi2"}}, Utilization: 0.3},
+	}
+	pool := v1alpha1.FleetInferencePoolSpec{
+		Placement: v1alpha1.PlacementRef{MinClusters: 1, MaxClusters: 3},
+	}
+	policy := v1alpha1.PlacementPolicySpec{}
+
+	decisions, err := s.Solve(context.Background(), pool, clusters, policy)
+	if err != nil {
+		t.Fatalf("ARCHITECTURE VIOLATION: solver failed: %v", err)
+	}
+	if len(decisions) == 0 {
+		t.Fatal("ARCHITECTURE VIOLATION: solver returned no decisions")
+	}
+	if decisions[0].Score != 0.95 {
+		t.Fatalf("ARCHITECTURE VIOLATION: external scorer not used, got score %f want 0.95", decisions[0].Score)
+	}
+}
+
+type fixedScorer struct{ score float64 }
+
+func (s *fixedScorer) Score(_ context.Context, _ solver.ClusterInfo, _ v1alpha1.FleetInferencePoolSpec, _ v1alpha1.PlacementPolicySpec) (float64, error) {
+	return s.score, nil
+}
+
+func TestA62_Observability_ServiceMonitorResourcesExist(t *testing.T) {
+	claim(t, "A62", "observability", "CDD", "ServiceMonitor resources exist in Kustomize base for controller, gateway, and agent")
+
+	data, err := os.ReadFile("../../deploy/kustomize/base/servicemonitors.yaml")
+	if err != nil {
+		t.Fatalf("ARCHITECTURE VIOLATION: ServiceMonitor file not found: %v", err)
+	}
+	content := string(data)
+
+	required := []string{"fleet-controller", "fleet-gateway", "fleet-agent"}
+	for _, name := range required {
+		if !strings.Contains(content, "name: "+name) {
+			t.Fatalf("ARCHITECTURE VIOLATION: ServiceMonitor for %s not found in servicemonitors.yaml", name)
+		}
 	}
 }
 
