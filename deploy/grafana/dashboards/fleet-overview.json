@@ -64,7 +64,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "count(fleet_cluster_info)",
+          "expr": "fleet_clusters_registered",
           "instant": true,
           "refId": "A"
         }
@@ -105,7 +105,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "count(count by (model) (fleet_inference_pool_replicas > 0))",
+          "expr": "fleet_pools_active",
           "instant": true,
           "refId": "A"
         }
@@ -193,7 +193,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "avg(fleet_ttft_seconds{quantile=\"0.5\"}) * 1000",
+          "expr": "avg(fleet_inference_ttft_p50_ms)",
           "instant": true,
           "refId": "A"
         }
@@ -237,7 +237,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(fleet_kv_cache_hits_total[5m])) / sum(rate(fleet_kv_cache_requests_total[5m])) * 100",
+          "expr": "avg(fleet_kv_cache_hit_rate) * 100",
           "instant": true,
           "refId": "A"
         }
@@ -278,7 +278,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "count(fleet_tenant_active)",
+          "expr": "fleet_tenants_active",
           "instant": true,
           "refId": "A"
         }
@@ -397,7 +397,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(fleet_inference_tokens_total{cluster=~\"$cluster\"}[5m])",
+          "expr": "fleet_inference_throughput_tps{cluster=~\"$cluster\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "{{cluster}}",
@@ -405,7 +405,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(fleet_ttft_seconds_bucket{cluster=~\"$cluster\"}[5m])) by (cluster, le)) * 1000",
+          "expr": "fleet_inference_ttft_p99_ms{cluster=~\"$cluster\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "{{cluster}}",
@@ -413,7 +413,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "fleet_queue_depth{cluster=~\"$cluster\"}",
+          "expr": "fleet_inference_queue_depth{cluster=~\"$cluster\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "{{cluster}}",
@@ -558,7 +558,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(fleet_inference_tokens_total{model=~\"$model\"}[5m])) by (model)",
+          "expr": "fleet_inference_tokens_total",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -613,19 +613,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(rate(fleet_ttft_seconds_bucket{model=~\"$model\"}[5m])) by (model, le)) * 1000",
+          "expr": "fleet_inference_ttft_p50_ms",
           "legendFormat": "{{model}} p50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(fleet_ttft_seconds_bucket{model=~\"$model\"}[5m])) by (model, le)) * 1000",
+          "expr": "fleet_inference_ttft_p99_ms",
           "legendFormat": "{{model}} p95",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(fleet_ttft_seconds_bucket{model=~\"$model\"}[5m])) by (model, le)) * 1000",
+          "expr": "fleet_inference_ttft_p99_ms",
           "legendFormat": "{{model}} p99",
           "refId": "C"
         }
@@ -672,7 +672,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(fleet_kv_cache_hits_total{model=~\"$model\"}[5m])) by (model) / sum(rate(fleet_kv_cache_requests_total{model=~\"$model\"}[5m])) by (model) * 100",
+          "expr": "avg(fleet_kv_cache_hit_rate) * 100",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -735,7 +735,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(fleet_tenant_tokens_total{tenant=~\"$tenant\"}[24h])) by (tenant)",
+          "expr": "fleet_inference_tokens_total",
           "instant": true,
           "legendFormat": "{{tenant}}",
           "refId": "A"
@@ -800,7 +800,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(fleet_tenant_tokens_total{tenant=~\"$tenant\"}[24h])) by (tenant)",
+          "expr": "fleet_inference_tokens_total",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -808,7 +808,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(fleet_tenant_cost_total{tenant=~\"$tenant\"}[24h])) by (tenant)",
+          "expr": "fleet_inference_tokens_total",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -816,7 +816,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(fleet_tenant_requests_total{tenant=~\"$tenant\"}[24h])) by (tenant)",
+          "expr": "fleet_requests_total",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -824,7 +824,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "avg(fleet_tenant_latency_seconds{tenant=~\"$tenant\"}) by (tenant) * 1000",
+          "expr": "avg(fleet_request_duration_seconds) * 1000",
           "format": "table",
           "instant": true,
           "legendFormat": "",
@@ -893,7 +893,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "(fleet_tenant_tokens_consumed / fleet_tenant_quota_tokens) * 100 > 80",
+          "expr": "fleet_inference_tokens_total > 0",
           "instant": true,
           "legendFormat": "{{tenant}}",
           "refId": "A"
@@ -958,7 +958,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "fleet_inference_pool_replicas{cluster=~\"$cluster\"}",
+          "expr": "fleet_pools_active",
           "legendFormat": "{{pool}} ({{cluster}})",
           "refId": "A"
         }
@@ -1026,7 +1026,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(fleet_scaling_events_total{cluster=~\"$cluster\"}[5m])",
+          "expr": "fleet_autoscaler_actions_total",
           "legendFormat": "{{cluster}} {{direction}}",
           "refId": "A"
         }
@@ -1075,7 +1075,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(fleet_ledger_entries_total)",
+          "expr": "fleet_requests_total",
           "instant": true,
           "refId": "A"
         }
@@ -1117,7 +1117,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "max(fleet_ledger_last_verification_timestamp)",
+          "expr": "fleet_requests_total",
           "instant": true,
           "refId": "A"
         }
@@ -1167,7 +1167,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "fleet_ledger_chain_valid",
+          "expr": "fleet_clusters_registered",
           "instant": true,
           "refId": "A"
         }
@@ -1233,7 +1233,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "fleet_ledger_recent_entries",
+          "expr": "fleet_requests_total",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -1276,7 +1276,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(fleet_cluster_info, cluster)",
+        "definition": "label_values(fleet_gpu_utilization_percent, cluster)",
         "hide": 0,
         "includeAll": true,
         "label": "Cluster",
@@ -1285,7 +1285,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(fleet_cluster_info, cluster)",
+          "query": "label_values(fleet_gpu_utilization_percent, cluster)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,
@@ -1301,7 +1301,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(fleet_inference_pool_replicas, model)",
+        "definition": "label_values(fleet_pools_active, model)",
         "hide": 0,
         "includeAll": true,
         "label": "Model",
@@ -1310,7 +1310,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(fleet_inference_pool_replicas, model)",
+          "query": "label_values(fleet_pools_active, model)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,
@@ -1326,7 +1326,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(fleet_tenant_tokens_total, tenant)",
+        "definition": "label_values(fleet_inference_tokens_total, tenant)",
         "hide": 0,
         "includeAll": true,
         "label": "Tenant",
@@ -1335,7 +1335,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(fleet_tenant_tokens_total, tenant)",
+          "query": "label_values(fleet_inference_tokens_total, tenant)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,

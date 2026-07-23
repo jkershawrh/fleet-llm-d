@@ -123,7 +123,7 @@
       "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "title": "Ledger Entries Written",
       "type": "stat",
-      "targets": [{ "expr": "are_ledger_entries_written_total", "refId": "A" }]
+      "targets": [{ "expr": "are_ledger_write_total", "refId": "A" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "are-ledger" },
@@ -138,7 +138,7 @@
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "title": "Ledger Write Errors",
       "type": "stat",
-      "targets": [{ "expr": "are_ledger_write_errors_total", "refId": "A" }]
+      "targets": [{ "expr": "are_ledger_write_total", "refId": "A" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "are-ledger" },
@@ -154,7 +154,7 @@
       "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "title": "Ledger Write Latency (p99)",
       "type": "stat",
-      "targets": [{ "expr": "histogram_quantile(0.99, rate(are_ledger_write_duration_seconds_bucket[5m])) * 1000", "refId": "A" }]
+      "targets": [{ "expr": "are_ledger_write_total", "refId": "A" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "are-ledger" },
@@ -169,7 +169,7 @@
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "title": "Chain Verifications",
       "type": "stat",
-      "targets": [{ "expr": "are_ledger_verify_total", "refId": "A" }]
+      "targets": [{ "expr": "are_ledger_chain_verify_failure_total", "refId": "A" }]
     },
     {
       "collapsed": false,

@@ -187,6 +187,37 @@ paths:
       operationId: listTenants
       summary: List all tenants
       tags: [tenants]
+    post:
+      operationId: createTenant
+      summary: Create a new tenant with quotas
+      tags: [tenants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                priority:
+                  type: integer
+                quotas:
+                  type: object
+                rate_limit:
+                  type: object
+                cost_control:
+                  type: object
+      responses:
+        "201":
+          description: Tenant created
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Tenant already exists
       responses:
         "200":
           description: Array of tenant objects

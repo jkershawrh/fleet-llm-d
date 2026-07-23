@@ -62,6 +62,7 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 
 		// Tenants
 		mux.HandleFunc("GET /api/v1/tenants", fc.handleListTenants)
+		mux.HandleFunc("POST /api/v1/tenants", fc.handleCreateTenant)
 		mux.HandleFunc("GET /api/v1/tenants/{id}/usage", fc.handleTenantUsage)
 
 		// Metrics
