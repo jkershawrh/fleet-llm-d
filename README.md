@@ -10,17 +10,19 @@ fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet o
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
 [![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/Tests-500%2B_passing-brightgreen.svg)](#testing)
-[![Architecture](https://img.shields.io/badge/Arch_Tests-55%2F55-blue.svg)](#architectural-proof)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/Tests-340%2B_passing-brightgreen.svg)](#testing)
+[![Architecture](https://img.shields.io/badge/Arch_Proofs-65%2F65-blue.svg)](#architectural-proof)
+[![BDD](https://img.shields.io/badge/BDD-63_scenarios-blue.svg)](#testing)
+[![Rust](https://img.shields.io/badge/Rust_Tests-73_passing-blue.svg)](#testing)
 
 ---
 
-> **Maturity notice:** this repository currently has contract, unit, and
-> prototype integration evidence. It is **not** promoted to Blue or Gold under
-> the current evidence rubric. Historical mock/demo results below are retained
-> as development evidence and do not prove assembled ModelPlane, llm-d,
-> multi-cluster, security-audit, or 72-hour-soak behavior.
+> **Maturity notice (July 2026):** Dev-promotable. All rubric dimensions meet
+> dev thresholds. Real Granite 3.3 2B inference proven on two clusters (Oberon
+> SNO + Dell Arena multi-node). Cross-cluster gateway federation demonstrated.
+> 72-hour soak running on Arena (expected completion July 26). Staging
+> promotion pending integration test results on real infrastructure.
+> See [docs/status-report.md](docs/status-report.md) for full evidence.
 
 ## Why fleet-llm-d
 
