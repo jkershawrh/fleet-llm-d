@@ -159,11 +159,11 @@ func ValidateKVCacheTransferPolicy(spec KVCacheTransferPolicySpec) []error {
 	if spec.Provider != KVCacheProviderLlmDNative && spec.Provider != KVCacheProviderFleetTransfer {
 		errs = append(errs, ValidationError{"spec.provider", "must be LlmDNative or FleetTransfer"})
 	}
-	if spec.Transport.Protocol != TransferProtocolGRPC && spec.Transport.Protocol != TransferProtocolNIXL {
-		errs = append(errs, ValidationError{"spec.transport.protocol", "must be GRPC or NIXL"})
+	if spec.Transport.Protocol != TransferProtocolGRPC && spec.Transport.Protocol != TransferProtocolNIXL && spec.Transport.Protocol != TransferProtocolTCP {
+		errs = append(errs, ValidationError{"spec.transport.protocol", "must be GRPC, NIXL, or TCP"})
 	}
-	if spec.Transport.FallbackPolicy != TransferFallbackDeny && spec.Transport.FallbackPolicy != TransferFallbackGRPC {
-		errs = append(errs, ValidationError{"spec.transport.fallbackPolicy", "must be Deny or GRPC"})
+	if spec.Transport.FallbackPolicy != TransferFallbackDeny && spec.Transport.FallbackPolicy != TransferFallbackGRPC && spec.Transport.FallbackPolicy != TransferFallbackTCP {
+		errs = append(errs, ValidationError{"spec.transport.fallbackPolicy", "must be Deny, GRPC, or TCP"})
 	}
 	if spec.Transport.Protocol == TransferProtocolNIXL && spec.Provider != KVCacheProviderFleetTransfer {
 		errs = append(errs, ValidationError{"spec.transport.protocol", "NIXL requires the FleetTransfer provider"})

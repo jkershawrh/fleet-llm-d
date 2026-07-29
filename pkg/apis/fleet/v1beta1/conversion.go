@@ -62,6 +62,8 @@ func ConvertKVCacheTransferPolicyFromV1Alpha1(in v1alpha1.KVCacheTransferPolicyS
 	switch {
 	case strings.EqualFold(string(out.Transport.Protocol), "nixl"):
 		out.Transport.Protocol = TransferProtocolNIXL
+	case strings.EqualFold(string(out.Transport.Protocol), "tcp"):
+		out.Transport.Protocol = TransferProtocolTCP
 	default:
 		out.Transport.Protocol = TransferProtocolGRPC
 	}

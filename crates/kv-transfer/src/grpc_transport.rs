@@ -3,6 +3,7 @@
 //! Implements [`TransferProtocol`] using tonic gRPC bidirectional streaming.
 //! Each block is sent as a `KvBlockMessage` over a tonic channel.
 
+use async_trait::async_trait;
 use crate::protocol::{KvBlock, TransferProtocol};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,6 +25,7 @@ impl GrpcTransferProtocol {
     }
 }
 
+#[async_trait]
 impl TransferProtocol for GrpcTransferProtocol {
     async fn connect(&self, remote_endpoint: &str) -> anyhow::Result<()> {
         *self.remote_endpoint.write().await = Some(remote_endpoint.to_string());

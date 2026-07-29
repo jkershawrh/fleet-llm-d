@@ -139,6 +139,7 @@ spec:
                       enum:
                         - nixl
                         - grpc-fallback
+                        - tcp
                     maxBandwidthMbps:
                       type: integer
                       format: int32
@@ -217,11 +218,11 @@ spec:
                   properties:
                     protocol:
                       type: string
-                      enum: [GRPC, NIXL]
+                      enum: [GRPC, NIXL, TCP]
                       default: GRPC
                     fallbackPolicy:
                       type: string
-                      enum: [Deny, GRPC]
+                      enum: [Deny, GRPC, TCP]
                       default: Deny
                 authorizationRef:
                   type: object

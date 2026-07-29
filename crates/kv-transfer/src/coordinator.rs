@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::protocol::TransferType;
+use crate::protocol::{KvBlock, StreamingTransferProtocol, TransferProtocol, TransferType};
 
 /// Status of a transfer job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,17 +53,36 @@ pub struct TransferJob {
 }
 
 /// Coordinates KV cache transfers across the fleet.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TransferCoordinator {
     /// Active and completed transfer jobs, keyed by transfer ID.
     jobs: Arc<RwLock<HashMap<Uuid, TransferJob>>>,
+    /// Transport backend used for actual data transfer.
+    protocol: Arc<dyn TransferProtocol>,
+}
+
+impl std::fmt::Debug for TransferCoordinator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransferCoordinator")
+            .field("jobs", &self.jobs)
+            .finish()
+    }
 }
 
 impl TransferCoordinator {
-    /// Create a new [`TransferCoordinator`].
+    /// Create a new [`TransferCoordinator`] with the default in-memory protocol.
     pub fn new() -> Self {
         Self {
             jobs: Arc::new(RwLock::new(HashMap::new())),
+            protocol: Arc::new(StreamingTransferProtocol::new()),
+        }
+    }
+
+    /// Create a [`TransferCoordinator`] with a specific transport protocol.
+    pub fn with_protocol(protocol: impl TransferProtocol + 'static) -> Self {
+        Self {
+            jobs: Arc::new(RwLock::new(HashMap::new())),
+            protocol: Arc::new(protocol),
         }
     }
 
@@ -101,6 +120,7 @@ impl TransferCoordinator {
         self.jobs.write().await.insert(id, job);
 
         let jobs = self.jobs.clone();
+        let protocol = self.protocol.clone();
         tokio::spawn(async move {
             {
                 let mut jobs = jobs.write().await;
@@ -109,12 +129,33 @@ impl TransferCoordinator {
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let endpoint = format!("{}:9100", target_cluster);
+            let (final_status, bytes) = match protocol.connect(&endpoint).await {
+                Ok(()) => {
+                    let blocks = vec![KvBlock {
+                        sequence: 0,
+                        data: Vec::new(),
+                        is_final: true,
+                    }];
+                    match protocol.send_blocks(blocks).await {
+                        Ok(bytes) => {
+                            let _ = protocol.close().await;
+                            (TransferStatus::Completed, bytes)
+                        }
+                        Err(e) => {
+                            let _ = protocol.close().await;
+                            (TransferStatus::Failed(e.to_string()), 0)
+                        }
+                    }
+                }
+                Err(e) => (TransferStatus::Failed(e.to_string()), 0),
+            };
 
             let mut jobs = jobs.write().await;
             if let Some(job) = jobs.get_mut(&id) {
                 if matches!(job.status, TransferStatus::InProgress) {
-                    job.status = TransferStatus::Completed;
+                    job.status = final_status;
+                    job.bytes_transferred = bytes;
                     job.finished_at = Some(Utc::now());
                 }
             }

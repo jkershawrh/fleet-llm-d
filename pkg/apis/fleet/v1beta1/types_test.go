@@ -90,6 +90,36 @@ func TestValidateProviderCompatibility(t *testing.T) {
 	}
 }
 
+func TestValidateTCPProtocol(t *testing.T) {
+	kv := KVCacheTransferPolicySpec{
+		Provider: KVCacheProviderLlmDNative,
+		Transport: TransportSpec{
+			Protocol:       TransferProtocolTCP,
+			FallbackPolicy: TransferFallbackDeny,
+		},
+	}
+	if errs := ValidateKVCacheTransferPolicy(kv); len(errs) != 0 {
+		t.Fatalf("valid LlmDNative/TCP policy rejected: %v", errs)
+	}
+
+	kv.Transport.FallbackPolicy = TransferFallbackTCP
+	if errs := ValidateKVCacheTransferPolicy(kv); len(errs) != 0 {
+		t.Fatalf("valid TCP fallback policy rejected: %v", errs)
+	}
+}
+
+func TestAlphaConversionTCPProtocol(t *testing.T) {
+	betaKV, err := ConvertKVCacheTransferPolicyFromV1Alpha1(v1alpha1.KVCacheTransferPolicySpec{
+		Transport: v1alpha1.TransportSpec{Protocol: "TCP"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if betaKV.Transport.Protocol != TransferProtocolTCP {
+		t.Fatalf("alpha TCP conversion = %q, want %q", betaKV.Transport.Protocol, TransferProtocolTCP)
+	}
+}
+
 func TestValidateAuthorizationReference(t *testing.T) {
 	now := time.Now().UTC()
 	ref := &AuthorizationReference{

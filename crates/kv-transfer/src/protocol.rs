@@ -3,6 +3,7 @@
 //! Defines the [`TransferProtocol`] trait that transport backends must implement,
 //! along with the [`TransferType`] enum describing the semantics of a transfer.
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -48,7 +49,7 @@ pub struct KvBlock {
 /// Implementations handle the low-level mechanics of moving KV cache data
 /// between clusters, whether via RDMA (NIXL), gRPC streaming, or other
 /// mechanisms.
-#[allow(async_fn_in_trait)]
+#[async_trait]
 pub trait TransferProtocol: Send + Sync {
     /// Establish a connection to the remote cluster for data transfer.
     async fn connect(&self, remote_endpoint: &str) -> anyhow::Result<()>;
@@ -84,6 +85,7 @@ impl StreamingTransferProtocol {
     }
 }
 
+#[async_trait]
 impl TransferProtocol for StreamingTransferProtocol {
     async fn connect(&self, remote_endpoint: &str) -> anyhow::Result<()> {
         *self.remote_endpoint.write().await = Some(remote_endpoint.to_string());

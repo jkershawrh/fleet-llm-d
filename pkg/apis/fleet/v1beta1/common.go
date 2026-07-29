@@ -137,6 +137,7 @@ type TransferProtocol string
 const (
 	TransferProtocolGRPC TransferProtocol = "GRPC"
 	TransferProtocolNIXL TransferProtocol = "NIXL"
+	TransferProtocolTCP  TransferProtocol = "TCP"
 )
 
 type TransferFallbackPolicy string
@@ -144,4 +145,5 @@ type TransferFallbackPolicy string
 const (
 	TransferFallbackDeny TransferFallbackPolicy = "Deny"
 	TransferFallbackGRPC TransferFallbackPolicy = "GRPC"
+	TransferFallbackTCP  TransferFallbackPolicy = "TCP"
 )

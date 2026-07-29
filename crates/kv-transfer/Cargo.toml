@@ -22,3 +22,4 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+async-trait = { workspace = true }

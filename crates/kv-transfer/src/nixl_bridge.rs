@@ -6,6 +6,7 @@
 //!
 //! See: <https://github.com/ai-dynamo/nixl>
 
+use async_trait::async_trait;
 use crate::protocol::{KvBlock, TransferProtocol};
 
 /// Bridge to the NIXL GPU-to-GPU transport layer.
@@ -50,6 +51,7 @@ impl Default for NixlBridge {
     }
 }
 
+#[async_trait]
 impl TransferProtocol for NixlBridge {
     async fn connect(&self, remote_endpoint: &str) -> anyhow::Result<()> {
         if !self.nixl_available {

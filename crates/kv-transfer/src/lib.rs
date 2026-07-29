@@ -11,3 +11,4 @@ pub mod coordinator;
 pub mod grpc_transport;
 pub mod nixl_bridge;
 pub mod protocol;
+pub mod tcp_transport;
