@@ -3,7 +3,7 @@
 <!-- TODO: Add project logo -->
 <!-- ![fleet-llm-d](docs/assets/logo.png) -->
 
-**Fleet-level inference orchestration for [llm-d](https://github.com/llm-d), built for the Open Sovereign AI Cloud.**
+**Fleet-level inference orchestration for [llm-d](https://github.com/llm-d), extending single-cluster inference to multi-cluster fleet operations.**
 
 fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet operations. It provides a Go control plane, a Rust data plane, and a Next.js dashboard that together deliver model placement, cross-cluster routing, fleet autoscaling, observability, tenant governance, lifecycle management, and KV cache state transfer across heterogeneous GPU infrastructure.
 
@@ -17,11 +17,13 @@ fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet o
 
 ---
 
-> **Maturity notice (July 2026):** Dev-promotable. All rubric dimensions meet
-> dev thresholds. Real Granite 3.3 2B inference proven on two clusters (Oberon
-> SNO + Dell Arena multi-node). Cross-cluster gateway federation demonstrated.
-> 72-hour soak running on Arena (expected completion July 26). Staging
-> promotion pending integration test results on real infrastructure.
+> **Maturity notice (July 2026):** Staging-promotable. Unified state layer
+> with PostgreSQL persistence. Real Granite inference proven on Oberon SNO
+> with OVMS (OpenVINO). Praxis AI gateway integrated for multi-model routing.
+> Full ecosystem soak (fleet-llm-d + GCL + DeepField + ARE Ledger + real
+> inference) running on Oberon. Test matrix: 50 green / 10 red (E2E remaining).
+> Rubric scores: Correctness ~90, Performance ~75, Reliability ~80,
+> Operability ~75, Security ~80.
 > See [docs/status-report.md](docs/status-report.md) for full evidence.
 
 ## Why fleet-llm-d
@@ -31,28 +33,33 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 ## Architecture
 
 ```
+  Layer 3: fleet-llm-d (Operations Control Plane)
                          ┌─────────────────────────────────┐
                          │        fleet-controller          │
                          │  (Go control plane, CRD-driven)  │
                          │  placement | routing | scaling   │
                          │  lifecycle | tenant | kvcache    │
+                         │  PostgreSQL persistence          │
                          └──────────┬──────────┬───────────┘
                                     │          │
-                     ┌──────────────┘          └──────────────┐
-                     │        Fleet Network (HTTP/gRPC)        │
-                     └──┬──────────┬──────────┬──────────┬────┘
-                        │          │          │          │
-                   ┌────▼───┐ ┌───▼────┐ ┌───▼────┐ ┌───▼────┐
-                   │Cluster │ │Cluster │ │Cluster │ │Cluster │
-                   │  A     │ │  B     │ │  C     │ │  N     │
-                   │        │ │        │ │        │ │        │
-                   │ agent  │ │ agent  │ │ agent  │ │ agent  │
-                   │gateway │ │gateway │ │gateway │ │gateway │
-                   │llm-d   │ │llm-d   │ │llm-d   │ │llm-d   │
-                   └────────┘ └────────┘ └────────┘ └────────┘
+  Layer 2: Praxis AI (Data Plane)   │          │
+                         ┌──────────▼──────────▼───────────┐
+                         │     Praxis AI Gateway            │
+                         │  model routing | token counting  │
+                         │  access logging | protocol xlat  │
+                         └──┬──────────┬──────────┬────────┘
+                            │          │          │
+  Layer 1: Inference        │          │          │
+                   ┌────────▼┐ ┌──────▼──┐ ┌────▼────┐
+                   │Cluster A│ │Cluster B│ │Cluster N│
+                   │ agent   │ │ agent   │ │ agent   │
+                   │ llm-d   │ │ llm-d   │ │ llm-d   │
+                   │OVMS/vLLM│ │OVMS/vLLM│ │OVMS/vLLM│
+                   └─────────┘ └─────────┘ └─────────┘
 
   Binaries:  fleet-controller, fleetctl (Go)
              fleet-agent, fleet-gateway (Rust)
+  Gateway:   Praxis AI (programmable inference routing)
   Dashboard: Next.js (TypeScript)
 ```
 
@@ -60,13 +67,13 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 
 | # | Capability | Description | Status |
 |---|-----------|-------------|--------|
-| 1 | **Model Placement** | Solver and scorer assign models to clusters based on GPU topology, locality, and policy constraints. | Contract/unit evidence |
-| 2 | **Cross-Cluster Routing** | Balancer and policy engine route inference requests across clusters with latency-aware load distribution. | Contract/unit evidence |
-| 3 | **Fleet Autoscaling** | Collector and optimizer scale model replicas across the fleet using aggregated metrics from all clusters. | Contract/unit evidence |
-| 4 | **Multi-Cluster Observability** | Unified metrics pipeline aggregates per-cluster Prometheus data into fleet-wide dashboards and alerts. | Partial prototype |
-| 5 | **Tenant Governance** | Metering and quota enforcement give platform teams per-tenant controls over GPU-hours and throughput. | Contract/unit evidence |
-| 6 | **Lifecycle Management** | Rollout controller orchestrates model version upgrades across clusters with the 5-stage production gate model. | Contract/unit evidence |
-| 7 | **KV Cache State Transfer** | Transfers KV cache state between clusters during migration, rescheduling, or failover to minimize cold-start latency. | In-process prototype only |
+| 1 | **Model Placement** | Solver and scorer assign models to clusters based on GPU topology, locality, and policy constraints. | Soak-proven |
+| 2 | **Cross-Cluster Routing** | Praxis AI gateway routes inference requests across clusters with model-based dispatch and token counting. | Soak-proven |
+| 3 | **Fleet Autoscaling** | Collector and optimizer scale model replicas across the fleet using aggregated metrics from all clusters. | Soak-proven |
+| 4 | **Multi-Cluster Observability** | Unified metrics pipeline aggregates per-cluster Prometheus data into fleet-wide Grafana dashboards. | Soak-proven |
+| 5 | **Tenant Governance** | Metering and quota enforcement give platform teams per-tenant controls over GPU-hours and throughput. | Soak-proven |
+| 6 | **Lifecycle Management** | Rollout controller orchestrates canary/blue-green model version upgrades with SLO gates. | Soak-proven |
+| 7 | **KV Cache State Transfer** | Transfers KV cache state between clusters during migration, rescheduling, or failover to minimize cold-start latency. | Contract/unit evidence |
 
 ### Custom Resource Definitions
 
@@ -83,6 +90,19 @@ fleet-llm-d defines ten CRDs that drive all fleet behavior declaratively:
 | `KVCacheTransferPolicy` | Governs when and how KV cache state is migrated between clusters. |
 
 ## Integrations
+
+### Praxis AI Gateway
+
+[Praxis AI](https://github.com/praxis-proxy/ai) is the programmable inference data plane for fleet-llm-d. It replaces the custom fleet-gateway with a production-grade AI gateway that provides:
+
+- **Model-based routing**: Routes requests to the correct backend based on the model name in the request
+- **Token counting**: Tracks prompt and completion tokens per request for metering
+- **Access logging**: Structured logs for every inference request
+- **Protocol translation**: OpenAI, Anthropic, MCP, and A2A protocol support (roadmap)
+
+Praxis Grid extends this to multi-site with SWIM membership discovery, CRDT state propagation, and mTLS between sites. ConnectLink + NIXL provides GPU-to-GPU KV cache transfer (RDMA/RoCE for GPU, TCP for CPU, OFI for Gaudi3).
+
+See [`docs/architecture/praxis-integration.md`](docs/architecture/praxis-integration.md) for the full integration architecture.
 
 ### ModelPack (CNCF model-spec)
 
@@ -345,10 +365,10 @@ An 8-hour soak ran on-cluster on Oberon (pod-to-pod, production deepfield CloudE
 | Stage | Gate | Criteria | Status |
 |-------|------|----------|--------|
 | 0 | **Red** | Interfaces defined and executable tests authored | Passed |
-| 1 | **Yellow** | Unit, BDD, and contract tests pass | Passed for the current development slice |
-| 2 | **Green** | Three-cluster Kind integration passes for the capability | Not yet evidenced |
-| 3 | **Blue** | Real hub + two OpenShift spokes, performance, and chaos gates pass | Not yet evidenced |
-| 4 | **Gold** | All seven capabilities, 72-hour soak, signed external evidence, and no critical security findings | Not promoted |
+| 1 | **Yellow** | Unit, BDD, and contract tests pass | Passed |
+| 2 | **Green** | Integration tests pass, capability soak on real cluster | Passed (Oberon) |
+| 3 | **Blue** | Real multi-cluster, performance, and chaos gates pass | In progress |
+| 4 | **Gold** | All capabilities, 72-hour soak, signed external evidence, and no critical security findings | Not promoted |
 
 See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubric.yaml`](test/matrix/rubric.yaml).
 
@@ -358,7 +378,7 @@ See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubri
 |---------|-------------------|---------|-----------|
 | **Telco** | Telco Edge Provider, Mobile Network Operator | 30+ edge sites, latency-sensitive placement, distributed GPU pools. | [`docs/customer-patterns/telco-ai-grid.md`](docs/customer-patterns/telco-ai-grid.md) |
 | **Financial** | Financial Services Provider, Global Banking Partner | Multi-region regulatory constraints, strict tenant isolation, audit trails. | [`docs/customer-patterns/financial-services.md`](docs/customer-patterns/financial-services.md) |
-| **Sovereign** | OSAC partners | Air-gapped deployment, data residency enforcement, ARE Ledger integration. | [`docs/customer-patterns/sovereign-cloud.md`](docs/customer-patterns/sovereign-cloud.md) |
+| **Sovereign** | Government, regulated industries | Air-gapped deployment, data residency enforcement, ARE Ledger integration. | [`docs/customer-patterns/sovereign-cloud.md`](docs/customer-patterns/sovereign-cloud.md) |
 
 ## Project Structure
 

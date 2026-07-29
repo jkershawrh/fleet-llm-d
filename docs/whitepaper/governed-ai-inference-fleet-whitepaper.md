@@ -54,7 +54,7 @@ This whitepaper presents the architecture, verified evidence, honest boundaries,
 
 ### 2.1 The Missing Layer
 
-Production AI inference at scale runs on well-understood layers: cluster provisioning (OSAC), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). Each exists and works. None of them coordinates inference decisions across the fleet boundary.
+Production AI inference at scale runs on well-understood layers: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). Each exists and works. None of them coordinates inference decisions across the fleet boundary.
 
 The gap is fleet-level inference orchestration: deciding which models run on which clusters, how traffic flows between them, when to scale and where, which tenants get priority, and how to prove that every decision was governed, authorized, and recorded.
 

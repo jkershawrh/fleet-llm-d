@@ -74,7 +74,7 @@ single control plane. No existing llm-d component addresses this.
   multiple trading desk tenants with hard cost caps.
 
 **Sovereign Cloud / Government (3 engagements):**
-- **OSAC (Open Sovereign AI Cloud)** needs air-gapped fleet-llm-d
+- **Sovereign cloud deployments** need air-gapped fleet-llm-d
   deployments per sovereign zone with no inter-zone inference data transfer
   and cryptographic model provenance verification.
 - **Government Defense Agency** requires FIPS 140-2/3 compliant inference orchestration with
@@ -759,7 +759,7 @@ Test breakdown:
 |---|---|---|---|
 | Telco Edge Provider | Telco AI Grid (30+ edge sites) | PlacementPolicy, FleetRoutingPolicy, TenantProfile, FleetInferencePool | Architecture review |
 | Financial Services Provider | Regulated financial services | All 7 CRDs | Design partner |
-| OSAC | Sovereign cloud, GPU-as-a-Service | PlacementPolicy, TenantProfile, FleetScalingPolicy, FleetRoutingPolicy | Architecture review |
+| Sovereign Cloud | Government, regulated industries | PlacementPolicy, TenantProfile, FleetScalingPolicy, FleetRoutingPolicy | Architecture review |
 | Mobile Network Operator | Tenant self-service | TenantProfile, FleetInferencePool | Competitive loss analysis |
 
 ---

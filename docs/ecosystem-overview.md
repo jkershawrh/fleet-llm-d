@@ -25,6 +25,9 @@ This platform is built on and integrates with open-source projects across the Re
 | **fleet-llm-d** | Fleet-level multi-cluster orchestration: placement, routing, autoscaling, lifecycle, tenant governance, KV-cache transfer. | [github.com/llm-d/fleet-llm-d](https://github.com/llm-d/fleet-llm-d) |
 | **ModelPlane** | Model lifecycle state management. fleet-llm-d's ComplianceBridge watches ModelPlane for compliance-driven placement updates. | Integrated in fleet-llm-d |
 | **ModelPack** | OCI-based model metadata resolution (CNCF model-spec). Resolves GPU requirements, precision, and format for placement decisions. | [github.com/cncf/model-spec](https://github.com/cncf/model-spec) |
+| **Praxis AI** | Programmable AI gateway for model-based routing, token counting, and access logging. Replaces fleet-gateway as the inference data plane. | [github.com/praxis-proxy/ai](https://github.com/praxis-proxy/ai) |
+| **Praxis Grid** | Multi-site control plane with SWIM membership, CRDT state propagation, and mTLS between sites. | Integrated in fleet-llm-d |
+| **ConnectLink + NIXL** | GPU-to-GPU KV cache transfer via RDMA/RoCE (GPU), TCP (CPU), OFI (Gaudi3). Cross-cluster prefix cache sharing. | Red Hat |
 | **vLLM Semantic Router** | Prompt classification and tier-based routing. Classifies prompts as simple/standard/complex and routes to the appropriate inference backend. Deployed as an ExtProc filter. | Integrated in fleet-llm-d |
 | **Red Hat OpenShift** | Container orchestration platform. CRD-driven fleet management, RBAC, network policies, HPA, routes. | [openshift.com](https://www.redhat.com/en/technologies/cloud-computing/openshift) |
 
@@ -99,7 +102,8 @@ This platform is built on and integrates with open-source projects across the Re
 
 **Capabilities**:
 - **Multi-cluster placement**: Constraint-based solver assigns models to clusters based on hardware affinity (CPU vs GPU), capacity, latency, and compliance requirements.
-- **Inference proxy**: OpenAI-compatible gateway with semantic routing, load shedding, and SSE streaming. Routes `model="auto"` requests to the appropriate backend based on prompt classification.
+- **Praxis AI gateway**: Programmable inference routing with model-based dispatch, token counting, and access logging. Routes requests to the appropriate backend (OVMS, vLLM) through a single gateway endpoint.
+- **Unified state layer**: Shared repositories (ClusterRepo, TenantRepo, RolloutRepo, PoolRepo) with PostgreSQL persistence. State survives controller restarts.
 - **Autoscaling**: Metrics-driven fleet optimization with HPA integration. Collector aggregates per-model throughput, latency, and utilization.
 - **Lifecycle management**: Canary, blue-green, and rolling update strategies with SLO gates. Rollouts pause automatically if SLO gates fail.
 - **Tenant governance**: Quota enforcement, budget tracking, priority-based scheduling, per-tenant metering and chargeback.
@@ -108,7 +112,12 @@ This platform is built on and integrates with open-source projects across the Re
 - **DecisionPackage admission (v2)**: Verifies GCL producer signatures, checks expiry and scope binding, applies fleet-owned authorization policy, then creates a FleetOperation with full lifecycle tracking (RECEIVED -> ACCEPTED -> PLANNED -> AUTHORIZED -> ACTUATING -> SUCCEEDED/FAILED).
 - **Platform metrics**: Centralized aggregation from all 4 systems via `GET /api/v1/metrics/platform`.
 
-**Tech**: Go (control plane), Rust (data plane: gateway, agent, KV transfer), Next.js (dashboard), Helm charts. Full CI (Go, Rust, CRD validation, Docker build).
+**Three-layer target architecture**:
+- **Layer 3: fleet-llm-d** -- Operations control plane (placement, scaling, tenants, governance, ledger)
+- **Layer 2: Praxis AI + Grid** -- Programmable AI data plane (routing, protocol translation, SWIM mesh, mTLS)
+- **Layer 1: ConnectLink + NIXL** -- GPU/accelerator fabric (KV cache transfer, prefix sharing, RDMA/TCP)
+
+**Tech**: Go (control plane), Rust (data plane: gateway, agent, KV transfer), Praxis AI (inference routing), Next.js (dashboard), Helm charts. Full CI (Go, Rust, CRD validation, Docker build).
 
 ### 4. are-immutable-ledger: Prove
 
@@ -181,7 +190,7 @@ Semantic routing classifies prompts by complexity and routes to the appropriate 
 |---|---|---|
 | deepfield-fleet | 295 passed | Unit, integration, ecosystem contract, BDD scenarios |
 | GCL | 822 passed | Unit, 33 EDD rubric, 15 BDD scenarios, 7 failure mode benchmarks |
-| fleet-llm-d | 462 passed (436 Go + 26 Python) | Unit, contract, CRD validation, architecture, OpenAPI conformance |
+| fleet-llm-d | 500+ passed (Go + Rust + Python) | Unit, contract, integration, BDD, architecture, benchmark, OpenAPI conformance |
 | ARE ledger | 40 passed (38 Rust + 2 Python) | Chain integrity, concurrent writes, delegation, gRPC contract, gateway contract |
 | **Cross-system** | **42/48 passed** | **8-phase ecosystem stress test on Oberon (smoke, perf, pressure, edge, degradation, soak, pen, chaos)** |
 
