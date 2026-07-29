@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 
+	_ "github.com/lib/pq"
+
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	fleetcontroller "github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/intents"
@@ -40,6 +42,12 @@ func main() {
 	maxInflight := flag.Int("max-inflight", 0, "Max concurrent inference requests per model (0 = disabled)")
 	allowOperatorJSONIntents := flag.Bool("allow-operator-json-intents", false, "Enable unsigned application/json v2 intent input for development/operator compatibility only")
 	flag.Parse()
+
+	if *pgURL == "" {
+		if env := os.Getenv("PG_URL"); env != "" {
+			*pgURL = env
+		}
+	}
 
 	// Configure structured JSON logging.
 	var level slog.Level

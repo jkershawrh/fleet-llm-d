@@ -1,14 +1,16 @@
 """Production-emulation soak test for the governed AI inference fleet platform.
 
-Exercises the full decision pipeline (deepfield -> GCL -> fleet -> ledger) on
-Oberon with variable duration profiles. Measures end-to-end latency, memory
-growth, chain integrity, and degradation recovery.
+Exercises the full decision pipeline (deepfield -> GCL -> fleet -> ledger) with
+real multi-cluster inference routing. Measures end-to-end latency, memory
+growth, chain integrity, inference throughput, and degradation recovery.
 
 Usage:
     python3 test/soak/ecosystem_soak.py \
-        --gcl-url https://gcl-app.192.168.1.123.sslip.io \
-        --fleet-url https://fleet-controller-fleet-llm-d.apps.ocpv-infra01.dal12.infra.demo.redhat.com \
-        --profile quick
+        --gcl-url http://gcl-app.governed-cognitive-loop.svc:8000 \
+        --fleet-url http://fleet-controller.fleet-llm-d.svc:8080 \
+        --gateway-url http://fleet-gateway.fleet-llm-d.svc:8080 \
+        --inference-model granite-3.3-2b \
+        --profile 72hr
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import sys
 import time
@@ -68,18 +71,45 @@ class SoakResult:
     fleet_memory_series: list[float] = field(default_factory=list)
     scenario_actions: dict[str, list[str]] = field(default_factory=dict)
     slo_violations: list[str] = field(default_factory=list)
+    inference_successes: int = 0
+    inference_errors: int = 0
+    inference_latencies: list[float] = field(default_factory=list)
+    inference_tokens: int = 0
+    gateway_successes: int = 0
+    gateway_errors: int = 0
+    gateway_latencies: list[float] = field(default_factory=list)
+    gateway_cluster_hits: dict[str, int] = field(default_factory=dict)
+
+
+INFERENCE_PROMPTS = [
+    "What is Kubernetes in one sentence?",
+    "Explain containers briefly.",
+    "What is Red Hat OpenShift?",
+    "Define model inference.",
+    "What is fleet orchestration?",
+    "Explain KV cache in LLMs.",
+    "What is tensor parallelism?",
+    "Define inference latency.",
+]
 
 
 class EcosystemSoak:
     def __init__(self, gcl_url: str, fleet_url: str, ledger_url: str = "",
-                 deepfield_token: str = "", timeout: float = 30.0):
+                 deepfield_token: str = "", timeout: float = 30.0,
+                 gateway_url: str = "", inference_model: str = "",
+                 inference_interval: int = 30, auth_token: str = ""):
         self.gcl = gcl_url.rstrip("/")
         self.fleet = fleet_url.rstrip("/")
         self.ledger = ledger_url.rstrip("/") if ledger_url else ""
+        self.gateway = gateway_url.rstrip("/") if gateway_url else ""
         self.deepfield_token = deepfield_token
+        self.inference_model = inference_model
+        self.inference_interval = inference_interval
+        self.auth_token = auth_token
         self.timeout = timeout
         self._stop = False
         self._event_counter = 0
+        self._inference_counter = 0
 
     async def _get(self, url: str) -> httpx.Response:
         async with httpx.AsyncClient(verify=False, timeout=self.timeout) as c:
@@ -177,7 +207,41 @@ class EcosystemSoak:
             e2e_ms = (time.monotonic() - e2e_start) * 1000
             return False, e2e_ms, str(e)
 
-    # ── B. Health Probes ──
+    # ── B. Inference ──
+
+    async def run_inference(self, target: str = "fleet") -> tuple[bool, float, int, str]:
+        if not self.inference_model:
+            return True, 0, 0, "no-model"
+        self._inference_counter += 1
+        prompt = INFERENCE_PROMPTS[self._inference_counter % len(INFERENCE_PROMPTS)]
+        payload = {
+            "model": self.inference_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 20,
+        }
+        inference_url = os.environ.get("FLEET_INFERENCE_URL", "")
+        if target == "gateway" and self.gateway:
+            base = self.gateway
+        elif inference_url:
+            base = inference_url.rstrip("/")
+        else:
+            base = self.fleet
+        headers = {"Content-Type": "application/json"}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+        try:
+            resp, ms = await self._timed_post(
+                f"{base}/v1/chat/completions", payload, headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                tokens = data.get("usage", {}).get("total_tokens", 0)
+                cluster = resp.headers.get("x-fleet-target-cluster", "local")
+                return True, ms, tokens, cluster
+            return False, ms, 0, f"status={resp.status_code}"
+        except Exception as e:
+            return False, 0, 0, str(e)[:80]
+
+    # ── C. Health Probes ──
 
     async def probe_health(self) -> dict:
         result = {}
@@ -286,6 +350,8 @@ class EcosystemSoak:
         last_snapshot = start
         last_inject = start
         last_verify = start
+        last_inference = start
+        last_gateway_inference = start
         scenario_idx = 0
         step_idx = 0
         snapshot_count = 0
@@ -300,6 +366,10 @@ class EcosystemSoak:
         print(f"Degradation injections: every {inject_interval/60:.0f} min")
         print(f"GCL: {self.gcl}")
         print(f"Fleet: {self.fleet}")
+        if self.gateway:
+            print(f"Gateway: {self.gateway}")
+        if self.inference_model:
+            print(f"Inference model: {self.inference_model} (every {self.inference_interval}s)")
         print(f"{'='*70}\n")
 
         # Initial health check
@@ -388,6 +458,35 @@ class EcosystemSoak:
                 result.injections.append(inj_result)
                 print(f"  <<< {inj_result['detail']} ({inj_result['recovery_ms']:.0f}ms)\n")
 
+            # Inference through fleet-controller
+            if (self.inference_model and
+                    now - last_inference >= self.inference_interval):
+                last_inference = now
+                ok, ms, tokens, cluster = await self.run_inference("fleet")
+                if ok and ms > 0:
+                    result.inference_successes += 1
+                    result.inference_latencies.append(ms)
+                    result.inference_tokens += tokens
+                    print(f"  [INF] fleet proxy: {ms:.0f}ms, {tokens} tokens")
+                elif ms > 0:
+                    result.inference_errors += 1
+                    print(f"  [INF] fleet proxy ERROR: {cluster}")
+
+            # Inference through gateway (cross-cluster)
+            if (self.gateway and self.inference_model and
+                    now - last_gateway_inference >= self.inference_interval * 2):
+                last_gateway_inference = now
+                ok, ms, tokens, cluster = await self.run_inference("gateway")
+                if ok and ms > 0:
+                    result.gateway_successes += 1
+                    result.gateway_latencies.append(ms)
+                    result.gateway_cluster_hits[cluster] = \
+                        result.gateway_cluster_hits.get(cluster, 0) + 1
+                    print(f"  [GW]  gateway -> {cluster}: {ms:.0f}ms, {tokens} tokens")
+                elif ms > 0:
+                    result.gateway_errors += 1
+                    print(f"  [GW]  gateway ERROR: {cluster}")
+
             # Chain verification every 5 minutes
             if now - last_verify >= 300:
                 last_verify = now
@@ -467,6 +566,30 @@ class EcosystemSoak:
             total = len(result.chain_verifications)
             print(f"\n  Chain integrity: {verified_count}/{total} verifications passed")
 
+        # Inference results
+        if result.inference_successes + result.inference_errors > 0:
+            print(f"\n  Inference (fleet proxy):")
+            print(f"    Successes: {result.inference_successes}")
+            print(f"    Errors: {result.inference_errors}")
+            print(f"    Total tokens: {result.inference_tokens}")
+            if result.inference_latencies:
+                lats = sorted(result.inference_latencies)
+                print(f"    Latency p50: {lats[len(lats)//2]:.0f}ms")
+                print(f"    Latency p99: {lats[int(len(lats)*0.99)]:.0f}ms")
+
+        if result.gateway_successes + result.gateway_errors > 0:
+            print(f"\n  Inference (gateway cross-cluster):")
+            print(f"    Successes: {result.gateway_successes}")
+            print(f"    Errors: {result.gateway_errors}")
+            if result.gateway_latencies:
+                lats = sorted(result.gateway_latencies)
+                print(f"    Latency p50: {lats[len(lats)//2]:.0f}ms")
+                print(f"    Latency p99: {lats[int(len(lats)*0.99)]:.0f}ms")
+            if result.gateway_cluster_hits:
+                print(f"    Cluster distribution:")
+                for cluster, count in sorted(result.gateway_cluster_hits.items()):
+                    print(f"      {cluster}: {count}")
+
         # Latency stability
         if result.fleet_memory_series and len(result.fleet_memory_series) > 2:
             first_third = result.fleet_memory_series[:len(result.fleet_memory_series)//3]
@@ -534,6 +657,22 @@ class EcosystemSoak:
             gates.append(("Injection recovery < 60s", ok,
                           f"max={max_recovery/1000:.1f}s"))
 
+        # Inference success rate > 90%
+        total_inf = result.inference_successes + result.inference_errors
+        if total_inf > 0:
+            inf_rate = result.inference_successes / total_inf
+            ok = inf_rate >= 0.90
+            gates.append(("Inference success rate > 90%", ok,
+                          f"{inf_rate*100:.1f}% ({result.inference_successes}/{total_inf})"))
+
+        # Gateway success rate > 90%
+        total_gw = result.gateway_successes + result.gateway_errors
+        if total_gw > 0:
+            gw_rate = result.gateway_successes / total_gw
+            ok = gw_rate >= 0.90
+            gates.append(("Gateway success rate > 90%", ok,
+                          f"{gw_rate*100:.1f}% ({result.gateway_successes}/{total_gw})"))
+
         passed = 0
         failed = 0
         for name, ok, detail in gates:
@@ -557,6 +696,14 @@ async def main():
     parser.add_argument("--gcl-url", default="https://gcl-app.192.168.1.123.sslip.io")
     parser.add_argument("--fleet-url", default="http://localhost:18080")
     parser.add_argument("--ledger-url", default="")
+    parser.add_argument("--gateway-url", default="",
+                        help="Fleet gateway URL for cross-cluster inference routing")
+    parser.add_argument("--inference-model", default="",
+                        help="Model name for real inference requests (e.g. granite-3.3-2b)")
+    parser.add_argument("--inference-interval", type=int, default=30,
+                        help="Seconds between inference requests (default 30)")
+    parser.add_argument("--auth-token", default="",
+                        help="Bearer token for fleet-controller auth")
     parser.add_argument("--deepfield-token", default="",
                         help="Bearer token for deepfield CloudEvent submission (enables production path)")
     parser.add_argument("--profile", default="quick",
@@ -566,7 +713,9 @@ async def main():
     args = parser.parse_args()
 
     soak = EcosystemSoak(args.gcl_url, args.fleet_url, args.ledger_url,
-                         args.deepfield_token, args.timeout)
+                         args.deepfield_token, args.timeout,
+                         args.gateway_url, args.inference_model,
+                         args.inference_interval, args.auth_token)
     await soak.run(args.profile)
 
 

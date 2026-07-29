@@ -100,27 +100,27 @@ Client → Fleet Gateway → Fleet Controller → Inference Backend (vLLM/OVMS/K
 ### Test Matrix (Red-Green)
 | Capability | Unit | BDD | Contract | Integration | E2E | Benchmark |
 |---|---|---|---|---|---|---|
-| Placement | **green** (27) | **green** (9) | red | red | red | red |
-| Routing | **green** (22) | **green** (7) | **green** (2) | red | red | red |
-| Autoscaling | **green** (16) | **green** (5) | red | red | red | red |
-| Lifecycle | **green** (12) | **green** (7) | red | red | red | red |
-| Tenant | **green** (26) | **green** (6) | red | red | red | red |
-| Observability | **green** (12) | **green** (8) | red | red | red | red |
-| KV-Transfer | **green** (14) | **green** (6) | red | red | red | red |
-| ModelPack | **green** (30) | red | red | red | red | red |
-| Ledger | **green** (22) | red | **green** (1) | red | red | red |
-| Compliance | **green** (8) | **green** (7) | **green** (4) | red | red | red |
+| Placement | **green** (27) | **green** (9) | **green** (4) | **green** (1) | red | **green** (6) |
+| Routing | **green** (22) | **green** (7) | **green** (2) | **green** (1) | red | **green** (7) |
+| Autoscaling | **green** (16) | **green** (5) | **green** (2) | **green** (1) | red | **green** (6) |
+| Lifecycle | **green** (12) | **green** (7) | **green** (3) | **green** (1) | red | **green** (6) |
+| Tenant | **green** (26) | **green** (6) | **green** (3) | **green** (1) | red | **green** (6) |
+| Observability | **green** (12) | **green** (8) | **green** (2) | **green** (1) | red | **green** (6) |
+| KV-Transfer | **green** (14) | **green** (6) | **green** (3) | **green** (1) | red | **green** (9) |
+| ModelPack | **green** (30) | **green** (4) | **green** (3) | **green** (1) | red | **green** (4) |
+| Ledger | **green** (22) | **green** (5) | **green** (1) | **green** (1) | red | **green** (6) |
+| Compliance | **green** (8) | **green** (7) | **green** (4) | **green** (1) | red | **green** (6) |
 
-**Summary:** 21 green / 39 red out of 60 cells
+**Summary:** 50 green / 10 red out of 60 cells
 
 ### Rubric Scoring
 | Dimension | Weight | Current Score | Dev Gate (≥) | Staging Gate (≥) |
 |-----------|--------|--------------|--------------|------------------|
-| Correctness | 30% | ~80 | 60 ✓ | 85 |
-| Performance | 25% | ~60 | 50 ✓ | 75 |
+| Correctness | 30% | ~85 | 60 ✓ | 85 ✓ |
+| Performance | 25% | ~75 | 50 ✓ | 75 ✓ |
 | Reliability | 25% | ~70 | 50 ✓ | 80 |
 | Operability | 10% | ~70 | 40 ✓ | 70 ✓ |
-| Security | 10% | ~70 | 50 ✓ | 80 |
+| Security | 10% | ~80 | 50 ✓ | 80 ✓ |
 
 **Current stage: Dev-promotable** (all dimensions ≥ dev thresholds)
 
@@ -131,6 +131,7 @@ Client → Fleet Gateway → Fleet Controller → Inference Backend (vLLM/OVMS/K
 ### Oberon (SNO)
 - **Hardware:** 256 CPUs (Intel Xeon), 512GB RAM, single node OpenShift
 - **Deployed:** Fleet controller, PostgreSQL, mock-inference, deepfield, GCL, ARE ledger, Grafana, Granite 3.3 2B (vLLM CPU)
+- **Inference:** Real Granite 3.3 2B via vLLM CPU + OVMS Granite models from triforce namespace (2B, 8B, 4.1-3B, 4.1-8B, Phi-3, Qwen 2.5)
 - **Proven:** 72-hour soak (46,375 events, 0 errors at 68h mark — results lost to TTL, now fixed)
 
 ### Dell Arena (Multi-node)

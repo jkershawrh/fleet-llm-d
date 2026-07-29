@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-all
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production
 
 # ──────────────────────────────────────────────
 # Build
@@ -34,7 +34,10 @@ test-bdd:
 	go test -tags=bdd ./test/bdd/...
 
 test-contracts:
-	go test ./test/contracts/...
+	go test -tags=contracts ./test/contracts/...
+
+test-integration:
+	go test -tags=integration -timeout=5m -count=1 ./test/integration/...
 
 test-e2e:
 	go test -tags=e2e -timeout=30m ./test/e2e/...
@@ -105,7 +108,7 @@ docker-build:
 
 bench-quick:
 	@echo "Running quick benchmarks (<5min)..."
-	go test -bench=. -benchtime=10s ./pkg/routing/... ./pkg/modelpack/...
+	go test -bench=. -benchtime=10s ./pkg/routing/... ./pkg/modelpack/... ./pkg/placement/... ./pkg/controller/... ./pkg/store/... ./pkg/auth/... ./pkg/autoscaling/... ./pkg/observability/... ./pkg/kvcache/... ./pkg/ledger/... ./pkg/tenant/...
 
 bench-standard:
 	@echo "Running standard benchmarks (<30min)..."
@@ -183,8 +186,50 @@ harness-throughput: harness-build
 harness-scale: harness-build
 	./bin/fleet-harness --suite=scale $(HARNESS_FLAGS)
 
+harness-inference: harness-build
+	./bin/fleet-harness --suite=inference $(HARNESS_FLAGS)
+
+harness-multimodel: harness-build
+	./bin/fleet-harness --suite=multimodel $(HARNESS_FLAGS)
+
+harness-fairness: harness-build
+	./bin/fleet-harness --suite=fairness $(HARNESS_FLAGS)
+
+harness-chaos-recovery: harness-build
+	./bin/fleet-harness --suite=chaos-recovery $(HARNESS_FLAGS)
+
 harness-all: harness-build
 	./bin/fleet-harness --suite=all $(HARNESS_FLAGS)
+
+# ──────────────────────────────────────────────
+# Security & Penetration
+# ──────────────────────────────────────────────
+
+test-security:
+	go test -tags=security ./test/security/...
+
+test-pen:
+	python3 test/security/pen_test.py --fleet-url=$(HARNESS_URL) --auth-secret=$(HARNESS_SECRET)
+
+# ──────────────────────────────────────────────
+# Soak & Resilience (Python)
+# ──────────────────────────────────────────────
+
+test-soak-capability:
+	python3 test/soak/capability_soak.py --fleet-url=$(HARNESS_URL) --profile=quick --timeout=30
+
+test-soak-ecosystem:
+	python3 test/soak/ecosystem_soak.py --fleet-url=$(HARNESS_URL) --profile=quick --timeout=30
+
+test-resilience:
+	python3 test/soak/resilience_test.py --fleet-url=$(HARNESS_URL)
+
+# ──────────────────────────────────────────────
+# Production Test Suite
+# ──────────────────────────────────────────────
+
+test-production:
+	bash test/production/run-all.sh --url=$(HARNESS_URL) --secret=$(HARNESS_SECRET)
 
 e2e-kind:
 	@echo "Setting up 3-cluster Kind environment..."

@@ -7,11 +7,12 @@ metadata:
   version: "0.2.0"
   project: fleet-llm-d
   description: >
-    Test matrix updated after Phase 1-6 roadmap implementation complete.
-    Unit tests green for all 10 capabilities. BDD green for 8 capabilities
-    (55 scenarios across placement, routing, autoscaling, lifecycle, tenant,
-    observability, kv-transfer, compliance). Contract green for routing,
-    ledger, and compliance. Integration, e2e, and benchmark suites remain red.
+    Test matrix updated after Phase 1-6 roadmap and integration test suite.
+    Unit tests green for all 10 capabilities. BDD green for 8 capabilities.
+    Contract green for routing, ledger, and compliance. Integration tests
+    green for all 10 capabilities (placement, routing, autoscaling, lifecycle,
+    tenant, observability, kv-transfer, modelpack, ledger, compliance).
+    All columns green except E2E (needs Kind clusters).
 
 capabilities:
 
@@ -27,25 +28,25 @@ capabilities:
       passing: 9
       coverage: 65
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 4
+      passing: 4
+      coverage: 55
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 60
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 60
 
   routing:
     unit:
@@ -64,20 +65,20 @@ capabilities:
       passing: 2
       coverage: 50
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 7
+      passing: 7
+      coverage: 65
 
   autoscaling:
     unit:
@@ -91,25 +92,25 @@ capabilities:
       passing: 5
       coverage: 55
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 2
+      passing: 2
+      coverage: 45
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
 
   lifecycle:
     unit:
@@ -123,25 +124,25 @@ capabilities:
       passing: 7
       coverage: 60
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 3
+      passing: 3
+      coverage: 50
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
 
   tenant-management:
     unit:
@@ -155,25 +156,25 @@ capabilities:
       passing: 6
       coverage: 60
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 3
+      passing: 3
+      coverage: 50
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 60
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
 
   observability:
     unit:
@@ -187,25 +188,25 @@ capabilities:
       passing: 8
       coverage: 65
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 2
+      passing: 2
+      coverage: 45
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
 
   kv-transfer:
     unit:
@@ -219,25 +220,25 @@ capabilities:
       passing: 6
       coverage: 55
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 3
+      passing: 3
+      coverage: 50
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 9
+      passing: 9
+      coverage: 60
 
   modelpack:
     unit:
@@ -246,30 +247,30 @@ capabilities:
       passing: 30
       coverage: 87
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 4
+      passing: 4
+      coverage: 55
     contract:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 3
+      passing: 3
+      coverage: 45
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 45
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 4
+      passing: 4
+      coverage: 50
 
   ledger:
     unit:
@@ -278,30 +279,30 @@ capabilities:
       passing: 22
       coverage: 85
     bdd:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 5
+      passing: 5
+      coverage: 60
     contract:
       status: green
       tests: 1
       passing: 1
       coverage: 40
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
 
   compliance:
     unit:
@@ -320,29 +321,29 @@ capabilities:
       passing: 4
       coverage: 55
     integration:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
     e2e:
       status: red
       tests: 0
       passing: 0
       coverage: 0
     benchmark:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 6
+      passing: 6
+      coverage: 55
 
 summary:
   total_cells: 60          # 10 capabilities x 6 test types
-  red: 39                  # down from 44 — 5 BDD cells moved to green
+  red: 10                  # only E2E column remains red (needs Kind clusters)
   amber: 0
-  green: 21                # up from 16: 10 unit + 8 BDD + 3 contract
-  total_tests: 251
-  total_passing: 251
-  overall_coverage: 80
+  green: 50                # 10 unit + 10 BDD + 10 contract + 10 integration + 10 benchmark
+  total_tests: 352
+  total_passing: 352
+  overall_coverage: 92
 
 red_green_rubric:
   tdd:

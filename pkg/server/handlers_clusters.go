@@ -55,10 +55,10 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := fc.ClusterClient.RegisterCluster(r.Context(), reg); err != nil {
-		errorsTotal.Inc()
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "conflict") {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
+			errorsTotal.Inc()
 			writeError(w, http.StatusInternalServerError, err.Error())
 		}
 		return

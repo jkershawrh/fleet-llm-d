@@ -5,142 +5,76 @@ import (
 	"testing"
 )
 
+func newTestEnforcer() QuotaEnforcer {
+	e := NewQuotaEnforcer().(*DefaultQuotaEnforcer)
+	e.mu.Lock()
+	e.profiles["tenant-1"] = &tenantProfile{tokenLimit: 1000, budgetCents: 1000}
+	e.profiles["tenant-2"] = &tenantProfile{tokenLimit: 1000, budgetCents: 1000}
+	e.profiles["tenant-3"] = &tenantProfile{tokenLimit: 1000, tokensUsed: 1000, budgetCents: 0}
+	e.mu.Unlock()
+	return e
+}
+
 func TestCheckQuota_Allowed(t *testing.T) {
-	tests := []struct {
-		name     string
-		tenantID string
-		request  QuotaCheckRequest
-		want     QuotaCheckResult
-	}{
-		{
-			name:     "tenant with remaining quota is allowed",
-			tenantID: "tenant-1",
-			request: QuotaCheckRequest{
-				TokensRequested: 100,
-				Model:           "llama-3",
-				ClusterID:       "cluster-a",
-			},
-			want: QuotaCheckResult{
-				Allowed:         true,
-				RemainingTokens: 1000,
-				RemainingBudget: "$10.00",
-				Reason:          "",
-			},
-		},
+	enforcer := newTestEnforcer()
+
+	got, err := enforcer.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{
+		TokensRequested: 100, Model: "llama-3", ClusterID: "cluster-a",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	enforcer := NewQuotaEnforcer()
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := enforcer.CheckQuota(context.Background(), tt.tenantID, tt.request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got.Allowed != tt.want.Allowed {
-				t.Errorf("Allowed = %v, want %v", got.Allowed, tt.want.Allowed)
-			}
-			if got.RemainingTokens != tt.want.RemainingTokens {
-				t.Errorf("RemainingTokens = %d, want %d", got.RemainingTokens, tt.want.RemainingTokens)
-			}
-			if got.RemainingBudget != tt.want.RemainingBudget {
-				t.Errorf("RemainingBudget = %q, want %q", got.RemainingBudget, tt.want.RemainingBudget)
-			}
-		})
+	if !got.Allowed {
+		t.Error("expected allowed")
+	}
+	if got.RemainingTokens != 1000 {
+		t.Errorf("RemainingTokens = %d, want 1000", got.RemainingTokens)
+	}
+	if got.RemainingBudget != "$10.00" {
+		t.Errorf("RemainingBudget = %q, want $10.00", got.RemainingBudget)
 	}
 }
 
 func TestCheckQuota_TokenLimitExceeded(t *testing.T) {
-	tests := []struct {
-		name     string
-		tenantID string
-		request  QuotaCheckRequest
-		want     QuotaCheckResult
-	}{
-		{
-			name:     "request exceeds token limit",
-			tenantID: "tenant-2",
-			request: QuotaCheckRequest{
-				TokensRequested: 50000,
-				Model:           "llama-3",
-				ClusterID:       "cluster-a",
-			},
-			want: QuotaCheckResult{
-				Allowed:         false,
-				RemainingTokens: 1000,
-				RemainingBudget: "$10.00",
-				Reason:          "token limit exceeded: requested 50000 but only 1000 remaining",
-			},
-		},
+	enforcer := newTestEnforcer()
+
+	got, err := enforcer.CheckQuota(context.Background(), "tenant-2", QuotaCheckRequest{
+		TokensRequested: 50000, Model: "llama-3", ClusterID: "cluster-a",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	enforcer := NewQuotaEnforcer()
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := enforcer.CheckQuota(context.Background(), tt.tenantID, tt.request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got.Allowed != tt.want.Allowed {
-				t.Errorf("Allowed = %v, want %v", got.Allowed, tt.want.Allowed)
-			}
-			if got.Reason != tt.want.Reason {
-				t.Errorf("Reason = %q, want %q", got.Reason, tt.want.Reason)
-			}
-		})
+	if got.Allowed {
+		t.Error("expected not allowed")
+	}
+	if got.Reason != "token limit exceeded: requested 50000 but only 1000 remaining" {
+		t.Errorf("Reason = %q", got.Reason)
 	}
 }
 
 func TestCheckQuota_BudgetExceeded(t *testing.T) {
-	tests := []struct {
-		name     string
-		tenantID string
-		request  QuotaCheckRequest
-		want     QuotaCheckResult
-	}{
-		{
-			name:     "tenant over budget",
-			tenantID: "tenant-3",
-			request: QuotaCheckRequest{
-				TokensRequested: 100,
-				Model:           "llama-3",
-				ClusterID:       "cluster-b",
-			},
-			want: QuotaCheckResult{
-				Allowed:         false,
-				RemainingTokens: 0,
-				RemainingBudget: "$0.00",
-				Reason:          "budget exceeded: tenant has no remaining budget",
-			},
-		},
+	enforcer := newTestEnforcer()
+
+	got, err := enforcer.CheckQuota(context.Background(), "tenant-3", QuotaCheckRequest{
+		TokensRequested: 100, Model: "llama-3", ClusterID: "cluster-b",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	enforcer := NewQuotaEnforcer()
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := enforcer.CheckQuota(context.Background(), tt.tenantID, tt.request)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got.Allowed != tt.want.Allowed {
-				t.Errorf("Allowed = %v, want %v", got.Allowed, tt.want.Allowed)
-			}
-			if got.Reason != tt.want.Reason {
-				t.Errorf("Reason = %q, want %q", got.Reason, tt.want.Reason)
-			}
-			if got.RemainingBudget != tt.want.RemainingBudget {
-				t.Errorf("RemainingBudget = %q, want %q", got.RemainingBudget, tt.want.RemainingBudget)
-			}
-		})
+	if got.Allowed {
+		t.Error("expected not allowed")
+	}
+	if got.Reason != "budget exceeded: tenant has no remaining budget" {
+		t.Errorf("Reason = %q", got.Reason)
+	}
+	if got.RemainingBudget != "$0.00" {
+		t.Errorf("RemainingBudget = %q, want $0.00", got.RemainingBudget)
 	}
 }
 
 func TestCheckQuota_DoesNotDeductTokens(t *testing.T) {
-	e := NewQuotaEnforcer()
+	e := newTestEnforcer()
 
-	// First check — should be allowed
 	result1, err := e.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 500})
 	if err != nil {
 		t.Fatal(err)
@@ -150,28 +84,19 @@ func TestCheckQuota_DoesNotDeductTokens(t *testing.T) {
 	}
 	remaining1 := result1.RemainingTokens
 
-	// Second check with same amount — remaining should be unchanged
 	result2, err := e.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result2.Allowed {
-		t.Fatal("second check should be allowed")
-	}
-
 	if result2.RemainingTokens != remaining1 {
-		t.Errorf("CheckQuota changed remaining tokens: %d -> %d (should be read-only)", remaining1, result2.RemainingTokens)
+		t.Errorf("CheckQuota changed remaining tokens: %d -> %d", remaining1, result2.RemainingTokens)
 	}
 }
 
 func TestConsumeQuota_DeductsTokens(t *testing.T) {
-	e := NewQuotaEnforcer()
-	ce, ok := e.(*DefaultQuotaEnforcer)
-	if !ok {
-		t.Skip("not DefaultQuotaEnforcer")
-	}
+	e := newTestEnforcer()
+	ce := e.(*DefaultQuotaEnforcer)
 
-	// Consume 500 tokens
 	result1, err := ce.ConsumeQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 500})
 	if err != nil {
 		t.Fatal(err)
@@ -180,53 +105,41 @@ func TestConsumeQuota_DeductsTokens(t *testing.T) {
 		t.Fatal("consume should be allowed")
 	}
 
-	// Check should show reduced tokens
 	result2, err := e.CheckQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result2.RemainingTokens != result1.RemainingTokens {
-		t.Errorf("after ConsumeQuota, CheckQuota should see reduced tokens: got %d, expected %d",
-			result2.RemainingTokens, result1.RemainingTokens)
+		t.Errorf("after ConsumeQuota, remaining = %d, expected %d", result2.RemainingTokens, result1.RemainingTokens)
 	}
 
-	// Consume should show further reduction
 	result3, err := ce.ConsumeQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result3.RemainingTokens >= result1.RemainingTokens {
-		t.Error("ConsumeQuota should reduce remaining tokens each call")
+		t.Error("ConsumeQuota should reduce remaining tokens")
+	}
+}
+
+func TestCheckQuota_UnknownTenantGetsDefault(t *testing.T) {
+	e := NewQuotaEnforcer()
+
+	got, err := e.CheckQuota(context.Background(), "new-tenant", QuotaCheckRequest{TokensRequested: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Allowed {
+		t.Error("unknown tenant should get default profile and be allowed")
 	}
 }
 
 func TestRecordUsage(t *testing.T) {
-	tests := []struct {
-		name     string
-		tenantID string
-		usage    UsageRecord
-	}{
-		{
-			name:     "records usage successfully",
-			tenantID: "tenant-1",
-			usage: UsageRecord{
-				TokensConsumed: 500,
-				Model:          "llama-3",
-				ClusterID:      "cluster-a",
-				LatencyMs:      120,
-				Cost:           "$0.50",
-			},
-		},
-	}
-
 	enforcer := NewQuotaEnforcer()
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := enforcer.RecordUsage(context.Background(), tt.tenantID, tt.usage)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		})
+	err := enforcer.RecordUsage(context.Background(), "tenant-1", UsageRecord{
+		TokensConsumed: 500, Model: "llama-3", ClusterID: "cluster-a", LatencyMs: 120, Cost: "$0.50",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

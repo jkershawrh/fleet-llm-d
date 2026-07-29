@@ -2,12 +2,13 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: default-deny-ingress
+  name: default-deny-all
   namespace: fleet-llm-d
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
+    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -145,4 +146,64 @@ spec:
               app.kubernetes.io/name: fleet-controller
       ports:
         - port: 5432
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-controller-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+    - ports:
+        - port: 5432
+          protocol: TCP
+    - ports:
+        - port: 8080
+          protocol: TCP
+    - ports:
+        - port: 8090
+          protocol: TCP
+    - ports:
+        - port: 6443
+          protocol: TCP
+    - ports:
+        - port: 28099
+          protocol: TCP
+    - ports:
+        - port: 8099
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-agent-sim-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app: fleet-agent-sim
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 8080
           protocol: TCP

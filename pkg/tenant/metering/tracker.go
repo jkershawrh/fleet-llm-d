@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
 // TimePeriod represents a time range for querying usage data.
@@ -54,6 +56,7 @@ type modelUsageKey struct {
 type defaultUsageTracker struct {
 	tenantUsage map[usageKey]*TenantUsageSummary
 	modelUsage  map[modelUsageKey]*ModelUsageSummary
+	repo        postgres.TenantRepository
 }
 
 func makeUsageKey(tenantID string, period TimePeriod) usageKey {
@@ -73,11 +76,17 @@ func makeModelUsageKey(tenantID string, model string, period TimePeriod) modelUs
 	}
 }
 
-// NewUsageTracker returns a new empty UsageTracker instance.
-func NewUsageTracker() UsageTracker {
+// NewUsageTracker returns a new UsageTracker instance.
+// If a TenantRepository is provided, GetUsage queries the repo for real usage data.
+func NewUsageTracker(repo ...postgres.TenantRepository) UsageTracker {
+	var r postgres.TenantRepository
+	if len(repo) > 0 {
+		r = repo[0]
+	}
 	return &defaultUsageTracker{
 		tenantUsage: make(map[usageKey]*TenantUsageSummary),
 		modelUsage:  make(map[modelUsageKey]*ModelUsageSummary),
+		repo:        r,
 	}
 }
 
@@ -138,13 +147,33 @@ func NewSeededUsageTracker() UsageTracker {
 	return tracker
 }
 
-func (d *defaultUsageTracker) GetUsage(_ context.Context, tenantID string, period TimePeriod) (*TenantUsageSummary, error) {
+func (d *defaultUsageTracker) GetUsage(ctx context.Context, tenantID string, period TimePeriod) (*TenantUsageSummary, error) {
 	key := makeUsageKey(tenantID, period)
-	summary, ok := d.tenantUsage[key]
-	if !ok {
-		return nil, fmt.Errorf("no usage data found for tenant %q in the specified period", tenantID)
+	if summary, ok := d.tenantUsage[key]; ok {
+		return summary, nil
 	}
-	return summary, nil
+
+	if d.repo != nil {
+		records, err := d.repo.GetUsage(ctx, tenantID, period.Start, period.End)
+		if err == nil && len(records) > 0 {
+			summary := &TenantUsageSummary{TenantID: tenantID}
+			var totalCost float64
+			for _, r := range records {
+				summary.TokensConsumed += r.TokensConsumed
+				summary.RequestCount += r.RequestCount
+				totalCost += r.CostUSD
+			}
+			summary.TotalCost = fmt.Sprintf("%.2f", totalCost)
+			return summary, nil
+		}
+	}
+
+	return &TenantUsageSummary{
+		TenantID:       tenantID,
+		TokensConsumed: 0,
+		TotalCost:      "0.00",
+		RequestCount:   0,
+	}, nil
 }
 
 func (d *defaultUsageTracker) GetUsageByModel(_ context.Context, tenantID string, model string, period TimePeriod) (*ModelUsageSummary, error) {

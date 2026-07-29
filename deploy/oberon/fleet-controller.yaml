@@ -10,38 +10,60 @@ metadata:
   name: fleet-controller
   namespace: fleet-llm-d
   labels:
-    app: fleet-controller
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/part-of: fleet-llm-d
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: fleet-controller
+      app.kubernetes.io/name: fleet-controller
   template:
     metadata:
       labels:
-        app: fleet-controller
+        app.kubernetes.io/name: fleet-controller
+        app.kubernetes.io/part-of: fleet-llm-d
     spec:
       imagePullSecrets:
         - name: quay-pull-secret
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fleet-controller
           image: quay.io/rh-ee-jkershaw/fleet-controller:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           args:
             - "--port=8080"
             - "--metrics-port=9091"
             - "--ledger-mode=http"
             - "--ledger-endpoint=http://ledger-gateway.sovereign-ai-lab.svc:28099"
+            - "--backend-vllm=http://granite-real.fleet-llm-d.svc:8000"
+            - "--backend-ovms=http://ovms-granite-2b.triforce.svc:8080"
             - "--modelplane-api=http://modelplane-mock.fleet-llm-d.svc:8090"
+            - "--modelplane-namespace=default"
             - "--rate-limit=0"
             - "--log-level=info"
-            - "--backends=[{\"model\":\"granite-3.3-2b\",\"url\":\"http://mock-inference.fleet-llm-d.svc:8080\",\"runtime\":\"vllm\"},{\"model\":\"granite-sovereign\",\"url\":\"http://mock-inference.fleet-llm-d.svc:8080\",\"runtime\":\"openvino\",\"path_prefix\":\"/v3\"}]"
           ports:
             - containerPort: 8080
               name: http
             - containerPort: 9091
               name: metrics
           env:
-            - name: FLEET_HMAC_SECRET
+            - name: FLEET_AUTH_SECRET
               valueFrom:
                 secretKeyRef:
                   name: fleet-identity
@@ -55,6 +77,16 @@ spec:
                   optional: true
             - name: FLEET_ALLOW_OPERATOR_JSON_INTENTS
               value: "true"
+            - name: GCL_URL
+              value: http://gcl-app.governed-cognitive-loop.svc:8000
+            - name: SEMANTIC_CLASSIFIER_URL
+              value: http://gcl-app.governed-cognitive-loop.svc:8000
+            - name: DEEPFIELD_URL
+              value: http://deepfield-fleet.fleet-llm-d.svc:8000
+            - name: LEDGER_GATEWAY_URL
+              value: http://ledger-gateway.sovereign-ai-lab.svc:28099
+            - name: PG_URL
+              value: postgres://fleet:fleet@fleet-postgres.fleet-llm-d.svc:5432/fleet_llm_d?sslmode=disable
           readinessProbe:
             httpGet:
               path: /readyz
@@ -81,10 +113,11 @@ metadata:
   name: fleet-controller
   namespace: fleet-llm-d
   labels:
-    app: fleet-controller
+    app.kubernetes.io/name: fleet-controller
+    app.kubernetes.io/part-of: fleet-llm-d
 spec:
   selector:
-    app: fleet-controller
+    app.kubernetes.io/name: fleet-controller
   ports:
     - port: 8080
       targetPort: 8080

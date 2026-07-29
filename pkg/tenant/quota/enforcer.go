@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
 // QuotaCheckRequest represents a request to check quota availability for a tenant.
@@ -53,6 +55,7 @@ type DefaultQuotaEnforcer struct {
 	mu       sync.Mutex
 	profiles map[string]*tenantProfile
 	records  []usageEntry
+	repo     postgres.TenantRepository
 }
 
 type usageEntry struct {
@@ -61,30 +64,43 @@ type usageEntry struct {
 }
 
 // NewQuotaEnforcer returns a new QuotaEnforcer instance.
-func NewQuotaEnforcer() QuotaEnforcer {
-	profiles := map[string]*tenantProfile{
-		"tenant-1": {
-			tokenLimit:  1000,
-			tokensUsed:  0,
-			budgetCents: 1000,
-			budgetSpent: 0,
-		},
-		"tenant-2": {
-			tokenLimit:  1000,
-			tokensUsed:  0,
-			budgetCents: 1000,
-			budgetSpent: 0,
-		},
-		"tenant-3": {
-			tokenLimit:  1000,
-			tokensUsed:  1000,
-			budgetCents: 0,
-			budgetSpent: 0,
-		},
+// If a TenantRepository is provided, tenant profiles are loaded from the repo
+// when not found in the local cache.
+func NewQuotaEnforcer(repo ...postgres.TenantRepository) QuotaEnforcer {
+	var r postgres.TenantRepository
+	if len(repo) > 0 {
+		r = repo[0]
 	}
 	return &DefaultQuotaEnforcer{
-		profiles: profiles,
+		profiles: make(map[string]*tenantProfile),
+		repo:     r,
 	}
+}
+
+func (e *DefaultQuotaEnforcer) loadFromRepo(tenantID string) *tenantProfile {
+	if e.repo == nil {
+		return nil
+	}
+	tenant, err := e.repo.Get(context.Background(), tenantID)
+	if err != nil || tenant == nil {
+		return nil
+	}
+	profile := &tenantProfile{
+		tokenLimit:  1000,
+		budgetCents: 1000,
+	}
+	if quotas := tenant.Quotas; quotas != nil {
+		if v, ok := quotas["maxTokensPerMinute"].(float64); ok {
+			profile.tokenLimit = int64(v)
+		}
+	}
+	if cc := tenant.CostControl; cc != nil {
+		if v, ok := cc["monthlyBudget"].(float64); ok {
+			profile.budgetCents = int64(v * 100)
+		}
+	}
+	e.profiles[tenantID] = profile
+	return profile
 }
 
 func formatBudget(cents int64) string {
@@ -100,12 +116,12 @@ func (e *DefaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, re
 
 	profile, ok := e.profiles[tenantID]
 	if !ok {
-		// Create a default profile for unknown tenants.
+		profile = e.loadFromRepo(tenantID)
+	}
+	if profile == nil {
 		profile = &tenantProfile{
 			tokenLimit:  1000,
-			tokensUsed:  0,
 			budgetCents: 1000,
-			budgetSpent: 0,
 		}
 		e.profiles[tenantID] = profile
 	}
@@ -150,11 +166,12 @@ func (e *DefaultQuotaEnforcer) ConsumeQuota(_ context.Context, tenantID string, 
 
 	profile, ok := e.profiles[tenantID]
 	if !ok {
+		profile = e.loadFromRepo(tenantID)
+	}
+	if profile == nil {
 		profile = &tenantProfile{
 			tokenLimit:  1000,
-			tokensUsed:  0,
 			budgetCents: 1000,
-			budgetSpent: 0,
 		}
 		e.profiles[tenantID] = profile
 	}

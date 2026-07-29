@@ -56,7 +56,7 @@ func (c *PGClient) Ping(ctx context.Context) error {
 func (c *PGClient) EnsureSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS clusters (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			name TEXT NOT NULL UNIQUE, region TEXT NOT NULL,
 			labels JSONB NOT NULL DEFAULT '{}',
 			gpu_available INT NOT NULL DEFAULT 0, gpu_total INT NOT NULL DEFAULT 0,
@@ -64,7 +64,7 @@ func (c *PGClient) EnsureSchema(ctx context.Context) error {
 			registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
 		`CREATE TABLE IF NOT EXISTS fleet_pools (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			name TEXT NOT NULL UNIQUE, model_name TEXT NOT NULL, model_source TEXT NOT NULL,
 			placement_policy JSONB NOT NULL DEFAULT '{}',
 			routing_policy JSONB NOT NULL DEFAULT '{}',
@@ -73,7 +73,7 @@ func (c *PGClient) EnsureSchema(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
 		`CREATE TABLE IF NOT EXISTS tenants (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			name TEXT NOT NULL UNIQUE, priority INT NOT NULL DEFAULT 0,
 			quotas JSONB NOT NULL DEFAULT '{}',
 			rate_limit JSONB NOT NULL DEFAULT '{}',
@@ -81,22 +81,22 @@ func (c *PGClient) EnsureSchema(ctx context.Context) error {
 			cluster_scope JSONB NOT NULL DEFAULT '[]',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
 		`CREATE TABLE IF NOT EXISTS tenant_usage (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			tenant_id UUID NOT NULL, model TEXT NOT NULL, cluster_id UUID,
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+			tenant_id TEXT NOT NULL, model TEXT NOT NULL, cluster_id TEXT,
 			tokens_consumed BIGINT NOT NULL DEFAULT 0,
 			cost_usd NUMERIC NOT NULL DEFAULT 0,
 			request_count BIGINT NOT NULL DEFAULT 0,
 			period_start TIMESTAMPTZ NOT NULL, period_end TIMESTAMPTZ NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS rollouts (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			pool_id UUID NOT NULL, model_version TEXT NOT NULL,
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+			pool_id TEXT NOT NULL, model_version TEXT NOT NULL,
 			strategy JSONB NOT NULL DEFAULT '{}',
 			status TEXT NOT NULL DEFAULT 'pending',
 			current_weight INT NOT NULL DEFAULT 0,
 			started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			completed_at TIMESTAMPTZ)`,
 		`CREATE TABLE IF NOT EXISTS fleet_events (
-			id UUID NOT NULL DEFAULT gen_random_uuid(),
+			id TEXT NOT NULL DEFAULT gen_random_uuid()::text,
 			event_type TEXT NOT NULL, payload JSONB NOT NULL DEFAULT '{}',
 			source TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now()

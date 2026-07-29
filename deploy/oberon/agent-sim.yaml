@@ -18,15 +18,37 @@ spec:
     spec:
       imagePullSecrets:
         - name: quay-pull-secret
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent-sim
           image: quay.io/rh-ee-jkershaw/fleet-agent-sim:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           args:
             - "--control-url=http://fleet-controller.fleet-llm-d.svc:8080"
             - "--port=8090"
           env:
             - name: FLEET_AUTH_SECRET
-              value: "changeme-fleet-secret"
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-identity
+                  key: hmac-secret
+                  optional: true
           ports:
             - containerPort: 8090
               name: http

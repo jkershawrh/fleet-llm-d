@@ -152,9 +152,13 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	})
 
 	clusterRepo := postgres.NewInMemoryClusterRepository()
+	tenantRepo := postgres.NewInMemoryTenantRepository()
+	rolloutRepo := postgres.NewInMemoryRolloutRepository()
+	poolRepo := postgres.NewInMemoryFleetPoolRepository()
 	clusterClient := client.NewRepositoryClusterClient(clusterRepo)
 	fleetRecorder := ledger.NewFleetRecorder(ledgerClient, "fleet-controller", "fleet-llm-d")
 	constraintSolver := solver.NewConstraintSolver()
+	metricsCollector := collector.NewMetricsCollector()
 
 	// Create reconciler wired to the cluster client and constraint solver.
 	reconciler := controller.NewReconciler(constraintSolver, clusterClient.ListClusters)
@@ -162,12 +166,31 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	// Wire the onChange callback so every placement decision is recorded
 	// to the standalone immutable ledger.
 	reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
+		ctx := context.Background()
 		for _, clusterID := range pool.DesiredClusters {
 			if _, err := fleetRecorder.RecordPlacement(
-				context.Background(),
+				ctx,
 				pool.Model, clusterID, 1, "", "reconciler placement",
 			); err != nil {
 				slog.Warn("failed to record placement", "model", pool.Model, "cluster", clusterID, "error", err)
+			}
+		}
+		poolRecord := postgres.FleetPoolRecord{
+			ID:        pool.Name,
+			Name:      pool.Name,
+			ModelName: pool.Model,
+			ModelSource: pool.Source,
+			Status:    string(pool.Phase),
+			UpdatedAt: pool.LastReconciled,
+		}
+		if _, err := poolRepo.Get(ctx, pool.Name); err != nil {
+			poolRecord.CreatedAt = pool.LastReconciled
+			if createErr := poolRepo.Create(ctx, poolRecord); createErr != nil {
+				slog.Warn("failed to sync pool to repo", "pool", pool.Name, "error", createErr)
+			}
+		} else {
+			if updateErr := poolRepo.Update(ctx, poolRecord); updateErr != nil {
+				slog.Warn("failed to update pool in repo", "pool", pool.Name, "error", updateErr)
 			}
 		}
 	})
@@ -198,12 +221,12 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}),
 		RoutingEvaluator:     policy.NewRoutingPolicyEvaluator(),
 		LoadBalancer:         balancer.NewWeightedBalancer(),
-		MetricsCollector:     collector.NewMetricsCollector(),
+		MetricsCollector:     metricsCollector,
 		Optimizer:            optimizer.NewFleetOptimizer(),
-		QuotaEnforcer:        quota.NewQuotaEnforcer(),
-		UsageTracker:         metering.NewUsageTracker(),
-		RolloutController:    rollout.NewRolloutController(),
-		MetricsFederator:     metrics.NewMetricsFederator(),
+		QuotaEnforcer:        quota.NewQuotaEnforcer(tenantRepo),
+		UsageTracker:         metering.NewUsageTracker(tenantRepo),
+		RolloutController:    rollout.NewRolloutController(rolloutRepo),
+		MetricsFederator:     metrics.NewMetricsFederator(metricsCollector),
 		TransferOrchestrator: transfer.NewTransferOrchestrator(),
 		ClusterClient:        clusterClient,
 		EventPublisher:       events.NewLedgerAwarePublisher(events.NewEventPublisher(), fleetRecorder),
@@ -221,9 +244,9 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
 		InferenceProxy:     proxy,
 		ClusterRepo:        clusterRepo,
-		PoolRepo:           postgres.NewInMemoryFleetPoolRepository(),
-		TenantRepo:         postgres.NewInMemoryTenantRepository(),
-		RolloutRepo:        postgres.NewInMemoryRolloutRepository(),
+		PoolRepo:           poolRepo,
+		TenantRepo:         tenantRepo,
+		RolloutRepo:        rolloutRepo,
 	}, nil
 }
 

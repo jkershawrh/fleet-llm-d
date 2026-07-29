@@ -12,9 +12,12 @@ func TestNewUsageTracker_StartsEmpty(t *testing.T) {
 		Start: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
 		End:   time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC),
 	}
-	_, err := tracker.GetUsage(context.Background(), "tenant-alpha", period)
-	if err == nil {
-		t.Error("empty tracker should return error for unknown tenant")
+	summary, err := tracker.GetUsage(context.Background(), "tenant-alpha", period)
+	if err != nil {
+		t.Fatalf("empty tracker should return zero usage, not error: %v", err)
+	}
+	if summary.TokensConsumed != 0 {
+		t.Errorf("expected 0 tokens for unknown tenant, got %d", summary.TokensConsumed)
 	}
 }
 

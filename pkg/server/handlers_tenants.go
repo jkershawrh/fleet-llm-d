@@ -63,7 +63,6 @@ func (fc *FleetController) handleCreateTenant(w http.ResponseWriter, r *http.Req
 		CreatedAt:   time.Now().UTC(),
 	}
 	if err := fc.TenantRepo.Create(r.Context(), record); err != nil {
-		errorsTotal.Inc()
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

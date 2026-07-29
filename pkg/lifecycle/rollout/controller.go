@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
 // ClusterRolloutState tracks rollout progress for a single cluster.
@@ -54,13 +55,54 @@ type defaultRolloutController struct {
 	mu       sync.Mutex
 	rollouts map[string]*rolloutRecord
 	counter  int
+	repo     postgres.RolloutRepository
 }
 
 // NewRolloutController returns a new RolloutController instance.
-func NewRolloutController() RolloutController {
+// If repo is non-nil, the controller loads rollouts from the repository
+// when they are not found in its internal cache.
+func NewRolloutController(repo ...postgres.RolloutRepository) RolloutController {
+	var r postgres.RolloutRepository
+	if len(repo) > 0 {
+		r = repo[0]
+	}
 	return &defaultRolloutController{
 		rollouts: make(map[string]*rolloutRecord),
+		repo:     r,
 	}
+}
+
+func (c *defaultRolloutController) loadFromRepo(ctx context.Context, rolloutID string) (*rolloutRecord, bool) {
+	if c.repo == nil {
+		return nil, false
+	}
+	rec, err := c.repo.Get(ctx, rolloutID)
+	if err != nil || rec == nil {
+		return nil, false
+	}
+	strategyType := "Canary"
+	if s, ok := rec.Strategy["type"].(string); ok {
+		strategyType = s
+	}
+	state := &RolloutState{
+		ID:            rec.ID,
+		Phase:         rec.Status,
+		CurrentWeight: rec.CurrentWeight,
+		StartedAt:     rec.StartedAt,
+		UpdatedAt:     time.Now(),
+	}
+	lifecycle := v1alpha1.ModelLifecycleSpec{
+		Strategy: v1alpha1.RolloutStrategy{
+			Type: strategyType,
+			Canary: &v1alpha1.CanaryConfig{
+				InitialWeight:   0,
+				WeightIncrement: 20,
+			},
+		},
+	}
+	record := &rolloutRecord{state: state, lifecycle: lifecycle}
+	c.rollouts[rolloutID] = record
+	return record, true
 }
 
 func (c *defaultRolloutController) CreateRollout(ctx context.Context, lifecycle v1alpha1.ModelLifecycleSpec) (*RolloutState, error) {
@@ -75,7 +117,7 @@ func (c *defaultRolloutController) CreateRollout(ctx context.Context, lifecycle 
 	phase := "Pending"
 	weight := 0
 
-	if lifecycle.Strategy.Type == "Canary" && lifecycle.Strategy.Canary != nil {
+	if strings.EqualFold(lifecycle.Strategy.Type, "Canary") && lifecycle.Strategy.Canary != nil {
 		phase = "Canary"
 		weight = lifecycle.Strategy.Canary.InitialWeight
 	}
@@ -144,13 +186,16 @@ func (c *defaultRolloutController) AdvanceRollout(ctx context.Context, rolloutID
 
 	record, ok := c.rollouts[rolloutID]
 	if !ok {
+		record, ok = c.loadFromRepo(ctx, rolloutID)
+	}
+	if !ok {
 		return nil, fmt.Errorf("rollout %q not found", rolloutID)
 	}
 
 	state := record.state
 	lifecycle := record.lifecycle
 
-	if lifecycle.Strategy.Type != "Canary" || lifecycle.Strategy.Canary == nil {
+	if !strings.EqualFold(lifecycle.Strategy.Type, "Canary") || lifecycle.Strategy.Canary == nil {
 		return nil, fmt.Errorf("rollout %q is not a canary rollout", rolloutID)
 	}
 
@@ -198,6 +243,9 @@ func (c *defaultRolloutController) RollbackRollout(ctx context.Context, rolloutI
 
 	record, ok := c.rollouts[rolloutID]
 	if !ok {
+		record, ok = c.loadFromRepo(ctx, rolloutID)
+	}
+	if !ok {
 		return nil, fmt.Errorf("rollout %q not found", rolloutID)
 	}
 
@@ -219,6 +267,9 @@ func (c *defaultRolloutController) GetRolloutState(ctx context.Context, rolloutI
 	defer c.mu.Unlock()
 
 	record, ok := c.rollouts[rolloutID]
+	if !ok {
+		record, ok = c.loadFromRepo(ctx, rolloutID)
+	}
 	if !ok {
 		return nil, fmt.Errorf("rollout %q not found", rolloutID)
 	}

@@ -14,16 +14,40 @@ spec:
       restartPolicy: Never
       imagePullSecrets:
         - name: quay-pull-secret
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: soak
           image: quay.io/rh-ee-jkershaw/ecosystem-soak:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           args:
             - "--gcl-url=http://gcl-app.governed-cognitive-loop.svc:8000"
             - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
             - "--ledger-url=http://ledger-gateway.sovereign-ai-lab.svc:28099"
-            - "--deepfield-token=changeme-deepfield-token"
+            - "--deepfield-token=$(DEEPFIELD_TOKEN)"
             - "--profile=72hr"
             - "--timeout=15"
+          env:
+            - name: DEEPFIELD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-identity
+                  key: deepfield-token
+                  optional: true
           resources:
             requests:
               cpu: 100m

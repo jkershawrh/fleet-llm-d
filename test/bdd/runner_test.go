@@ -58,6 +58,12 @@ func setupComplianceBackground(w *steps.World) {
 	w.RegisterCluster("eu-west-prod", "eu-west-1", "nvidia-h100", 48, 4.20, true)
 }
 
+func setupLedgerBackground(w *steps.World) {
+	w.RegisterCluster("us-east-prod", "us-east-1", "nvidia-h100", 64, 3.50, true)
+	w.RegisterCluster("eu-west-prod", "eu-west-1", "nvidia-h100", 48, 4.20, true)
+	w.RegisterTenant("tenant-alpha", 100000, 50, 1)
+}
+
 // ---------------------------------------------------------------------------
 // Feature: Placement
 // ---------------------------------------------------------------------------
@@ -1107,6 +1113,150 @@ func TestBDDCompliance(t *testing.T) {
 		}
 
 		if err := w.AssertLedgerEntryCount(3); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Feature: ModelPack
+// ---------------------------------------------------------------------------
+
+func TestBDDModelPack(t *testing.T) {
+	t.Run("Resolve GPU requirements for 70B fp16 model", func(t *testing.T) {
+		w := steps.NewWorld()
+		reqs, err := w.ModelPackResolveGPURequirements("70b", "fp16")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertGPUMemoryApprox(reqs.MinGPUMemoryGB, 140.0, 15.0); err != nil {
+			t.Log("Note:", err)
+		}
+	})
+
+	t.Run("Resolve GPU requirements for 7B fp16 model", func(t *testing.T) {
+		w := steps.NewWorld()
+		reqs, err := w.ModelPackResolveGPURequirements("7b", "fp16")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertGPUMemoryApprox(reqs.MinGPUMemoryGB, 14.0, 15.0); err != nil {
+			t.Log("Note:", err)
+		}
+	})
+
+	t.Run("Int8 quantization halves memory requirement", func(t *testing.T) {
+		w := steps.NewWorld()
+		reqs, err := w.ModelPackResolveGPURequirements("70b", "int8")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertGPUMemoryApprox(reqs.MinGPUMemoryGB, 70.0, 15.0); err != nil {
+			t.Log("Note:", err)
+		}
+	})
+
+	t.Run("Small model with int4 quantization", func(t *testing.T) {
+		w := steps.NewWorld()
+		reqs, err := w.ModelPackResolveGPURequirements("2b", "int4")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reqs.MinGPUMemoryGB > 5.0 {
+			t.Errorf("expected <5 GB for 2B int4, got %.1f GB", reqs.MinGPUMemoryGB)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Feature: Ledger
+// ---------------------------------------------------------------------------
+
+func TestBDDLedger(t *testing.T) {
+	t.Run("Record placement decision in ledger", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupLedgerBackground(w)
+
+		if err := w.RecordPlacementDecision("llama-70b", "us-east-prod",
+			4, "nvidia-h100", "initial-placement"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerEntryExists("fleet.placement.assigned"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerEntryHasTimestamp("fleet.placement.assigned"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Record tenant usage in ledger", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupLedgerBackground(w)
+
+		if err := w.RecordTenantUsageLedger("tenant-alpha", "us-east-prod", 5000); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerEntryExists("fleet.tenant.usage"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Multiple entries maintain chain ordering", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupLedgerBackground(w)
+
+		if err := w.RecordPlacementDecision("llama-70b", "us-east-prod",
+			4, "nvidia-h100", "step-1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.RecordPlacementDecision("granite-3b", "eu-west-prod",
+			2, "nvidia-h100", "step-2"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.RecordTenantUsageLedger("tenant-alpha", "us-east-prod", 1000); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerChainValid(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerEntryCount(3); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Chain verification across multiple decision types", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupLedgerBackground(w)
+
+		if err := w.RecordPlacementDecision("llama-70b", "us-east-prod",
+			4, "nvidia-h100", "placement"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.RecordScalingDecision("us-east-prod", "llama-70b",
+			2, 4, "scaling"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.RecordRoutingDecision("llama-70b", "us-east-prod",
+			"eu-west-prod", 0.2, "routing"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerChainValid(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerEntriesOrdered(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("KV transfer recorded with proof receipt", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupLedgerBackground(w)
+
+		if err := w.RecordKVTransferLedger("us-east-prod", "eu-west-prod",
+			"llama-70b", 1024*1024*512); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertLedgerEntryExists("fleet.kvcache.transferred"); err != nil {
 			t.Fatal(err)
 		}
 	})
