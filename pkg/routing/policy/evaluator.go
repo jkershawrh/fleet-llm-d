@@ -39,6 +39,7 @@ type ClusterHealth struct {
 	CurrentLoad       float64
 	CostPerToken      float64
 	Region            string
+	PoolSaturation    float64 // EPP flow-control pool saturation (0-1)
 }
 
 // RoutingPolicyEvaluator evaluates a FleetRoutingPolicySpec against a request

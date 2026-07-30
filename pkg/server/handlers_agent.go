@@ -34,6 +34,12 @@ type agentMetricsReport struct {
 	QueueDepth     int     `json:"queue_depth"`
 	GPUUtilization float64 `json:"gpu_utilization"`
 	KVCacheHitRate float64 `json:"kv_cache_hit_rate"`
+
+	// EPP (Endpoint Picker) signals from llm-d
+	PoolSaturation   float64 `json:"pool_saturation"`
+	ReadyEndpoints   int     `json:"ready_endpoints"`
+	KVCacheUtilization float64 `json:"kv_cache_utilization"`
+	InflightRequests int     `json:"inflight_requests"`
 }
 
 type agentEventReport struct {
@@ -194,18 +200,23 @@ func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Req
 	fc.MetricsCollector.Add(collector.ClusterMetrics{
 		ClusterID: report.ClusterID,
 		Pools: []collector.PoolMetrics{{
-			PoolName:       "agent-aggregate",
-			QueueDepth:     report.QueueDepth,
-			TTFT_P50_Ms:    report.TTFTP50MS,
-			TTFT_P99_Ms:    report.TTFTP99MS,
-			Throughput_TPS: report.ThroughputTPS,
-			GPUUtilization: report.GPUUtilization,
-			KVCacheHitRate: report.KVCacheHitRate,
+			PoolName:           "agent-aggregate",
+			QueueDepth:         report.QueueDepth,
+			TTFT_P50_Ms:        report.TTFTP50MS,
+			TTFT_P99_Ms:        report.TTFTP99MS,
+			Throughput_TPS:     report.ThroughputTPS,
+			GPUUtilization:     report.GPUUtilization,
+			KVCacheHitRate:     report.KVCacheHitRate,
+			PoolSaturation:     report.PoolSaturation,
+			ReadyEndpoints:     report.ReadyEndpoints,
+			KVCacheUtilization: report.KVCacheUtilization,
+			InflightRequests:   report.InflightRequests,
 		}},
 		Timestamp: time.Now().UTC(),
 	})
 	UpdateAgentMetrics(report.ClusterID, report.ThroughputTPS, report.TTFTP50MS, report.TTFTP99MS,
-		float64(report.QueueDepth), report.GPUUtilization, report.KVCacheHitRate)
+		float64(report.QueueDepth), report.GPUUtilization, report.KVCacheHitRate,
+		report.PoolSaturation, float64(report.ReadyEndpoints), report.KVCacheUtilization, float64(report.InflightRequests))
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 

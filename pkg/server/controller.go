@@ -278,6 +278,15 @@ func (fc *FleetController) BuildClusterHealth(ctx context.Context) []policy.Clus
 			ch.KVCacheHitRate = pm.KVCacheHitRate
 			ch.LatencyMs = pm.TTFT_P99_Ms
 			ch.CurrentLoad = pm.GPUUtilization
+			ch.PoolSaturation = pm.PoolSaturation
+
+			// EPP signals override legacy equivalents when available.
+			if pm.PoolSaturation > 0 {
+				ch.CurrentLoad = pm.PoolSaturation
+			}
+			if pm.ReadyEndpoints > 0 {
+				ch.AvailableSlots = pm.ReadyEndpoints
+			}
 		}
 		result = append(result, ch)
 	}

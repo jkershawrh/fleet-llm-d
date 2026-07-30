@@ -24,6 +24,12 @@ type PoolMetrics struct {
 	KVCacheHitRate        float64
 	CPUUtilization        float64
 	InferenceLatencyP99Ms float64
+
+	// EPP (Endpoint Picker) signals from llm-d
+	PoolSaturation   float64
+	ReadyEndpoints   int
+	KVCacheUtilization float64
+	InflightRequests int
 }
 
 // ClusterMetrics aggregates pool-level metrics for a cluster.
@@ -203,6 +209,49 @@ func parsePrometheusText(body string) PoolMetrics {
 			continue
 		}
 
+		// EPP (llm-d Endpoint Picker) exact-name matches — checked first
+		// so they take priority over the fuzzy fallbacks below.
+		switch name {
+		case "llm_d_epp_flow_control_pool_saturation":
+			pm.PoolSaturation = val
+			continue
+		case "llm_d_epp_ready_endpoints":
+			pm.ReadyEndpoints = int(val)
+			continue
+		case "llm_d_epp_average_kv_cache_utilization":
+			pm.KVCacheUtilization = val
+			continue
+		case "llm_d_epp_request_running":
+			pm.InflightRequests = int(val)
+			continue
+		case "llm_d_epp_flow_control_queue_size":
+			pm.QueueDepth += int(val)
+			continue
+		case "llm_d_epp_average_queue_size":
+			pm.QueueDepth += int(val)
+			continue
+		case "llm_d_epp_prefix_indexer_hit_ratio":
+			pm.KVCacheHitRate = val
+			continue
+		case "llm_d_epp_request_ttft_seconds":
+			// Quantile metric; convert seconds to ms.
+			ms := val * 1000
+			if strings.Contains(parts[0], "quantile=\"0.5\"") {
+				if ms > pm.TTFT_P50_Ms {
+					pm.TTFT_P50_Ms = ms
+				}
+			} else if strings.Contains(parts[0], "quantile=\"0.99\"") {
+				if ms > pm.TTFT_P99_Ms {
+					pm.TTFT_P99_Ms = ms
+				}
+			}
+			continue
+		case "llm_d_epp_request_total":
+			pm.Throughput_TPS += val
+			continue
+		}
+
+		// Legacy / fuzzy metric matches
 		switch {
 		case strings.Contains(name, "throughput") && !strings.HasSuffix(name, "_total"):
 			pm.Throughput_TPS += val

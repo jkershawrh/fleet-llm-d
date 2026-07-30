@@ -188,6 +188,12 @@ var (
 	agentQueueDepth    = newLabeledFloatGauge()
 	agentGPUUtil       = newLabeledFloatGauge()
 	agentKVCacheHitRate = newLabeledFloatGauge()
+
+	// EPP (Endpoint Picker) signals from llm-d
+	agentPoolSaturation   = newLabeledFloatGauge()
+	agentReadyEndpoints   = newLabeledFloatGauge()
+	agentKVCacheUtil      = newLabeledFloatGauge()
+	agentInflightRequests = newLabeledFloatGauge()
 )
 
 // ObserveRequest records a request's duration. Call with defer.
@@ -211,13 +217,17 @@ func RecordAutoscalerAction(action string) {
 }
 
 // UpdateAgentMetrics updates the per-cluster metrics from agent reports.
-func UpdateAgentMetrics(clusterID string, throughput, ttftP50, ttftP99, queueDepth, gpuUtil, kvHitRate float64) {
+func UpdateAgentMetrics(clusterID string, throughput, ttftP50, ttftP99, queueDepth, gpuUtil, kvHitRate, poolSaturation, readyEndpoints, kvCacheUtil, inflightRequests float64) {
 	agentThroughput.Set(clusterID, throughput)
 	agentTTFTP50.Set(clusterID, ttftP50)
 	agentTTFTP99.Set(clusterID, ttftP99)
 	agentQueueDepth.Set(clusterID, queueDepth)
 	agentGPUUtil.Set(clusterID, gpuUtil)
 	agentKVCacheHitRate.Set(clusterID, kvHitRate)
+	agentPoolSaturation.Set(clusterID, poolSaturation)
+	agentReadyEndpoints.Set(clusterID, readyEndpoints)
+	agentKVCacheUtil.Set(clusterID, kvCacheUtil)
+	agentInflightRequests.Set(clusterID, inflightRequests)
 }
 
 // InitGauges initializes metric gauges from existing persistent data.
@@ -271,6 +281,12 @@ func handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 	writeGaugeVecFloat(w, "fleet_inference_queue_depth", "Inference queue depth by cluster", "cluster", agentQueueDepth.snapshot())
 	writeGaugeVecFloat(w, "fleet_gpu_utilization_percent", "GPU/accelerator utilization (0-1) by cluster", "cluster", agentGPUUtil.snapshot())
 	writeGaugeVecFloat(w, "fleet_kv_cache_hit_rate", "KV cache hit rate (0-1) by cluster", "cluster", agentKVCacheHitRate.snapshot())
+
+	// EPP (Endpoint Picker) signals from llm-d
+	writeGaugeVecFloat(w, "fleet_pool_saturation", "Pool saturation (0-1) from EPP by cluster", "cluster", agentPoolSaturation.snapshot())
+	writeGaugeVecFloat(w, "fleet_ready_endpoints", "Ready inference endpoints from EPP by cluster", "cluster", agentReadyEndpoints.snapshot())
+	writeGaugeVecFloat(w, "fleet_kv_cache_utilization", "KV cache utilization (0-1) from EPP by cluster", "cluster", agentKVCacheUtil.snapshot())
+	writeGaugeVecFloat(w, "fleet_inflight_requests", "Inflight requests from EPP by cluster", "cluster", agentInflightRequests.snapshot())
 
 	// Process metrics
 	var ms runtime.MemStats

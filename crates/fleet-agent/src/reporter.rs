@@ -171,6 +171,10 @@ fn parse_prometheus_metrics(body: &str) -> InferenceMetrics {
     let mut gpu_util_samples = 0_u64;
     let mut kv_cache_hit_rate_total = 0.0_f64;
     let mut kv_cache_hit_rate_samples = 0_u64;
+    let mut pool_saturation = 0.0_f64;
+    let mut ready_endpoints = 0_u32;
+    let mut kv_cache_utilization = 0.0_f64;
+    let mut inflight_requests = 0_u32;
 
     for line in body.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -187,7 +191,35 @@ fn parse_prometheus_metrics(body: &str) -> InferenceMetrics {
             continue;
         };
         let name = raw_name.split('{').next().unwrap_or(raw_name);
-        if name.contains("throughput") && !name.ends_with("_total") {
+
+        // llm-d EPP native metrics (exact name match)
+        if name == "llm_d_epp_flow_control_pool_saturation" {
+            pool_saturation = value;
+        } else if name == "llm_d_epp_ready_endpoints" {
+            ready_endpoints = value.max(0.0) as u32;
+        } else if name == "llm_d_epp_average_kv_cache_utilization" {
+            kv_cache_utilization = value;
+        } else if name == "llm_d_epp_request_running" {
+            inflight_requests = value.max(0.0) as u32;
+        } else if name == "llm_d_epp_flow_control_queue_size"
+            || name == "llm_d_epp_average_queue_size"
+        {
+            queue_depth = queue_depth.saturating_add(value.max(0.0) as u64);
+        } else if name == "llm_d_epp_prefix_indexer_hit_ratio" {
+            kv_cache_hit_rate_total += value;
+            kv_cache_hit_rate_samples += 1;
+        } else if name == "llm_d_epp_request_ttft_seconds" {
+            // EPP reports TTFT in seconds; convert to ms for consistency
+            let ms = value * 1000.0;
+            if raw_name.contains("quantile=\"0.5\"") {
+                ttft_p50 = ttft_p50.max(ms);
+            } else if raw_name.contains("quantile=\"0.99\"") {
+                ttft_p99 = ttft_p99.max(ms);
+            }
+        } else if name == "llm_d_epp_request_total" {
+            throughput += value;
+        // Legacy / fuzzy metric matching (backward compatible)
+        } else if name.contains("throughput") && !name.ends_with("_total") {
             throughput += value;
         } else if name.contains("ttft") && name.contains("p50") {
             ttft_p50 = ttft_p50.max(value);
@@ -222,6 +254,10 @@ fn parse_prometheus_metrics(body: &str) -> InferenceMetrics {
         } else {
             kv_cache_hit_rate_total / kv_cache_hit_rate_samples as f64
         },
+        pool_saturation,
+        ready_endpoints,
+        kv_cache_utilization,
+        inflight_requests,
     }
 }
 
@@ -264,6 +300,10 @@ impl FleetReporter for MetricsReporter {
             "queue_depth": metrics.queue_depth,
             "gpu_utilization": metrics.gpu_utilization,
             "kv_cache_hit_rate": metrics.kv_cache_hit_rate,
+            "pool_saturation": metrics.pool_saturation,
+            "ready_endpoints": metrics.ready_endpoints,
+            "kv_cache_utilization": metrics.kv_cache_utilization,
+            "inflight_requests": metrics.inflight_requests,
         });
         self.post_json("/api/v1/agent/metrics", &body).await
     }
@@ -351,6 +391,33 @@ mod tests {
         assert_eq!(metrics.queue_depth, 5);
         assert_eq!(metrics.gpu_utilization, 70.0);
         assert_eq!(metrics.kv_cache_hit_rate, 0.9);
+    }
+
+    #[test]
+    fn prometheus_parser_recognizes_epp_metrics() {
+        let metrics = parse_prometheus_metrics(
+            r#"
+            # llm-d EPP native metrics
+            llm_d_epp_flow_control_pool_saturation{inference_pool="default"} 0.72
+            llm_d_epp_ready_endpoints{name="default"} 4
+            llm_d_epp_average_kv_cache_utilization{name="default"} 0.65
+            llm_d_epp_request_running{name="default"} 12
+            llm_d_epp_flow_control_queue_size{inference_pool="default"} 8
+            llm_d_epp_prefix_indexer_hit_ratio{} 0.45
+            llm_d_epp_request_ttft_seconds{quantile="0.5"} 0.025
+            llm_d_epp_request_ttft_seconds{quantile="0.99"} 0.090
+            llm_d_epp_request_total{flow_id="model-a"} 150
+            "#,
+        );
+        assert!((metrics.pool_saturation - 0.72).abs() < 0.01);
+        assert_eq!(metrics.ready_endpoints, 4);
+        assert!((metrics.kv_cache_utilization - 0.65).abs() < 0.01);
+        assert_eq!(metrics.inflight_requests, 12);
+        assert_eq!(metrics.queue_depth, 8);
+        assert!((metrics.kv_cache_hit_rate - 0.45).abs() < 0.01);
+        assert!((metrics.ttft_p50_ms - 25.0).abs() < 0.1);
+        assert!((metrics.ttft_p99_ms - 90.0).abs() < 0.1);
+        assert!((metrics.throughput_tps - 150.0).abs() < 0.1);
     }
 
     #[test]

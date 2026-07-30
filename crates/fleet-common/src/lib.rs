@@ -130,6 +130,18 @@ pub struct InferenceMetrics {
     pub queue_depth: u64,
     /// GPU utilisation percentage (0.0 .. 100.0).
     pub gpu_utilization: f64,
+    /// llm-d EPP pool saturation (0.0 .. 1.0+; above 1.0 means throttling).
+    #[serde(default)]
+    pub pool_saturation: f64,
+    /// Number of ready inference endpoints in the pool.
+    #[serde(default)]
+    pub ready_endpoints: u32,
+    /// Average KV cache utilization across the pool (0.0 .. 1.0).
+    #[serde(default)]
+    pub kv_cache_utilization: f64,
+    /// Number of currently in-flight inference requests.
+    #[serde(default)]
+    pub inflight_requests: u32,
 }
 
 // ---------------------------------------------------------------------------
