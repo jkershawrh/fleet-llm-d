@@ -201,6 +201,7 @@ type RoutingAction struct {
 	PreferLocal     bool     `json:"preferLocal,omitempty"`
 	PreferCheapest  bool     `json:"preferCheapest,omitempty"`
 	KVCacheAffinity bool     `json:"kvCacheAffinity,omitempty"`
+	SessionAffinity bool     `json:"sessionAffinity,omitempty"`
 	MaxLatencyMs    int      `json:"maxLatencyMs,omitempty"`
 	Failover        *Failover `json:"failover,omitempty"`
 }

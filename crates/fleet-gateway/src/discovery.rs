@@ -93,7 +93,7 @@ async fn sync_once(
 fn is_explicitly_unhealthy(status: &str) -> bool {
     matches!(
         status.to_ascii_lowercase().as_str(),
-        "unhealthy" | "degraded" | "failed" | "offline"
+        "unhealthy" | "degraded" | "failed" | "offline" | "draining" | "drained"
     )
 }
 

@@ -18,6 +18,7 @@ type RoutingRequest struct {
 	Region       string
 	TokenCount   int
 	Priority     string
+	SessionID    string
 }
 
 // RouteDecision describes where to send a request and why.

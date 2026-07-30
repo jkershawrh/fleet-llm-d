@@ -47,6 +47,8 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/clusters", fc.handleListClusters)
 		mux.HandleFunc("POST /api/v1/clusters", fc.handleRegisterCluster)
 		mux.HandleFunc("DELETE /api/v1/clusters/{id}", fc.handleDeregisterCluster)
+		mux.HandleFunc("POST /api/v1/clusters/{id}/drain", fc.handleDrainCluster)
+		mux.HandleFunc("POST /api/v1/clusters/{id}/activate", fc.handleActivateCluster)
 
 		// Pools
 		mux.HandleFunc("GET /api/v1/pools", fc.handleListPools)

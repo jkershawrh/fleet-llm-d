@@ -2,6 +2,13 @@ package postgres
 
 import "time"
 
+const (
+	ClusterStatusRunning  = "Running"
+	ClusterStatusHealthy  = "Healthy"
+	ClusterStatusDraining = "Draining"
+	ClusterStatusDrained  = "Drained"
+)
+
 // ClusterRecord matches the clusters table.
 type ClusterRecord struct {
 	ID           string

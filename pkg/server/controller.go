@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
@@ -90,6 +91,9 @@ type FleetController struct {
 	// ModelPlane integration
 	ModelPlaneWatcher *modelplane.ModelPlaneWatcher
 	ModelPlaneBridge  *modelplane.ComplianceBridge
+
+	// Session affinity table for multi-turn conversation routing
+	SessionTable *routing.SessionAffinityTable
 
 	// Auth secret for token refresh
 	AuthSecret string
@@ -243,6 +247,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		LedgerGatewayToken: ledgerCfg.APIToken,
 		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
 		InferenceProxy:     proxy,
+		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,
 		TenantRepo:         tenantRepo,

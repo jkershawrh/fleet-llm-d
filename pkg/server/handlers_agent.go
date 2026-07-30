@@ -153,7 +153,9 @@ func applyAgentStatus(record *postgres.ClusterRecord, report agentStatusReport, 
 	record.Region = report.Region
 	record.GPUAvailable = report.GPUAvailable
 	record.GPUTotal = report.GPUTotal
-	record.Status = status
+	if record.Status != postgres.ClusterStatusDraining && record.Status != postgres.ClusterStatusDrained {
+		record.Status = status
+	}
 	if record.Labels == nil {
 		record.Labels = make(map[string]string)
 	}
