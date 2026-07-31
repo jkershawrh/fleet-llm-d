@@ -126,7 +126,7 @@ Each phase transition is recorded. Operations that fail at any phase record the 
 
 **Go control plane.** The fleet-controller binary manages all CRD reconciliation, API endpoints (27 REST endpoints), intent admission, metrics federation, and cost modeling. Standard library HTTP server with HMAC-SHA256 authentication, per-IP rate limiting, and TLS 1.3.
 
-**Rust data plane.** Three binaries handle per-cluster and cross-cluster operations: fleet-agent (spoke cluster management), fleet-gateway (cross-cluster request routing), and KV transfer coordinator (cache state migration). Tokio async runtime, tonic for gRPC, axum for HTTP.
+**Rust data plane and Praxis AI.** fleet-agent (spoke cluster management) and KV transfer coordinator (cache state migration) are Rust binaries using tokio async runtime, tonic for gRPC, and axum for HTTP. Praxis AI handles cross-cluster inference routing as the programmable data plane (model-based dispatch, token counting, access logging).
 
 **Cost model.** 6 GPU types (A100-40GB through MI300X-192GB) across 3 pricing tiers (on-demand, reserved, spot) with per-tenant cost attribution, chargeback reports, and budget alert projections.
 

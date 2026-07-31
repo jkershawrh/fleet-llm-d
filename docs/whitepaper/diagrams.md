@@ -54,7 +54,7 @@ graph LR
 
 ## 2. fleet-llm-d Internal Architecture
 
-Go control plane and Rust data plane with CRD reconciliation, intent admission, and inference proxy.
+Go control plane with CRD reconciliation, intent admission, and Praxis AI data plane for inference routing.
 
 ```mermaid
 graph TB
@@ -83,10 +83,10 @@ graph TB
         METRICS["/metrics :9091<br/>Prometheus exposition"]
     end
 
-    subgraph RUSTDP["Rust Data Plane (tokio + tonic + axum)"]
-        AGENT["fleet-agent<br/>(spoke cluster mgmt)"]
-        GW["fleet-gateway<br/>(cross-cluster routing)"]
-        KVTX["KV Transfer Coordinator<br/>(cache state migration)"]
+    subgraph RUSTDP["Data Plane"]
+        AGENT["fleet-agent<br/>(spoke cluster mgmt)<br/>Rust: tokio + tonic + axum"]
+        PRAXIS["Praxis AI Gateway<br/>(inference routing,<br/>token counting,<br/>access logging)"]
+        KVTX["KV Transfer Coordinator<br/>(cache state migration)<br/>Rust: tokio + tonic + axum"]
     end
 
     subgraph K8S["Kubernetes (OpenShift)"]
@@ -98,7 +98,7 @@ graph TB
     ADMIT -- "Creates FleetOperation" --> RECON
     RECON -- "Reconcile" --> CRDS
     RECON --> PL & RT & AS & TG & LM
-    PL & RT --> GW
+    PL & RT --> PRAXIS
     AS --> AGENT
     LM --> AGENT
     KV --> KVTX

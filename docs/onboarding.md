@@ -51,7 +51,7 @@ cd fleet-llm-d
 # Build Go binaries (fleet-controller, fleetctl)
 make build-go
 
-# Build Rust crates (fleet-agent, fleet-gateway, kv-transfer, fleet-ledger)
+# Build Rust crates (fleet-agent, kv-transfer, fleet-ledger)
 make build-rust
 
 # Build the web dashboard (optional, requires npm install first)
@@ -488,13 +488,11 @@ echo "Exit code: $?"
 | `--port` | `8080` | API server port |
 | `--metrics-port` | `9091` | Prometheus metrics server port |
 | `--grpc-port` | `0` | gRPC (JSON-RPC) server port. 0 disables. |
-| `--mode` | `all` | Server mode: `all`, `control` (fleet API only), `inference` (proxy only) |
+| `--mode` | `all` | Server mode: `all`, `control` (fleet API only) |
 | `--ledger-mode` | `memory` | Ledger backend: `disabled`, `memory`, `http` |
 | `--ledger-endpoint` | `http://localhost:18099` | ARE ledger REST gateway URL (HTTP mode only) |
 | `--pg-url` | (empty) | PostgreSQL connection string. When set, uses Postgres instead of in-memory stores. Example: `postgres://fleet:fleet@host:5432/fleet_llm_d?sslmode=disable` |
-| `--backend-vllm` | `http://vllm-cpu.fleet-llm-d.svc:8000` | Base URL for the vLLM inference backend |
-| `--backend-ovms` | `http://ovms-granite-external.fleet-llm-d.svc:8080` | Base URL for the OVMS inference backend |
-| `--backends` | (empty) | JSON array of additional inference backends. Format: `[{"model":"name","url":"http://...","runtime":"vllm\|openvino","path_prefix":"/v3"}]` |
+| `--backends` | (empty) | JSON array of inference backends for development. Format: `[{"model":"name","url":"http://...","runtime":"vllm\|openvino","path_prefix":"/v3"}]`. In production, Praxis AI handles inference routing. |
 | `--kube-api` | (empty) | Kubernetes API server URL. Enables CRD watching and authoritative intent persistence when set. |
 | `--namespace` | `default` | Kubernetes namespace to watch for FleetInferencePool CRDs |
 | `--modelplane-api` | (empty) | ModelPlane API server URL. Enables ModelPlane integration when set. |
@@ -555,9 +553,9 @@ Intent pipeline (v2):
 - `POST /api/v2/operations/{id}/approve` - approve an operation
 - `POST /api/v2/operations/{id}/cancel` - cancel an operation
 
-Inference proxy:
-- `POST /v1/chat/completions` - OpenAI-compatible chat completions
-- `POST /v1/completions` - OpenAI-compatible completions
+Inference routing (via Praxis AI gateway in production):
+- `POST /v1/chat/completions` - OpenAI-compatible chat completions (development proxy)
+- `POST /v1/completions` - OpenAI-compatible completions (development proxy)
 
 
 ## 7. Troubleshooting
@@ -694,9 +692,9 @@ oc logs deploy/fleet-controller -n fleet-llm-d | grep "DecisionPackage verificat
 
 Fix: regenerate the shared signing key and update both secrets (see section 4d).
 
-### Inference proxy returns 502
+### Inference backend returns 502
 
-If the inference backend (vLLM or OVMS) is down, the proxy returns an error.
+If the inference backend (vLLM or OVMS) is down, the development proxy returns an error. In production, Praxis AI handles inference routing.
 Check backend health:
 
 ```bash

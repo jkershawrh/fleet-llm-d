@@ -24,7 +24,7 @@
 
 - fleet-llm-d is a fleet-level inference orchestration platform built on llm-d.
 - It extends single-cluster llm-d to manage model serving across an entire fleet of OpenShift clusters.
-- Deployment is a single command that installs the CRDs, controller, gateway, and EPP components.
+- Deployment is a single command that installs the CRDs, controller, and agent components. Praxis AI handles inference routing as the data plane.
 
 **Commands:**
 
@@ -52,14 +52,14 @@ customresourcedefinition.apiextensions.k8s.io/kvcachetransferpolicies.fleet.llm-
 [INFO]  Deploying fleet-controller...
 deployment.apps/fleet-controller created
 service/fleet-controller created
-[INFO]  Deploying fleet-gateway...
-deployment.apps/fleet-gateway created
-service/fleet-gateway created
-route.route.openshift.io/fleet-gateway created
+[INFO]  Deploying Praxis AI gateway...
+deployment.apps/praxis-gateway created
+service/praxis-gateway created
+route.route.openshift.io/praxis-gateway created
 [INFO]  Waiting for controller to become ready...
 deployment.apps/fleet-controller condition met
 [INFO]  fleet-llm-d deployed successfully.
-[INFO]  Gateway endpoint: https://fleet-gateway-fleet-llm-d.apps.hub.demo.openshiftapps.com
+[INFO]  Gateway endpoint: https://praxis-gateway-fleet-llm-d.apps.hub.demo.openshiftapps.com
 ```
 
 ```bash
@@ -72,7 +72,7 @@ oc get pods -n fleet-llm-d
 ```
 NAME                                READY   STATUS    RESTARTS   AGE
 fleet-controller-6b8f9d4c57-xr2kl   1/1     Running   0          42s
-fleet-gateway-7c4a1e5d38-mv9pn      1/1     Running   0          38s
+praxis-gateway-7c4a1e5d38-mv9pn     1/1     Running   0          38s
 ```
 
 ```bash
@@ -293,7 +293,7 @@ FleetInferencePool: granite-3-2-8b
 
 **Talking points:**
 
-- The fleet-gateway is a Rust-based routing layer that handles cross-cluster inference routing.
+- The Praxis AI gateway is the programmable inference data plane that handles cross-cluster inference routing.
 - Clients send requests to a single endpoint. The gateway decides which backend serves the request.
 - The EPP (Endpoint Picker Protocol) headers control routing behavior: `x-llm-d-inference-objective` selects realtime vs. batch, and `x-llm-d-inference-fairness-id` enables fair queuing across tenants.
 - All of this is transparent to the caller -- they just see an OpenAI-compatible API.
@@ -302,7 +302,7 @@ FleetInferencePool: granite-3-2-8b
 
 ```bash
 # Set the gateway endpoint
-export FLEET_GATEWAY="https://fleet-gateway-fleet-llm-d.apps.hub.demo.openshiftapps.com"
+export FLEET_GATEWAY="https://praxis-gateway-fleet-llm-d.apps.hub.demo.openshiftapps.com"
 
 # Send a realtime inference request
 curl -s -w "\n\n--- Response Headers ---\n" \
@@ -432,7 +432,7 @@ fleet_routing_latency_seconds_count 2
 - TenantProfiles define per-tenant quotas, rate limits, and priority classes.
 - This is critical for shared infrastructure -- you need to prevent one team from monopolizing GPU resources.
 - The fairness ID header we saw earlier connects each request to its tenant profile.
-- Enforcement happens at the gateway level, so it works across all clusters in the fleet.
+- Enforcement happens at the Praxis AI gateway level, so it works across all clusters in the fleet.
 
 **Commands:**
 
@@ -744,7 +744,7 @@ At the end of the demo, summarize the key capabilities shown:
 1. **Single-command deployment** -- fleet-llm-d installs in under a minute.
 2. **Fleet-level orchestration** -- manage models across multiple clusters from one control plane.
 3. **Intelligent placement** -- the platform decides where to run models based on capacity, GPU type, and region.
-4. **Cross-cluster routing** -- the Rust-based gateway routes inference requests with sub-millisecond overhead.
+4. **Cross-cluster routing** -- the Praxis AI gateway routes inference requests with sub-millisecond overhead.
 5. **Tenant governance** -- declarative quotas and rate limits prevent noisy-neighbor problems.
 6. **Compliance-grade audit** -- every event is recorded in a tamper-evident hash chain via the ARE Immutable Ledger.
 7. **Automatic failover** -- backend failures are detected and traffic is rerouted without human intervention.
@@ -783,8 +783,8 @@ fleetctl backend list --pool granite-3-2-8b
 # If empty, the model pods may not be running on spoke clusters
 oc get pods -n fleet-llm-d --context us-east-gpu-01
 
-# Restart the gateway to force re-discovery
-oc rollout restart deployment/fleet-gateway -n fleet-llm-d
+# Restart the Praxis AI gateway to force re-discovery
+oc rollout restart deployment/praxis-gateway -n fleet-llm-d
 ```
 
 ### Cluster registration fails with "connection refused"
@@ -837,8 +837,8 @@ curl -v "${FLEET_GATEWAY}/v1/chat/completions" \
   -H "x-llm-d-inference-fairness-id: tenant-acme" \
   ... 2>&1 | grep "x-llm-d-inference-fairness-id"
 
-# Restart the gateway to reload tenant configs
-oc rollout restart deployment/fleet-gateway -n fleet-llm-d
+# Restart the Praxis AI gateway to reload tenant configs
+oc rollout restart deployment/praxis-gateway -n fleet-llm-d
 ```
 
 ---

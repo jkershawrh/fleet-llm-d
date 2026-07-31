@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary
 
-Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane, a Praxis AI inference gateway, and PostgreSQL-backed persistence, governed by ten Kubernetes CRDs (FleetCluster, FleetInferencePool, FleetIntent, FleetOperation, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, ModelLifecycle, KVCacheTransferPolicy). The platform integrates with Praxis AI for programmable model routing and token counting, ModelPack (CNCF model-spec) for OCI-based model metadata resolution, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. The target architecture comprises three layers: fleet-llm-d (operations control plane), Praxis AI + Grid (programmable data plane with SWIM mesh and mTLS), and ConnectLink + NIXL (GPU/accelerator fabric for KV cache transfer). A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
+Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane, Praxis AI as the inference data plane, and PostgreSQL-backed persistence, governed by ten Kubernetes CRDs (FleetCluster, FleetInferencePool, FleetIntent, FleetOperation, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, ModelLifecycle, KVCacheTransferPolicy). The platform integrates with Praxis AI for programmable model routing and token counting, ModelPack (CNCF model-spec) for OCI-based model metadata resolution, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. The target architecture comprises three layers: fleet-llm-d (operations control plane), Praxis AI + Grid (programmable data plane with SWIM mesh and mTLS), and ConnectLink + NIXL (GPU/accelerator fabric for KV cache transfer). A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
 
 ## 2. Problem Statement
 
@@ -44,7 +44,7 @@ Six principles govern all architectural decisions in fleet-llm-d:
 
 4. **No-Fork Commitment.** fleet-llm-d never forks llm-d. All within-cluster intelligence remains in the upstream llm-d project. fleet-llm-d operates strictly above the cluster boundary, consuming llm-d's APIs and metrics without modifying its code. When a fleet-level need implies a within-cluster change, that change is proposed upstream to llm-d.
 
-5. **Polyglot by Design.** The control plane is written in Go (standard library patterns, table-driven tests) because the Kubernetes ecosystem is Go-native. The data plane is written in Rust (tokio, tonic, axum) because the fleet gateway and KV cache transfer coordinator operate on the hot path where memory safety and zero-cost abstractions matter. The dashboard is TypeScript (Next.js). Protocol Buffers define the contract between control plane and data plane.
+5. **Polyglot by Design.** The control plane is written in Go (standard library patterns, table-driven tests) because the Kubernetes ecosystem is Go-native. Per-cluster agents and KV cache transfer are written in Rust (tokio, tonic, axum) because they operate on the hot path where memory safety and zero-cost abstractions matter. Praxis AI handles inference routing as the programmable data plane. The dashboard is TypeScript (Next.js). Protocol Buffers define the contract between control plane and data plane.
 
 6. **Immutable-Ledger Independence.** [are-immutable-ledger](https://github.com/jkershawrh/are-immutable-ledger) is an independent component in the fleet ecosystem. It runs on its own database and compute and is operated separately from fleet-llm-d. fleet-llm-d is one of many writers. Proof receipts establish recorded evidence; they are not credentials and do not authorize fleet actions.
 
@@ -68,23 +68,18 @@ The control plane is implemented in Go 1.26.5 using standard library HTTP for th
 
 **State Management.** PostgreSQL 16+ stores fleet state: cluster registrations, pool configurations, tenant profiles, rollout state, and placement decisions. The repository layer (`pkg/store/postgres/`) provides transactional access with an in-memory implementation for testing. Events are published to an in-memory publisher plus an optional HTTP sink (`pkg/store/events/http_publisher.go`) that can target any CloudEvents-compatible endpoint, including a Kafka REST proxy. There is no native Kafka client -- this is a deliberate supply-chain-minimal design choice (the entire Go module depends only on `lib/pq`).
 
-### 3.3 Data Plane (Rust)
+### 3.3 Data Plane
 
-The data plane is implemented in Rust 1.90+ using tokio for async runtime, tonic for gRPC, and axum for HTTP. It consists of two binaries (fleet-agent, fleet-gateway) deployed as separate containers. The KV transfer coordinator (`crates/kv-transfer/`) is a library crate, not a standalone binary.
+The data plane uses a combination of Rust components for per-cluster operations and Praxis AI for inference routing. The KV transfer coordinator (`crates/kv-transfer/`) is a library crate, not a standalone binary.
 
 **Fleet Agent (`crates/fleet-agent/`).** One fleet-agent instance runs per managed cluster. It performs four functions:
 
 - *Watcher* (`watcher.rs`) -- Monitors local Kubernetes resources (InferencePool status, GPU capacity, pod health) and streams state updates to the fleet controller.
 - *Reporter* (`reporter.rs`) -- Aggregates per-cluster metrics (GPU utilization, queue depth, TTFT, throughput) and publishes them at configurable intervals to the fleet controller's metrics ingestion endpoint.
 - *Enforcer* (`enforcer.rs`) -- Receives placement and scaling directives from the fleet controller and applies them to the local cluster by creating, updating, or deleting InferencePool resources and adjusting replica counts.
-- *Proxy* (`proxy.rs`) -- Provides a local gRPC endpoint that the fleet gateway uses for health checks and routing decisions, abstracting the cluster's internal topology.
+- *Proxy* (`proxy.rs`) -- Provides a local gRPC endpoint for health checks and routing decisions, abstracting the cluster's internal topology.
 
-**Fleet Gateway (`crates/fleet-gateway/`).** The fleet gateway is a cross-cluster traffic routing proxy that sits at the fleet network boundary.
-
-- *Router* (`router.rs`) -- Evaluates FleetRoutingPolicy rules (geographic preference, failover chains, KV cache affinity, tenant priority) to select the target cluster for each inference request.
-- *Balancer* (`balancer.rs`) -- Distributes traffic across healthy clusters using the resolved routing policy, implementing weighted round-robin, least-connections, and latency-based algorithms.
-- *Health* (`health.rs`) -- Maintains a real-time health map of all clusters by polling fleet-agent proxy endpoints, detecting unhealthy clusters within configurable thresholds.
-- *Metrics* (`metrics.rs`) -- Exposes Prometheus metrics for routing decisions, latency distributions, error rates, and per-cluster traffic volumes.
+**Praxis AI Gateway.** Praxis AI is the programmable inference data plane for fleet-llm-d. It handles cross-cluster inference routing at the fleet network boundary, providing model-based request dispatch, token counting, access logging, and protocol translation. Praxis Grid extends this to multi-site with SWIM membership discovery, CRDT state propagation, and mTLS between sites. See [`docs/architecture/praxis-integration.md`](../architecture/praxis-integration.md) for the full integration architecture.
 
 **KV Cache Transfer Coordinator (`crates/kv-transfer/`).** Manages cross-cluster KV cache state transfer for hot failover, warm migration, and prefix tree synchronization.
 
@@ -92,7 +87,7 @@ The data plane is implemented in Rust 1.90+ using tokio for async runtime, tonic
 - *NIXL Bridge* (`nixl_bridge.rs`) -- Interfaces with llm-d's NIXL (NVIDIA Inference Xfer Library) for high-bandwidth GPU memory transfer, bridging the cross-cluster gap that NIXL does not natively support.
 - *Protocol* (`protocol.rs`) -- Defines the wire protocol for KV cache transfer, including chunking, flow control, integrity verification, and ARE ledger proof receipt integration.
 
-**Fleet Ledger Client (`crates/fleet-ledger/`).** A shared Rust client for writing to and verifying the ARE Immutable Ledger, used by the fleet gateway and KV transfer coordinator for recording routing decisions and cache transfer provenance. Includes a SHA-256 hasher (`hasher.rs`) for computing chain hashes locally before submission.
+**Fleet Ledger Client (`crates/fleet-ledger/`).** A shared Rust client for writing to and verifying the ARE Immutable Ledger, used by fleet-agent and the KV transfer coordinator for recording operational decisions and cache transfer provenance. Includes a SHA-256 hasher (`hasher.rs`) for computing chain hashes locally before submission.
 
 ### 3.4 CRD-Driven Declarative Model
 
@@ -233,7 +228,7 @@ Model placement determines which clusters in the fleet should host a given model
 
 ### 4.2 Cross-Cluster Traffic Routing
 
-Cross-cluster traffic routing directs inference requests to the optimal cluster based on geographic proximity, cluster health, load distribution, and KV cache state. The fleet gateway (Rust, `crates/fleet-gateway/`) evaluates FleetRoutingPolicy rules at the network edge with sub-5ms routing decision latency. Geographic routing prefers the closest healthy cluster to minimize network latency; failover chains define ordered fallback targets when the primary cluster is unhealthy (detected within 30 seconds via configurable health check intervals and unhealthy thresholds); KV cache affinity routing directs requests to clusters that already hold relevant KV cache state, avoiding redundant prefill computation. The fleet gateway maintains a real-time health map of all clusters by polling fleet-agent proxy endpoints and integrates with llm-d's EPP (Endpoint Picker Protocol) for within-cluster routing decisions. In the telco AI grid deployment pattern, geographic routing across 30+ edge sites is designed to ensure that Method of Procedure (MOP) execution requests route to the nearest edge cluster, targeting sub-50ms TTFT, while failover chains would enable a site outage to transparently redirect traffic to the regional hub within seconds. These are design targets for the multi-cluster topology; measured evidence exists only for single-cluster routing (see section 5.2).
+Cross-cluster traffic routing directs inference requests to the optimal cluster based on geographic proximity, cluster health, load distribution, and KV cache state. The Praxis AI gateway evaluates FleetRoutingPolicy rules at the network edge with sub-5ms routing decision latency. Geographic routing prefers the closest healthy cluster to minimize network latency; failover chains define ordered fallback targets when the primary cluster is unhealthy (detected within 30 seconds via configurable health check intervals and unhealthy thresholds); KV cache affinity routing directs requests to clusters that already hold relevant KV cache state, avoiding redundant prefill computation. The Praxis AI gateway maintains a real-time health map of all clusters and integrates with llm-d's EPP (Endpoint Picker Protocol) for within-cluster routing decisions. In the telco AI grid deployment pattern, geographic routing across 30+ edge sites is designed to ensure that Method of Procedure (MOP) execution requests route to the nearest edge cluster, targeting sub-50ms TTFT, while failover chains would enable a site outage to transparently redirect traffic to the regional hub within seconds. Praxis Grid extends Praxis AI to multi-site with SWIM membership discovery, CRDT state propagation, and mTLS between sites. These are design targets for the multi-cluster topology; measured evidence exists only for single-cluster routing (see section 5.2).
 
 ### 4.3 Fleet Autoscaling
 
@@ -268,7 +263,7 @@ The benchmark suite (`test/benchmarks/`, invoked via `make bench-quick`, `make b
 **Six Workloads:**
 
 1. *Placement throughput* -- Measures placement decisions per second with varying constraint complexity (1 to 20 constraint rules) across fleet sizes of 5, 15, and 50 clusters. Target: sub-100ms p99 latency, 1000+ decisions/second.
-2. *Routing latency* -- Measures end-to-end routing decision latency through the fleet gateway under sustained load. Includes policy evaluation, health check consultation, and cluster selection. Target: sub-5ms p99.
+2. *Routing latency* -- Measures end-to-end routing decision latency through the Praxis AI gateway under sustained load. Includes policy evaluation, health check consultation, and cluster selection. Target: sub-5ms p99.
 3. *Autoscale reaction time* -- Measures time from SLO violation detection to scaling action completion (replica count change or cross-cluster migration). Target: sub-30 seconds.
 4. *KV cache transfer throughput* -- Measures cross-cluster KV cache transfer bandwidth using the NIXL bridge with varying cache sizes (1GB, 10GB, 100GB). Target: 5+ Gbps sustained.
 5. *Tenant quota enforcement* -- Measures quota evaluation latency under concurrent multi-tenant request load (10, 50, 200 tenants). Target: sub-1ms per evaluation.
@@ -332,7 +327,7 @@ Without fleet-llm-d, organizations managing multi-cluster LLM inference rely on 
 
 **Placement by spreadsheet.** Platform teams manually track GPU capacity across clusters in spreadsheets, deciding where to deploy models based on tribal knowledge and static capacity plans. A new model deployment requires manually checking available GPUs on each cluster, verifying regulatory constraints by reading cluster documentation, and submitting deployment requests per cluster. This process takes hours to days and is error-prone: a human cannot evaluate 20 label-selector constraints across 30 clusters without mistakes. fleet-llm-d's placement engine evaluates all constraints in under 100ms and guarantees that no regulatory violation occurs.
 
-**Routing by manual configuration.** Traffic routing across clusters is configured through static Ingress or Gateway API resources on each cluster, updated manually when clusters change health status or load distribution shifts. Failover requires human intervention: an operator detects a cluster outage, manually updates DNS or Ingress weights, and monitors the shift. Mean time to failover is measured in minutes to hours. fleet-llm-d's fleet gateway detects unhealthy clusters within 30 seconds and reroutes traffic automatically.
+**Routing by manual configuration.** Traffic routing across clusters is configured through static Ingress or Gateway API resources on each cluster, updated manually when clusters change health status or load distribution shifts. Failover requires human intervention: an operator detects a cluster outage, manually updates DNS or Ingress weights, and monitors the shift. Mean time to failover is measured in minutes to hours. fleet-llm-d's Praxis AI gateway detects unhealthy clusters within 30 seconds and reroutes traffic automatically.
 
 **No cross-cluster scaling.** Within-cluster autoscalers (llm-d's WVA, Kubernetes HPA) optimize locally but have no visibility into fleet-wide utilization. One cluster runs at 95% GPU utilization while another sits at 30%, but no system coordinates rebalancing. Manual rebalancing requires an operator to identify the imbalance, decide where to move replicas, drain the source, deploy on the target, and update routing -- a multi-hour process that risks downtime. fleet-llm-d's fleet autoscaler continuously optimizes across clusters, migrating replicas and KV cache state together.
 
@@ -368,7 +363,7 @@ These are not hardware problems. The cluster had 2,752 CPU cores at <3% utilizat
 
 #### 5.4.3 The Solution
 
-fleet-llm-d was deployed in inference proxy mode (`--mode=inference`) on the production cluster alongside existing workloads, providing seven capabilities absent from the previous deployment:
+fleet-llm-d was deployed on the production cluster alongside existing workloads, providing seven capabilities absent from the previous deployment:
 
 | Capability | Implementation | Impact |
 |-----------|----------------|--------|
@@ -485,7 +480,7 @@ SLO targets met: P50 < 2s (measured 1.0s), P95 < 5s (measured 2.3s), error rate 
 
 #### 5.4.8 Control Plane Resilience on Production Infrastructure
 
-The full fleet-llm-d test harness (7 suites) ran against the inference proxy on the validation cluster:
+The full fleet-llm-d test harness (7 suites) ran against the fleet controller on the validation cluster:
 
 | Suite | Result | Notes |
 |-------|--------|-------|
@@ -697,7 +692,7 @@ Historical measurements (not current Gold evidence):
 
 ### 7.1 Telco AI Grid
 
-The Telco AI Grid reference architecture (`docs/customer-patterns/telco-ai-grid.md`) describes a deployment pattern for fleet-llm-d across a carrier's distributed edge infrastructure, designed to enable LLM inference at 30+ sites managed from a single hub cluster. Informed by engagements with Telco Edge Provider, Mobile Network Operator, and European Telco Partner, the pattern uses a three-tier topology: a central hub (fleet controller, fleet gateway, ARE ledger), regional hub clusters (traffic aggregation, failover), and 30+ edge site clusters running lightweight models targeting sub-50ms TTFT. KV cache prefix sharing across sites is designed to eliminate redundant prefill for common MOP execution prompts, targeting 40% throughput improvement versus independent single-cluster deployments; this is a design target, not measured evidence (see section 4.7). Tenant self-service -- the capability that drove Mobile Network Operator's competitor selection -- is addressed through TenantProfile CRDs that enable LOB teams to define quotas, rate limits, and GPU budgets within platform-team guardrails. Geographic routing via the fleet gateway is designed to ensure latency-sensitive workloads (real-time customer service, fraud detection, RAN optimization) route to the nearest edge site, with automatic failover to regional hubs when edge sites experience outages.
+The Telco AI Grid reference architecture (`docs/customer-patterns/telco-ai-grid.md`) describes a deployment pattern for fleet-llm-d across a carrier's distributed edge infrastructure, designed to enable LLM inference at 30+ sites managed from a single hub cluster. Informed by engagements with Telco Edge Provider, Mobile Network Operator, and European Telco Partner, the pattern uses a three-tier topology: a central hub (fleet controller, Praxis AI gateway, ARE ledger), regional hub clusters (traffic aggregation, failover), and 30+ edge site clusters running lightweight models targeting sub-50ms TTFT. KV cache prefix sharing across sites is designed to eliminate redundant prefill for common MOP execution prompts, targeting 40% throughput improvement versus independent single-cluster deployments; this is a design target, not measured evidence (see section 4.7). Tenant self-service -- the capability that drove Mobile Network Operator's competitor selection -- is addressed through TenantProfile CRDs that enable LOB teams to define quotas, rate limits, and GPU budgets within platform-team guardrails. Geographic routing via the Praxis AI gateway is designed to ensure latency-sensitive workloads (real-time customer service, fraud detection, RAN optimization) route to the nearest edge site, with automatic failover to regional hubs when edge sites experience outages.
 
 ### 7.2 Financial Services
 

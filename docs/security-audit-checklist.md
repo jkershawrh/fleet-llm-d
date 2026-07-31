@@ -34,7 +34,7 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 | API endpoint authorization matrix | Done | AuthorizationMiddleware checks roles against HTTP methods; rate limiting in `pkg/auth/ratelimit.go` (per-key token bucket) |
 | fleetctl CLI authorization scoping | Not Started | Ensure CLI commands respect the authenticated user's RBAC permissions. Verify that cluster-admin operations require explicit elevated credentials. |
 | Namespace-level isolation in Hub mode | Not Started | Confirm that the single active fleet-controller restricts operations to the fleet namespace and tenant-scoped sub-namespaces. Leader election is required before any multi-replica HA claim. Audit for namespace escape vectors. |
-| Gateway routing authorization | Not Started | Verify fleet-gateway enforces authorization on cross-cluster routing decisions. Confirm that RoutingPolicy CRDs cannot be modified by non-admin tenants. |
+| Gateway routing authorization | Not Started | Verify Praxis AI gateway enforces authorization on cross-cluster routing decisions. Confirm that RoutingPolicy CRDs cannot be modified by non-admin tenants. |
 | Admission webhook enforcement | Not Started | Validate that a validating admission webhook rejects CRD mutations from unauthorized service accounts. Test bypass scenarios (dry-run, server-side apply). |
 
 ## Data Protection

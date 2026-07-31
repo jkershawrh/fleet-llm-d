@@ -14,7 +14,7 @@ which mandates geographic routing to the nearest site.
 
 ## Architecture
 
-A hub-and-spoke topology: a central hub runs the fleet-controller, fleet-gateway,
+A hub-and-spoke topology: a central hub runs the fleet-controller, Praxis AI gateway,
 and ARE ledger. Regional hub clusters aggregate traffic and provide failover.
 Edge site clusters run fleet-agent instances and lightweight inference models.
 

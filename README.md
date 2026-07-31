@@ -5,7 +5,7 @@
 
 **Fleet-level inference orchestration for [llm-d](https://github.com/llm-d), extending single-cluster inference to multi-cluster fleet operations.**
 
-fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet operations. It provides a Go control plane, a Rust data plane, and a Next.js dashboard that together deliver model placement, cross-cluster routing, fleet autoscaling, observability, tenant governance, lifecycle management, and KV cache state transfer across heterogeneous GPU infrastructure.
+fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet operations. It provides a Go control plane, Rust per-cluster agents, and a Next.js dashboard that together deliver model placement, cross-cluster routing, fleet autoscaling, observability, tenant governance, lifecycle management, and KV cache state transfer across heterogeneous GPU infrastructure. Praxis AI serves as the programmable inference data plane for model routing and token counting.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
@@ -28,7 +28,7 @@ fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet o
 
 ## Why fleet-llm-d
 
-llm-d solves single-cluster inference scheduling, but enterprises operating across dozens of clusters -- edge sites, regulated regions, air-gapped sovereign zones -- hit a coordination gap that no upstream project addresses. Customers in telco, financial services, and sovereign cloud have asked for fleet-wide placement, routing, and compliance controls that respect data residency and hardware topology. fleet-llm-d delivers those capabilities through a declarative CRD-driven control plane, a high-performance Rust data plane, and integrations with the broader ecosystem including ModelPack and the ARE Immutable Ledger.
+llm-d solves single-cluster inference scheduling, but enterprises operating across dozens of clusters -- edge sites, regulated regions, air-gapped sovereign zones -- hit a coordination gap that no upstream project addresses. Customers in telco, financial services, and sovereign cloud have asked for fleet-wide placement, routing, and compliance controls that respect data residency and hardware topology. fleet-llm-d delivers those capabilities through a declarative CRD-driven control plane, Praxis AI as the inference data plane, and integrations with the broader ecosystem including ModelPack and the ARE Immutable Ledger.
 
 ## Architecture
 
@@ -58,8 +58,8 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
                    └─────────┘ └─────────┘ └─────────┘
 
   Binaries:  fleet-controller, fleetctl (Go)
-             fleet-agent, fleet-gateway (Rust)
-  Gateway:   Praxis AI (programmable inference routing)
+             fleet-agent, kv-transfer (Rust)
+  Data Plane: Praxis AI (programmable inference routing)
   Dashboard: Next.js (TypeScript)
 ```
 
@@ -93,7 +93,7 @@ fleet-llm-d defines ten CRDs that drive all fleet behavior declaratively:
 
 ### Praxis AI Gateway
 
-[Praxis AI](https://github.com/praxis-proxy/ai) is the programmable inference data plane for fleet-llm-d. It replaces the custom fleet-gateway with a production-grade AI gateway that provides:
+[Praxis AI](https://github.com/praxis-proxy/ai) is the programmable inference data plane for fleet-llm-d. It provides:
 
 - **Model-based routing**: Routes requests to the correct backend based on the model name in the request
 - **Token counting**: Tracks prompt and completion tokens per request for metering
@@ -246,9 +246,9 @@ Ready-to-apply CRD examples for specific deployment patterns:
 | **Federated** | Peer-to-peer mesh where multiple fleet-controllers coordinate as equals. | See [`deploy/kustomize/overlays/federated/`](deploy/kustomize/overlays/federated/) |
 
 The [Kustomize deployment guide](deploy/kustomize/README.md) and
-[Helm chart guide](charts/fleet-llm-d/README.md) document the controller,
-gateway, and agent port contracts, required cluster identity, disruption
-budgets, and production-safe external dependency configuration.
+[Helm chart guide](charts/fleet-llm-d/README.md) document the controller
+and agent port contracts, required cluster identity, disruption budgets,
+and production-safe external dependency configuration.
 
 ## Dashboard
 
@@ -407,7 +407,6 @@ fleet-llm-d/
 │   └── apis/                    # generated API types
 ├── crates/
 │   ├── fleet-agent/             # Rust per-cluster agent
-│   ├── fleet-gateway/           # Rust request gateway
 │   ├── fleet-common/            # Shared Rust types
 │   ├── fleet-ledger/            # Rust ledger integration
 │   └── kv-transfer/             # KV cache transfer engine

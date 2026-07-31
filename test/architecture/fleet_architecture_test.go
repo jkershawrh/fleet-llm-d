@@ -32,7 +32,6 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/modelpack"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
-	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/quota"
 )
@@ -45,7 +44,6 @@ import (
 // wired together the same way the fleet-controller does, but in-process.
 type ArchTestWorld struct {
 	Reconciler    *controller.Reconciler
-	Proxy         *routing.InferenceProxy
 	QuotaEnforcer quota.QuotaEnforcer
 	Rollout       rollout.RolloutController
 	Optimizer     optimizer.FleetOptimizer
@@ -93,7 +91,6 @@ func newTestWorld(t *testing.T) *ArchTestWorld {
 
 	s := solver.NewConstraintSolver()
 	rec := controller.NewReconciler(s, clusterLister())
-	proxy := routing.NewInferenceProxy()
 	qe := quota.NewQuotaEnforcer()
 	rc := rollout.NewRolloutController()
 	opt := optimizer.NewFleetOptimizer()
@@ -116,7 +113,6 @@ func newTestWorld(t *testing.T) *ArchTestWorld {
 
 	return &ArchTestWorld{
 		Reconciler:    rec,
-		Proxy:         proxy,
 		QuotaEnforcer: qe,
 		Rollout:       rc,
 		Optimizer:     opt,
@@ -353,183 +349,6 @@ func TestA05_Reconciler_DeletionCleansUp(t *testing.T) {
 		if p.Name == "delete-model" {
 			t.Fatal("deleted pool still appears in ListPools")
 		}
-	}
-}
-
-// ===========================================================================
-// ROUTING (A06-A11)
-// ===========================================================================
-
-func TestA06_Proxy_SelectsCorrectBackendByModel(t *testing.T) {
-	claim(t, "A06", "routing", "TDD", "Proxy routes to correct backend by model name")
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("model-a", routing.Backend{
-		Name: "backend-a", URL: "http://model-a:8000", Healthy: true, LatencyMs: 50,
-	})
-	proxy.RegisterBackend("model-b", routing.Backend{
-		Name: "backend-b", URL: "http://model-b:8000", Healthy: true, LatencyMs: 50,
-	})
-
-	backend, _, err := proxy.SelectBackend("model-a", http.Header{})
-	if err != nil {
-		t.Fatalf("SelectBackend: %v", err)
-	}
-	if backend.Name != "backend-a" {
-		t.Fatalf("expected backend-a, got %s", backend.Name)
-	}
-
-	backend, _, err = proxy.SelectBackend("model-b", http.Header{})
-	if err != nil {
-		t.Fatalf("SelectBackend model-b: %v", err)
-	}
-	if backend.Name != "backend-b" {
-		t.Fatalf("expected backend-b, got %s", backend.Name)
-	}
-}
-
-func TestA07_Proxy_RealtimeRoutesToLowestLatency(t *testing.T) {
-	claim(t, "A07", "routing", "TDD", "Realtime objective selects lowest-latency backend")
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("rt-model", routing.Backend{
-		Name: "slow-backend", URL: "http://slow:8000", Healthy: true, LatencyMs: 200,
-	})
-	proxy.RegisterBackend("rt-model", routing.Backend{
-		Name: "fast-backend", URL: "http://fast:8000", Healthy: true, LatencyMs: 20,
-	})
-
-	headers := http.Header{}
-	headers.Set("x-llm-d-inference-objective", "realtime")
-
-	backend, reason, err := proxy.SelectBackend("rt-model", headers)
-	if err != nil {
-		t.Fatalf("SelectBackend: %v", err)
-	}
-	if backend.Name != "fast-backend" {
-		t.Fatalf("expected fast-backend (20ms), got %s (%.0fms)", backend.Name, backend.LatencyMs)
-	}
-	if !strings.Contains(reason, "realtime") {
-		t.Fatalf("reason should contain 'realtime', got %q", reason)
-	}
-}
-
-func TestA08_Proxy_BatchRoutesToAnyHealthy(t *testing.T) {
-	claim(t, "A08", "routing", "TDD", "Batch objective selects any healthy backend")
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("batch-model", routing.Backend{
-		Name: "batch-1", URL: "http://b1:8000", Healthy: true, LatencyMs: 100,
-	})
-	proxy.RegisterBackend("batch-model", routing.Backend{
-		Name: "batch-2", URL: "http://b2:8000", Healthy: true, LatencyMs: 50,
-	})
-
-	headers := http.Header{}
-	headers.Set("x-llm-d-inference-objective", "batch")
-
-	backend, reason, err := proxy.SelectBackend("batch-model", headers)
-	if err != nil {
-		t.Fatalf("SelectBackend: %v", err)
-	}
-	if !backend.Healthy {
-		t.Fatal("selected backend is not healthy")
-	}
-	if !strings.Contains(reason, "batch") {
-		t.Fatalf("reason should contain 'batch', got %q", reason)
-	}
-}
-
-func TestA09_Proxy_SkipsUnhealthyBackend(t *testing.T) {
-	claim(t, "A09", "routing", "TDD", "Unhealthy backends are never selected")
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("health-model", routing.Backend{
-		Name: "sick", URL: "http://sick:8000", Healthy: false, LatencyMs: 10,
-	})
-	proxy.RegisterBackend("health-model", routing.Backend{
-		Name: "healthy", URL: "http://healthy:8000", Healthy: true, LatencyMs: 100,
-	})
-
-	// Try multiple selections to exercise round-robin. Unhealthy should never appear.
-	for i := 0; i < 10; i++ {
-		backend, _, err := proxy.SelectBackend("health-model", http.Header{})
-		if err != nil {
-			t.Fatalf("SelectBackend iteration %d: %v", i, err)
-		}
-		if backend.Name == "sick" {
-			t.Fatalf("unhealthy backend 'sick' was selected on iteration %d", i)
-		}
-	}
-}
-
-func TestA10_Proxy_FailoverOnBackendError(t *testing.T) {
-	claim(t, "A10", "routing", "TDD", "Proxy surfaces backend errors for failover")
-
-	// Create a mock backend that always returns 500.
-	badBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error":"internal server error"}`)
-	}))
-	defer badBackend.Close()
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("fail-model", routing.Backend{
-		Name: "bad-server", URL: badBackend.URL, Healthy: true, LatencyMs: 50,
-	})
-
-	// Send a request through ServeHTTP.
-	reqBody := `{"model":"fail-model","stream":false}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	proxy.ServeHTTP(rec, req)
-
-	// The proxy should relay the 500 from the backend.
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 from bad backend, got %d", rec.Code)
-	}
-}
-
-func TestA11_Proxy_InjectsFleetHeaders(t *testing.T) {
-	claim(t, "A11", "routing", "TDD", "Proxy injects X-Fleet-Routed-To and X-Fleet-Routing-Reason")
-
-	// Create a mock backend that returns 200.
-	goodBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"id":"chatcmpl-1","choices":[]}`)
-	}))
-	defer goodBackend.Close()
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("header-model", routing.Backend{
-		Name: "good-server", URL: goodBackend.URL, Healthy: true, LatencyMs: 30,
-	})
-
-	reqBody := `{"model":"header-model","stream":false}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	proxy.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	routedTo := rec.Header().Get("X-Fleet-Routed-To")
-	if routedTo == "" {
-		t.Fatal("X-Fleet-Routed-To header is missing")
-	}
-	if routedTo != "good-server" {
-		t.Fatalf("X-Fleet-Routed-To = %q, want 'good-server'", routedTo)
-	}
-
-	routingReason := rec.Header().Get("X-Fleet-Routing-Reason")
-	if routingReason == "" {
-		t.Fatal("X-Fleet-Routing-Reason header is missing")
 	}
 }
 

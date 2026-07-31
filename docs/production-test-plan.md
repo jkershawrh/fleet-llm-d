@@ -16,7 +16,7 @@ This document defines the test plan that gates fleet-llm-d from development thro
 | Component | Language | Binary | Role |
 |---|---|---|---|
 | fleet-controller | Go | `cmd/fleet-controller` | Control plane -- CRD reconciliation, API, placement, tenant management |
-| fleet-gateway | Rust | `crates/gateway` | Data plane -- cross-cluster traffic routing, inference proxy |
+| Praxis AI | External | Praxis AI gateway | Data plane -- inference routing, token counting, access logging |
 | fleet-agent | Rust | `crates/agent` | Per-cluster agent -- status reporting, local operations |
 | fleetctl | Go | `cmd/fleetctl` | CLI for operators |
 | dashboard | TypeScript | `web/` | Next.js operations dashboard |
