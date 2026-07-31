@@ -1,0 +1,13 @@
+target/
+node_modules/
+web/.next/
+web/out/
+.git/
+.claude/
+*.kubeconfig
+rollback/
+ovms-models*/
+ovms-tmp*/
+upstream-are-ledger/
+upstream-llm-d/
+upstream-model-spec/
