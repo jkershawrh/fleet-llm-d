@@ -297,8 +297,6 @@ func allEndpoints() []struct {
 		{"GET", "/api/v1/rollouts", true},
 		{"POST", "/api/v1/rollouts", true},
 		{"GET", "/api/v1/verify/chains", true},
-		{"POST", "/v1/chat/completions", true},
-		{"POST", "/v1/completions", true},
 		{"POST", "/api/v1/webhook/fleetinferencepool", true},
 		{"POST", "/api/v1/webhook/validate", true},
 		{"GET", "/api/v1/tenants/test-tenant/usage", true},
@@ -314,16 +312,6 @@ func clusterPayload(name string) string {
 // rolloutPayload returns a JSON body for creating a rollout.
 func rolloutPayload() string {
 	return `{"model":"test-model","target_version":"v2","strategy":"canary"}`
-}
-
-// chatPayload returns a JSON body for a chat completions request.
-func chatPayload() string {
-	return `{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`
-}
-
-// completionPayload returns a JSON body for a completions request.
-func completionPayload() string {
-	return `{"model":"test-model","prompt":"hello"}`
 }
 
 // webhookPayload returns a JSON body for a webhook call.
@@ -372,10 +360,6 @@ func bodyForEndpoint(path string) string {
 		return clusterPayload(uniqueID("harness"))
 	case strings.HasSuffix(path, "/rollouts"):
 		return rolloutPayload()
-	case strings.HasSuffix(path, "/chat/completions"):
-		return chatPayload()
-	case strings.HasSuffix(path, "/completions"):
-		return completionPayload()
 	case strings.HasSuffix(path, "/fleetinferencepool"):
 		return webhookPayload()
 	case strings.HasSuffix(path, "/validate"):

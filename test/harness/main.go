@@ -74,12 +74,6 @@ func main() {
 			result = RunLatency(cfg)
 		case "throughput":
 			result = RunThroughput(cfg)
-		case "inference":
-			result = RunInference(cfg)
-		case "multimodel":
-			result = RunMultiModel(cfg)
-		case "fairness":
-			result = RunFairness(cfg)
 		case "scale":
 			result = RunScale(cfg)
 		default:

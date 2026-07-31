@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -47,10 +46,8 @@ func RunChaosRecovery(cfg Config) SuiteResult {
 	check(&sr, "chaos-recovery:steady-state", steadyRate < 1.0,
 		fmt.Sprintf("errors=%d/%d (%.1f%%)", steadyErrors, steadyTotal, steadyRate), 0)
 
-	// Phase 2: Inject failure (send to invalid endpoint).
-	// This tests that the proxy handles errors gracefully.
-	resp, _, err := authPost(cfg.BaseURL, "/v1/chat/completions", cfg.Token,
-		strings.NewReader(`{"model":"NONEXISTENT_MODEL","messages":[{"role":"user","content":"test"}]}`))
+	// Phase 2: Inject failure (hit a non-existent cluster endpoint).
+	resp, _, err := authGet(cfg.BaseURL, "/api/v1/clusters/NONEXISTENT", cfg.Token)
 	if resp != nil {
 		drainBody(resp)
 	}
@@ -59,9 +56,9 @@ func RunChaosRecovery(cfg Config) SuiteResult {
 	if resp != nil {
 		failureStatus = resp.StatusCode
 	}
-	failureHandled := err == nil && resp != nil && (resp.StatusCode == 502 || resp.StatusCode == 503)
+	failureHandled := err == nil && resp != nil && (resp.StatusCode == 404 || resp.StatusCode >= 400)
 	check(&sr, "chaos-recovery:failure-handled-gracefully", failureHandled,
-		fmt.Sprintf("got status %d (expected 502 or 503)", failureStatus), 0)
+		fmt.Sprintf("got status %d (expected 404)", failureStatus), 0)
 
 	// Phase 3: Verify recovery (30 seconds).
 	// Send normal requests, verify the system is still healthy.

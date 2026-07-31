@@ -8,7 +8,7 @@ Usage:
     python3 test/soak/ecosystem_soak.py \
         --gcl-url http://gcl-app.governed-cognitive-loop.svc:8000 \
         --fleet-url http://fleet-controller.fleet-llm-d.svc:8080 \
-        --gateway-url http://fleet-gateway.fleet-llm-d.svc:8080 \
+        --praxis-url http://fleet-praxis.fleet-llm-d.svc:8080 \
         --inference-model granite-3.3-2b \
         --profile 72hr
 """
@@ -75,10 +75,10 @@ class SoakResult:
     inference_errors: int = 0
     inference_latencies: list[float] = field(default_factory=list)
     inference_tokens: int = 0
-    gateway_successes: int = 0
-    gateway_errors: int = 0
-    gateway_latencies: list[float] = field(default_factory=list)
-    gateway_cluster_hits: dict[str, int] = field(default_factory=dict)
+    praxis_successes: int = 0
+    praxis_errors: int = 0
+    praxis_latencies: list[float] = field(default_factory=list)
+    praxis_cluster_hits: dict[str, int] = field(default_factory=dict)
 
 
 INFERENCE_PROMPTS = [
@@ -96,12 +96,12 @@ INFERENCE_PROMPTS = [
 class EcosystemSoak:
     def __init__(self, gcl_url: str, fleet_url: str, ledger_url: str = "",
                  deepfield_token: str = "", timeout: float = 30.0,
-                 gateway_url: str = "", inference_model: str = "",
+                 praxis_url: str = "", inference_model: str = "",
                  inference_interval: int = 30, auth_token: str = ""):
         self.gcl = gcl_url.rstrip("/")
         self.fleet = fleet_url.rstrip("/")
         self.ledger = ledger_url.rstrip("/") if ledger_url else ""
-        self.gateway = gateway_url.rstrip("/") if gateway_url else ""
+        self.praxis = praxis_url.rstrip("/") if praxis_url else ""
         self.deepfield_token = deepfield_token
         self.inference_model = inference_model
         self.inference_interval = inference_interval
@@ -220,8 +220,8 @@ class EcosystemSoak:
             "max_tokens": 20,
         }
         inference_url = os.environ.get("FLEET_INFERENCE_URL", "")
-        if target == "gateway" and self.gateway:
-            base = self.gateway
+        if target == "praxis" and self.praxis:
+            base = self.praxis
         elif inference_url:
             base = inference_url.rstrip("/")
         else:
@@ -351,7 +351,7 @@ class EcosystemSoak:
         last_inject = start
         last_verify = start
         last_inference = start
-        last_gateway_inference = start
+        last_praxis_inference = start
         scenario_idx = 0
         step_idx = 0
         snapshot_count = 0
@@ -366,8 +366,8 @@ class EcosystemSoak:
         print(f"Degradation injections: every {inject_interval/60:.0f} min")
         print(f"GCL: {self.gcl}")
         print(f"Fleet: {self.fleet}")
-        if self.gateway:
-            print(f"Gateway: {self.gateway}")
+        if self.praxis:
+            print(f"Praxis: {self.praxis}")
         if self.inference_model:
             print(f"Inference model: {self.inference_model} (every {self.inference_interval}s)")
         print(f"{'='*70}\n")
@@ -472,20 +472,20 @@ class EcosystemSoak:
                     result.inference_errors += 1
                     print(f"  [INF] fleet proxy ERROR: {cluster}")
 
-            # Inference through gateway (cross-cluster)
-            if (self.gateway and self.inference_model and
-                    now - last_gateway_inference >= self.inference_interval * 2):
-                last_gateway_inference = now
-                ok, ms, tokens, cluster = await self.run_inference("gateway")
+            # Inference through praxis (cross-cluster)
+            if (self.praxis and self.inference_model and
+                    now - last_praxis_inference >= self.inference_interval * 2):
+                last_praxis_inference = now
+                ok, ms, tokens, cluster = await self.run_inference("praxis")
                 if ok and ms > 0:
-                    result.gateway_successes += 1
-                    result.gateway_latencies.append(ms)
-                    result.gateway_cluster_hits[cluster] = \
-                        result.gateway_cluster_hits.get(cluster, 0) + 1
-                    print(f"  [GW]  gateway -> {cluster}: {ms:.0f}ms, {tokens} tokens")
+                    result.praxis_successes += 1
+                    result.praxis_latencies.append(ms)
+                    result.praxis_cluster_hits[cluster] = \
+                        result.praxis_cluster_hits.get(cluster, 0) + 1
+                    print(f"  [GW]  praxis -> {cluster}: {ms:.0f}ms, {tokens} tokens")
                 elif ms > 0:
-                    result.gateway_errors += 1
-                    print(f"  [GW]  gateway ERROR: {cluster}")
+                    result.praxis_errors += 1
+                    print(f"  [GW]  praxis ERROR: {cluster}")
 
             # Chain verification every 5 minutes
             if now - last_verify >= 300:
@@ -577,17 +577,17 @@ class EcosystemSoak:
                 print(f"    Latency p50: {lats[len(lats)//2]:.0f}ms")
                 print(f"    Latency p99: {lats[int(len(lats)*0.99)]:.0f}ms")
 
-        if result.gateway_successes + result.gateway_errors > 0:
-            print(f"\n  Inference (gateway cross-cluster):")
-            print(f"    Successes: {result.gateway_successes}")
-            print(f"    Errors: {result.gateway_errors}")
-            if result.gateway_latencies:
-                lats = sorted(result.gateway_latencies)
+        if result.praxis_successes + result.praxis_errors > 0:
+            print(f"\n  Inference (praxis cross-cluster):")
+            print(f"    Successes: {result.praxis_successes}")
+            print(f"    Errors: {result.praxis_errors}")
+            if result.praxis_latencies:
+                lats = sorted(result.praxis_latencies)
                 print(f"    Latency p50: {lats[len(lats)//2]:.0f}ms")
                 print(f"    Latency p99: {lats[int(len(lats)*0.99)]:.0f}ms")
-            if result.gateway_cluster_hits:
+            if result.praxis_cluster_hits:
                 print(f"    Cluster distribution:")
-                for cluster, count in sorted(result.gateway_cluster_hits.items()):
+                for cluster, count in sorted(result.praxis_cluster_hits.items()):
                     print(f"      {cluster}: {count}")
 
         # Latency stability
@@ -666,12 +666,12 @@ class EcosystemSoak:
                           f"{inf_rate*100:.1f}% ({result.inference_successes}/{total_inf})"))
 
         # Gateway success rate > 90%
-        total_gw = result.gateway_successes + result.gateway_errors
+        total_gw = result.praxis_successes + result.praxis_errors
         if total_gw > 0:
-            gw_rate = result.gateway_successes / total_gw
+            gw_rate = result.praxis_successes / total_gw
             ok = gw_rate >= 0.90
             gates.append(("Gateway success rate > 90%", ok,
-                          f"{gw_rate*100:.1f}% ({result.gateway_successes}/{total_gw})"))
+                          f"{gw_rate*100:.1f}% ({result.praxis_successes}/{total_gw})"))
 
         passed = 0
         failed = 0
@@ -696,8 +696,8 @@ async def main():
     parser.add_argument("--gcl-url", default="https://gcl-app.192.168.1.123.sslip.io")
     parser.add_argument("--fleet-url", default="http://localhost:18080")
     parser.add_argument("--ledger-url", default="")
-    parser.add_argument("--gateway-url", default="",
-                        help="Fleet gateway URL for cross-cluster inference routing")
+    parser.add_argument("--praxis-url", default="",
+                        help="Fleet praxis URL for cross-cluster inference routing")
     parser.add_argument("--inference-model", default="",
                         help="Model name for real inference requests (e.g. granite-3.3-2b)")
     parser.add_argument("--inference-interval", type=int, default=30,
@@ -714,7 +714,7 @@ async def main():
 
     soak = EcosystemSoak(args.gcl_url, args.fleet_url, args.ledger_url,
                          args.deepfield_token, args.timeout,
-                         args.gateway_url, args.inference_model,
+                         args.praxis_url, args.inference_model,
                          args.inference_interval, args.auth_token)
     await soak.run(args.profile)
 
