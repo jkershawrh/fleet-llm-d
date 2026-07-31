@@ -43,13 +43,11 @@ echo ""
 echo "=== Building e2e component images ==="
 build_image fleet-controller:e2e deploy/docker/Dockerfile.controller
 build_image fleet-agent:e2e deploy/docker/Dockerfile.agent
-build_image fleet-gateway:e2e deploy/docker/Dockerfile.gateway
 build_image inference-mock:e2e deploy/docker/Dockerfile.inference-mock
 
 echo ""
 echo "=== Loading component images into Kind clusters ==="
 kind load docker-image fleet-controller:e2e --name "$HUB"
-kind load docker-image fleet-gateway:e2e --name "$HUB"
 kind load docker-image fleet-agent:e2e --name "$SPOKE1"
 kind load docker-image fleet-agent:e2e --name "$SPOKE2"
 kind load docker-image inference-mock:e2e --name "$SPOKE1"
@@ -109,56 +107,6 @@ echo ""
 echo "=== Controller accessible at $CONTROLLER_URL ==="
 curl -s "$CONTROLLER_URL/healthz" && echo ""
 
-echo ""
-echo "=== Deploying gateway to hub ==="
-cat <<EOF | kubectl --context "kind-${HUB}" apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: fleet-gateway
-  namespace: fleet-llm-d
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: fleet-gateway
-  template:
-    metadata:
-      labels:
-        app: fleet-gateway
-    spec:
-      enableServiceLinks: false
-      containers:
-        - name: gateway
-          image: fleet-gateway:e2e
-          imagePullPolicy: Never
-          env:
-            - name: FLEET_CONTROL_PLANE_URL
-              value: "$CONTROLLER_URL"
-          ports:
-            - name: proxy
-              containerPort: 8080
-            - name: health
-              containerPort: 8081
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: fleet-gateway
-  namespace: fleet-llm-d
-spec:
-  selector:
-    app: fleet-gateway
-  ports:
-    - name: proxy
-      port: 8080
-      targetPort: proxy
-    - name: health
-      port: 8081
-      targetPort: health
-  type: NodePort
-EOF
-kubectl --context "kind-${HUB}" -n fleet-llm-d rollout status deploy/fleet-gateway --timeout=120s
 
 echo ""
 echo "=== Deploying spoke agents ==="

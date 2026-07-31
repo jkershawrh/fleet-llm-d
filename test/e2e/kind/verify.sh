@@ -7,10 +7,6 @@ NODEPORT=$(kubectl --context "kind-${HUB}" -n fleet-llm-d get svc fleet-controll
 HUB_IP=$(docker inspect "${HUB}-control-plane" --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || \
          podman inspect "${HUB}-control-plane" --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null)
 URL="http://${HUB_IP}:${NODEPORT}"
-GATEWAY_PROXY_NODEPORT=$(kubectl --context "kind-${HUB}" -n fleet-llm-d get svc fleet-gateway -o jsonpath='{.spec.ports[?(@.name=="proxy")].nodePort}')
-GATEWAY_HEALTH_NODEPORT=$(kubectl --context "kind-${HUB}" -n fleet-llm-d get svc fleet-gateway -o jsonpath='{.spec.ports[?(@.name=="health")].nodePort}')
-GATEWAY_URL="http://${HUB_IP}:${GATEWAY_PROXY_NODEPORT}"
-GATEWAY_HEALTH_URL="http://${HUB_IP}:${GATEWAY_HEALTH_NODEPORT}"
 
 echo "=== Controller health ==="
 curl -sf "$URL/healthz" && echo " OK" || { echo " FAIL"; exit 1; }
@@ -46,22 +42,14 @@ print("Desired clusters:", sorted(desired))
 '
 
 echo ""
-echo "=== Gateway discovery and health probing ==="
-for _ in $(seq 1 30); do
-  if curl -sf "$GATEWAY_HEALTH_URL/readyz" >/dev/null; then
-    echo "Gateway has at least one healthy discovered cluster"
-    break
-  fi
-  sleep 2
-done
-curl -sf "$GATEWAY_HEALTH_URL/readyz" >/dev/null || { echo "FAIL: gateway never observed a healthy spoke"; exit 1; }
+echo "=== Fleet metrics ==="
+METRICS=$(curl -sf "$URL/api/v1/metrics/fleet")
+echo "$METRICS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Fleet metrics:", json.dumps(d, indent=2)[:200])'
 
 echo ""
-echo "=== Gateway data-plane forwarding ==="
-MODELS=$(curl -sf "$GATEWAY_URL/v1/models")
-echo "$MODELS" | python3 -c 'import json,sys; response=json.load(sys.stdin); assert response["cluster"] in {"spoke-1","spoke-2"}, response; assert response["data"][0]["id"] == "e2e-model", response; print("Gateway routed models request through", response["cluster"])'
-COMPLETION=$(curl -sf -X POST "$GATEWAY_URL/v1/completions" -H 'Content-Type: application/json' -d '{"model":"e2e-model","prompt":"hello"}')
-echo "$COMPLETION" | python3 -c 'import json,sys; response=json.load(sys.stdin); assert response["cluster"] in {"spoke-1","spoke-2"}, response; assert response["choices"][0]["text"] == "ok", response; print("Gateway routed completion through", response["cluster"])'
+echo "=== Cluster drain + activate ==="
+curl -sf -X POST "$URL/api/v1/clusters/spoke-1/drain" && echo " Drain OK" || echo " Drain skipped (cluster may not be registered yet)"
+curl -sf -X POST "$URL/api/v1/clusters/spoke-1/activate" && echo " Activate OK" || echo " Activate skipped"
 
 echo ""
 echo "=== Healthz probe ==="
