@@ -170,6 +170,31 @@ func TestAuthorizationReferenceSchemasAreCompleteAndBound(t *testing.T) {
 	}
 }
 
+func TestRoutingPolicySessionAffinityAndClusterDrainFields(t *testing.T) {
+	crdDir := filepath.Join("..", "..", "..", "..", "api", "crds")
+
+	t.Run("fleetroutingpolicy.yaml has sessionAffinity", func(t *testing.T) {
+		body := readCRD(t, crdDir, "fleetroutingpolicy.yaml")
+		if !strings.Contains(body, "sessionAffinity") {
+			t.Fatal("fleetroutingpolicy.yaml missing sessionAffinity field")
+		}
+	})
+
+	t.Run("fleetcluster.yaml has drainPolicy", func(t *testing.T) {
+		body := readCRD(t, crdDir, "fleetcluster.yaml")
+		if !strings.Contains(body, "drainPolicy") {
+			t.Fatal("fleetcluster.yaml missing drainPolicy field")
+		}
+	})
+
+	t.Run("fleetcluster.yaml has drainStatus", func(t *testing.T) {
+		body := readCRD(t, crdDir, "fleetcluster.yaml")
+		if !strings.Contains(body, "drainStatus") {
+			t.Fatal("fleetcluster.yaml missing drainStatus field")
+		}
+	})
+}
+
 func assertBetaStorageAndStatus(t *testing.T, beta string) {
 	t.Helper()
 	if !strings.Contains(beta, "served: true\n      storage: true") {

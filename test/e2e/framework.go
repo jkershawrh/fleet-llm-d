@@ -1,8 +1,12 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -223,4 +227,179 @@ func (f *TestFleet) findCluster(name string) (*TestCluster, error) {
 		}
 	}
 	return nil, fmt.Errorf("cluster %q not found in fleet", name)
+}
+
+// ControllerURL returns the base URL of the fleet-controller running on the hub.
+func (f *TestFleet) ControllerURL() string {
+	return "http://localhost:8080"
+}
+
+func (f *TestFleet) apiGet(path string) (int, map[string]interface{}, error) {
+	resp, err := http.Get(f.ControllerURL() + path)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var result map[string]interface{}
+	_ = json.Unmarshal(body, &result)
+	return resp.StatusCode, result, nil
+}
+
+func (f *TestFleet) apiPost(path string, payload interface{}) (int, map[string]interface{}, http.Header, error) {
+	data, _ := json.Marshal(payload)
+	resp, err := http.Post(f.ControllerURL()+path, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var result map[string]interface{}
+	_ = json.Unmarshal(body, &result)
+	return resp.StatusCode, result, resp.Header, nil
+}
+
+// RegisterCluster registers a cluster with the controller.
+func (f *TestFleet) RegisterCluster(id, name, region string) error {
+	status, _, _, err := f.apiPost("/api/v1/clusters", map[string]interface{}{
+		"name": name, "region": region,
+	})
+	if err != nil {
+		return err
+	}
+	if status != 201 && status != 409 {
+		return fmt.Errorf("register cluster returned %d", status)
+	}
+	return nil
+}
+
+// ListClusters returns all registered clusters.
+func (f *TestFleet) ListClusters() ([]interface{}, error) {
+	resp, err := http.Get(f.ControllerURL() + "/api/v1/clusters")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var clusters []interface{}
+	_ = json.Unmarshal(body, &clusters)
+	return clusters, nil
+}
+
+// CreateTenant creates a tenant with quotas.
+func (f *TestFleet) CreateTenant(name string, maxTokensPerHour int) error {
+	status, _, _, err := f.apiPost("/api/v1/tenants", map[string]interface{}{
+		"name": name,
+		"quotas": map[string]interface{}{
+			"max_tokens_per_hour": maxTokensPerHour,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if status != 201 && status != 409 {
+		return fmt.Errorf("create tenant returned %d", status)
+	}
+	return nil
+}
+
+// CreateRollout creates a canary rollout.
+func (f *TestFleet) CreateRollout(model, version string) (string, error) {
+	status, result, _, err := f.apiPost("/api/v1/rollouts", map[string]interface{}{
+		"model":   model,
+		"version": version,
+		"strategy": map[string]interface{}{
+			"type":          "Canary",
+			"initialWeight": 10,
+			"stepWeight":    20,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if status != 201 && status != 200 {
+		return "", fmt.Errorf("create rollout returned %d", status)
+	}
+	id, _ := result["id"].(string)
+	return id, nil
+}
+
+// PromoteRollout promotes a canary rollout.
+func (f *TestFleet) PromoteRollout(id string) error {
+	status, _, _, err := f.apiPost(fmt.Sprintf("/api/v1/rollouts/%s/promote", id), nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("promote rollout returned %d", status)
+	}
+	return nil
+}
+
+// DrainCluster initiates a graceful drain.
+func (f *TestFleet) DrainCluster(id string) error {
+	status, _, _, err := f.apiPost(fmt.Sprintf("/api/v1/clusters/%s/drain", id), nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("drain cluster returned %d", status)
+	}
+	return nil
+}
+
+// SendInference sends a chat completion request and returns response headers.
+func (f *TestFleet) SendInference(model, prompt string) (int, http.Header, error) {
+	data, _ := json.Marshal(map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+	})
+	resp, err := http.Post(f.ControllerURL()+"/v1/chat/completions", "application/json", bytes.NewReader(data))
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header, nil
+}
+
+// GetFleetMetrics returns federated fleet metrics.
+func (f *TestFleet) GetFleetMetrics() (map[string]interface{}, error) {
+	_, result, err := f.apiGet("/api/v1/metrics/fleet")
+	return result, err
+}
+
+// GetPrometheusMetrics scrapes the controller Prometheus endpoint.
+func (f *TestFleet) GetPrometheusMetrics() (string, error) {
+	resp, err := http.Get("http://localhost:9091/metrics")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return string(body), nil
+}
+
+// CheckHealth checks the controller health endpoint.
+func (f *TestFleet) CheckHealth() error {
+	status, _, err := f.apiGet("/healthz")
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("healthz returned %d", status)
+	}
+	return nil
+}
+
+// VerifyLedgerChains checks ledger chain integrity.
+func (f *TestFleet) VerifyLedgerChains() (bool, error) {
+	_, result, err := f.apiGet("/api/v1/verify/chains")
+	if err != nil {
+		return false, err
+	}
+	valid, _ := result["all_valid"].(bool)
+	return valid, nil
 }

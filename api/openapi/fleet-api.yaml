@@ -144,6 +144,62 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/clusters/{id}/drain:
+    post:
+      operationId: drainCluster
+      summary: Initiate graceful drain on a cluster
+      tags: [clusters]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: Drain initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [draining]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Cluster is already draining or drained
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/clusters/{id}/activate:
+    post:
+      operationId: activateCluster
+      summary: Reactivate a drained or draining cluster
+      tags: [clusters]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: Cluster reactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [running]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # ---------- pools ----------
   /api/v1/pools:
     get:
@@ -187,6 +243,18 @@ paths:
       operationId: listTenants
       summary: List all tenants
       tags: [tenants]
+      responses:
+        "200":
+          description: Array of tenant objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
     post:
       operationId: createTenant
       summary: Create a new tenant with quotas
@@ -212,21 +280,26 @@ paths:
                 cost_control:
                   type: object
       responses:
+        "200":
+          description: Tenant already exists (idempotent return)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantInfo"
         "201":
           description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantInfo"
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
           description: Tenant already exists
-      responses:
-        "200":
-          description: Array of tenant objects
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/TenantInfo"
+                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1000,6 +1073,16 @@ paths:
         set to "auto".
       tags: [inference]
       security: []
+      parameters:
+        - name: X-Session-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          description: >-
+            Session identifier for multi-turn conversation routing. When
+            provided with session affinity enabled, routes to the cluster
+            that served previous requests in this session.
       requestBody:
         required: true
         content:
@@ -1043,6 +1126,16 @@ paths:
         based on the requested model.
       tags: [inference]
       security: []
+      parameters:
+        - name: X-Session-ID
+          in: header
+          required: false
+          schema:
+            type: string
+          description: >-
+            Session identifier for multi-turn conversation routing. When
+            provided with session affinity enabled, routes to the cluster
+            that served previous requests in this session.
       requestBody:
         required: true
         content:
@@ -1363,6 +1456,18 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        pool_saturation:
+          type: number
+          description: EPP pool saturation (0-1+)
+        ready_endpoints:
+          type: integer
+          description: Ready inference endpoint count
+        kv_cache_utilization:
+          type: number
+          description: Average KV cache utilization (0-1)
+        inflight_requests:
+          type: integer
+          description: In-flight inference request count
 
     AgentEventReport:
       type: object

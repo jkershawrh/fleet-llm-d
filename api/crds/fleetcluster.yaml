@@ -66,6 +66,14 @@ spec:
                     required: [type, url]
                     x-kubernetes-preserve-unknown-fields: true
                 heartbeatTtl: {type: string}
+                drainPolicy:
+                  type: object
+                  description: Configuration for graceful cluster drain behavior.
+                  properties:
+                    timeoutSeconds:
+                      type: integer
+                      description: Maximum time in seconds to wait for in-flight requests to complete before force-draining.
+                      default: 300
                 authorizationRef:
                   type: object
                   required: [grantId, subject, actionClass, objectUid, specDigest, audience, expiresAt, idempotencyKey]
@@ -134,3 +142,14 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                 lastHeartbeat: {type: string, format: date-time}
+                drainStatus:
+                  type: object
+                  description: Current drain state of the cluster.
+                  properties:
+                    phase:
+                      type: string
+                      enum: [None, Draining, Drained]
+                      default: None
+                    startedAt:
+                      type: string
+                      format: date-time

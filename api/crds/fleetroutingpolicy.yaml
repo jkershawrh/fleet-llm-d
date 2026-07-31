@@ -119,6 +119,11 @@ spec:
                             description: >-
                               When true, prefer routing to clusters that have
                               relevant KV cache entries for the request prefix.
+                          sessionAffinity:
+                            type: boolean
+                            description: >-
+                              Route requests with the same X-Session-ID to the
+                              same cluster for KV cache reuse.
                           maxLatencyMs:
                             type: integer
                             format: int32
