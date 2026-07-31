@@ -1,13 +1,11 @@
 package modelplane
 
 import (
-	"strings"
 	"time"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
-	"github.com/llm-d/fleet-llm-d/pkg/routing"
 )
 
 // InferenceClusterToClusterInfo converts a ModelPlane InferenceCluster to a solver.ClusterInfo.
@@ -41,24 +39,6 @@ func InferenceClusterToClusterInfo(ic InferenceCluster) solver.ClusterInfo {
 			Types:     gpuTypes,
 		},
 		Utilization: utilization,
-	}
-}
-
-// ModelEndpointToBackend converts a ModelPlane ModelEndpoint to a routing.Backend.
-func ModelEndpointToBackend(me ModelEndpoint) routing.Backend {
-	// Infer runtime from model name: if model contains "sglang" -> sglang, "ovms" -> ovms, default "vllm"
-	runtime := "vllm"
-	lower := strings.ToLower(me.Model)
-	if strings.Contains(lower, "sglang") {
-		runtime = "sglang"
-	} else if strings.Contains(lower, "ovms") {
-		runtime = "ovms"
-	}
-	return routing.Backend{
-		Name:    me.Name,
-		URL:     me.URL,
-		Runtime: runtime,
-		Healthy: me.Ready,
 	}
 }
 

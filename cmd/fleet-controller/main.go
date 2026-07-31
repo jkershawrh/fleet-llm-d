@@ -21,14 +21,14 @@ func main() {
 	port := flag.Int("port", 8080, "API server port")
 	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
 	grpcPort := flag.Int("grpc-port", 0, "gRPC (JSON-RPC) server port; 0 disables")
-	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only), inference (inference proxy only)")
+	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only)")
 	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http (gRPC is canonical upstream but not yet generated in this binary)")
 	ledgerEndpoint := flag.String("ledger-endpoint", "http://localhost:18099", "standalone immutable-ledger REST gateway endpoint (HTTP compatibility mode only)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file")
-	backendVLLM := flag.String("backend-vllm", "http://vllm-cpu.fleet-llm-d.svc:8000", "Base URL for the vLLM inference backend")
-	backendOVMS := flag.String("backend-ovms", "http://ovms-granite-external.fleet-llm-d.svc:8080", "Base URL for the OVMS inference backend")
+	_ = flag.String("backend-vllm", "", "Deprecated: inference routing moved to Praxis")
+	_ = flag.String("backend-ovms", "", "Deprecated: inference routing moved to Praxis")
 	kubeAPI := flag.String("kube-api", "", "Kubernetes API server URL (enables CRD watching and authoritative intent persistence when set)")
 	namespace := flag.String("namespace", "default", "Kubernetes namespace to watch for FleetInferencePool CRDs")
 	pgURL := flag.String("pg-url", "", "PostgreSQL connection string (e.g. postgres://user:pass@host:5432/fleet?sslmode=disable). When set, uses PostgreSQL instead of in-memory stores")
@@ -38,8 +38,8 @@ func main() {
 	rateLimit := flag.Float64("rate-limit", 100, "Rate limit in requests per second per IP (0 to disable)")
 	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
-	backends := flag.String("backends", "", `JSON array of inference backends: [{"model":"name","url":"http://...","runtime":"openvino|vllm","path_prefix":"/v3"}]`)
-	maxInflight := flag.Int("max-inflight", 0, "Max concurrent inference requests per model (0 = disabled)")
+	_ = flag.String("backends", "", "Deprecated: inference routing moved to Praxis")
+	_ = flag.Int("max-inflight", 0, "Deprecated: load shedding moved to Praxis")
 	allowOperatorJSONIntents := flag.Bool("allow-operator-json-intents", false, "Enable unsigned application/json v2 intent input for development/operator compatibility only")
 	flag.Parse()
 
@@ -72,7 +72,7 @@ func main() {
 		Mode:     ledger.Mode(*ledgerMode),
 		Endpoint: *ledgerEndpoint,
 		APIToken: os.Getenv("LEDGER_GATEWAY_API_TOKEN"),
-	}, *backendVLLM, *backendOVMS, *kubeAPI, *namespace)
+	}, "", "", *kubeAPI, *namespace)
 	if err != nil {
 		slog.Error("invalid immutable-ledger configuration", "error", err)
 		os.Exit(1)
@@ -105,14 +105,6 @@ func main() {
 	}
 
 	fc.AuthSecret = authCfg.Secret
-	fc.InferenceProxy.SetMaxInflight(*maxInflight)
-
-	if *backends != "" {
-		if err := fc.RegisterBackendsFromJSON(*backends); err != nil {
-			slog.Error("failed to register backends", "error", err)
-			os.Exit(1)
-		}
-	}
 
 	if *pgURL != "" {
 		db, err := sql.Open("postgres", *pgURL)

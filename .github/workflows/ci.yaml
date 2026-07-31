@@ -285,16 +285,6 @@ jobs:
           cache-from: type=gha,scope=agent
           cache-to: type=gha,mode=max,scope=agent
 
-      - name: Build fleet-gateway image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.gateway
-          push: false
-          tags: fleet-gateway:ci
-          cache-from: type=gha,scope=gateway
-          cache-to: type=gha,mode=max,scope=gateway
-
       - name: Build inference-mock image
         uses: docker/build-push-action@v6
         with:

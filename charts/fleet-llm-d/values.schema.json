@@ -5,7 +5,6 @@
     "profile",
     "clusterIdentity",
     "controller",
-    "gateway",
     "agent",
     "podDisruptionBudget",
     "externalDependencies"
@@ -51,37 +50,6 @@
         "resources": {"type": "object"}
       }
     },
-    "gateway": {
-      "type": "object",
-      "required": ["enabled", "replicaCount", "image", "ports", "service", "serviceAccount", "autoscaling", "resources"],
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "replicaCount": {"type": "integer", "minimum": 1},
-        "image": {"$ref": "#/definitions/image"},
-        "ports": {
-          "type": "object",
-          "required": ["proxy", "health", "metrics"],
-          "properties": {
-            "proxy": {"$ref": "#/definitions/port"},
-            "health": {"$ref": "#/definitions/port"},
-            "metrics": {"$ref": "#/definitions/port"}
-          }
-        },
-        "service": {"$ref": "#/definitions/service"},
-        "serviceAccount": {"$ref": "#/definitions/serviceAccount"},
-        "autoscaling": {
-          "type": "object",
-          "required": ["enabled", "minReplicas", "maxReplicas"],
-          "properties": {
-            "enabled": {"type": "boolean"},
-            "minReplicas": {"type": "integer", "minimum": 1},
-            "maxReplicas": {"type": "integer", "minimum": 1}
-          }
-        },
-        "loadBalancingStrategy": {"type": "string", "enum": ["weighted", "latency", "cost"]},
-        "resources": {"type": "object"}
-      }
-    },
     "agent": {
       "type": "object",
       "required": ["enabled", "replicaCount", "image", "ports", "service", "serviceAccount", "controlPlaneConfigMap", "resources"],
@@ -111,10 +79,9 @@
     },
     "podDisruptionBudget": {
       "type": "object",
-      "required": ["controller", "gateway", "agent"],
+      "required": ["controller", "agent"],
       "properties": {
         "controller": {"$ref": "#/definitions/pdb"},
-        "gateway": {"$ref": "#/definitions/pdb"},
         "agent": {"$ref": "#/definitions/pdb"}
       }
     },
@@ -172,7 +139,6 @@
       "then": {
         "properties": {
           "controller": {"properties": {"enabled": {"const": true}}},
-          "gateway": {"properties": {"enabled": {"const": true}}},
           "agent": {"properties": {"enabled": {"const": true}}}
         }
       }
@@ -182,7 +148,6 @@
       "then": {
         "properties": {
           "controller": {"properties": {"enabled": {"const": true}}},
-          "gateway": {"properties": {"enabled": {"const": true}}},
           "agent": {"properties": {"enabled": {"const": false}}}
         }
       }
@@ -192,7 +157,6 @@
       "then": {
         "properties": {
           "controller": {"properties": {"enabled": {"const": false}}},
-          "gateway": {"properties": {"enabled": {"const": false}}},
           "agent": {"properties": {"enabled": {"const": true}}}
         }
       }

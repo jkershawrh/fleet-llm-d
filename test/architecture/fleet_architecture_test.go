@@ -1367,98 +1367,6 @@ func TestA36_Events_HTTPPublisherDeliversExternally(t *testing.T) {
 // MULTI-CLUSTER (A37-A39)
 // ===========================================================================
 
-func TestA37_MultiCluster_RoutingSelectsCorrectCluster(t *testing.T) {
-	claim(t, "A37", "multi-cluster", "TDD", "Cross-cluster routing selects correct cluster by objective")
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("multi-model", routing.Backend{
-		Name: "us-east-backend", URL: "http://us-east:8000", Healthy: true, LatencyMs: 10,
-	})
-	proxy.RegisterBackend("multi-model", routing.Backend{
-		Name: "eu-west-backend", URL: "http://eu-west:8000", Healthy: true, LatencyMs: 50,
-	})
-
-	// Realtime request should select the lowest-latency cluster (us-east, 10ms).
-	headers := http.Header{}
-	headers.Set("x-llm-d-inference-objective", "realtime")
-
-	backend, reason, err := proxy.SelectBackend("multi-model", headers)
-	if err != nil {
-		t.Fatalf("SelectBackend realtime: %v", err)
-	}
-	if backend.Name != "us-east-backend" {
-		t.Fatalf("realtime: expected us-east-backend (10ms), got %s (%.0fms)", backend.Name, backend.LatencyMs)
-	}
-	if !strings.Contains(reason, "realtime") {
-		t.Fatalf("reason should mention realtime, got %q", reason)
-	}
-
-	// Default (round-robin) requests should distribute across both clusters.
-	seen := map[string]bool{}
-	for i := 0; i < 4; i++ {
-		backend, _, err = proxy.SelectBackend("multi-model", http.Header{})
-		if err != nil {
-			t.Fatalf("SelectBackend round-robin iteration %d: %v", i, err)
-		}
-		seen[backend.Name] = true
-	}
-	if len(seen) < 2 {
-		t.Fatalf("round-robin should select both clusters, only saw: %v", seen)
-	}
-}
-
-func TestA38_MultiCluster_FailoverOnBackendHealthChange(t *testing.T) {
-	claim(t, "A38", "multi-cluster", "TDD", "Failover redirects traffic when backend health changes")
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("failover-model", routing.Backend{
-		Name: "primary", URL: "http://primary:8000", Healthy: true, LatencyMs: 10,
-	})
-	proxy.RegisterBackend("failover-model", routing.Backend{
-		Name: "secondary", URL: "http://secondary:8000", Healthy: true, LatencyMs: 50,
-	})
-
-	// Realtime selects the lowest-latency backend (primary).
-	headers := http.Header{}
-	headers.Set("x-llm-d-inference-objective", "realtime")
-
-	backend, _, err := proxy.SelectBackend("failover-model", headers)
-	if err != nil {
-		t.Fatalf("SelectBackend initial: %v", err)
-	}
-	if backend.Name != "primary" {
-		t.Fatalf("expected primary (10ms), got %s", backend.Name)
-	}
-
-	// Mark primary unhealthy.
-	proxy.UpdateBackendHealth("failover-model", "primary", false)
-
-	// Next request must failover to secondary.
-	backend, _, err = proxy.SelectBackend("failover-model", headers)
-	if err != nil {
-		t.Fatalf("SelectBackend after failover: %v", err)
-	}
-	if backend.Name != "secondary" {
-		t.Fatalf("expected secondary after primary failure, got %s", backend.Name)
-	}
-
-	// Restore primary health.
-	proxy.UpdateBackendHealth("failover-model", "primary", true)
-
-	// Send multiple default requests and verify traffic redistributes to both.
-	seen := map[string]int{}
-	for i := 0; i < 10; i++ {
-		backend, _, err = proxy.SelectBackend("failover-model", http.Header{})
-		if err != nil {
-			t.Fatalf("SelectBackend redistribute %d: %v", i, err)
-		}
-		seen[backend.Name]++
-	}
-	if len(seen) < 2 {
-		t.Fatalf("traffic should redistribute to both backends after restore, only saw: %v", seen)
-	}
-}
-
 func TestA39_MultiCluster_ReconcilerPlacesAcrossClusters(t *testing.T) {
 	claim(t, "A39", "multi-cluster", "TDD", "Reconciler places model across multiple clusters")
 
@@ -1764,38 +1672,6 @@ func TestA46_ModelPlane_ClusterMapsToFleetCluster(t *testing.T) {
 	}
 }
 
-func TestA47_ModelPlane_EndpointMapsToBackend(t *testing.T) {
-	claim(t, "A47", "modelplane", "TDD", "ModelEndpoint maps to Backend with correct URL and Healthy")
-
-	me := modelplane.ModelEndpoint{
-		Name:      "granite-ep",
-		Namespace: "fleet",
-		URL:       "http://granite-vllm.fleet.svc:8000",
-		Model:     "granite-3b",
-		Cluster:   "prod-east",
-		Ready:     true,
-	}
-
-	b := modelplane.ModelEndpointToBackend(me)
-
-	if b.Name != "granite-ep" {
-		t.Fatalf("Name = %q, want 'granite-ep'", b.Name)
-	}
-	if b.URL != "http://granite-vllm.fleet.svc:8000" {
-		t.Fatalf("URL = %q, want 'http://granite-vllm.fleet.svc:8000'", b.URL)
-	}
-	if !b.Healthy {
-		t.Fatal("Healthy should be true when Ready is true")
-	}
-
-	// Verify not-ready endpoint
-	me.Ready = false
-	b2 := modelplane.ModelEndpointToBackend(me)
-	if b2.Healthy {
-		t.Fatal("Healthy should be false when Ready is false")
-	}
-}
-
 func TestA48_ModelPlane_PolicyInjectsAnnotations(t *testing.T) {
 	claim(t, "A48", "modelplane", "TDD", "PolicyInjector sends PATCH with correct annotations")
 
@@ -1949,85 +1825,6 @@ func TestA50_ModelPlane_EventsRecordedToLedger(t *testing.T) {
 // SECURITY CONTRACTS (A51-A54)
 // ===========================================================================
 
-func TestA51_Security_ProxyStripsAuthHeaders(t *testing.T) {
-	claim(t, "A51", "security", "CDD", "Proxy strips Authorization/Cookie/Proxy-Authorization before forwarding")
-
-	// Architecture claim: the inference proxy MUST strip Authorization,
-	// Cookie, and Proxy-Authorization headers before forwarding to backends.
-	var receivedHeaders http.Header
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	defer backend.Close()
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("arch-test-model", routing.Backend{
-		Name: "arch-backend", URL: backend.URL, Runtime: "vllm", Healthy: true,
-	})
-
-	body := `{"model":"arch-test-model","messages":[{"role":"user","content":"test"}]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer secret-token")
-	req.Header.Set("Cookie", "session=abc")
-	req.Header.Set("Proxy-Authorization", "Basic creds")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	proxy.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("proxy returned %d, expected 200", w.Code)
-	}
-	if receivedHeaders.Get("Authorization") != "" {
-		t.Error("ARCHITECTURE VIOLATION: Authorization header forwarded to backend")
-	}
-	if receivedHeaders.Get("Cookie") != "" {
-		t.Error("ARCHITECTURE VIOLATION: Cookie header forwarded to backend")
-	}
-	if receivedHeaders.Get("Proxy-Authorization") != "" {
-		t.Error("ARCHITECTURE VIOLATION: Proxy-Authorization header forwarded to backend")
-	}
-}
-
-func TestA52_Security_ProxyReturnsValidJSONErrors(t *testing.T) {
-	claim(t, "A52", "security", "CDD", "All proxy error responses are valid JSON with application/json")
-
-	// Architecture claim: all proxy error responses MUST be valid JSON
-	// with Content-Type application/json.
-	proxy := routing.NewInferenceProxy()
-
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"missing model", `{"messages":[{"role":"user","content":"test"}]}`},
-		{"invalid JSON", `{not valid json`},
-		{"unknown model", `{"model":"nonexistent","messages":[]}`},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			proxy.ServeHTTP(w, req)
-
-			ct := w.Header().Get("Content-Type")
-			if ct != "application/json" {
-				t.Errorf("ARCHITECTURE VIOLATION: error response Content-Type is %q, expected application/json", ct)
-			}
-
-			var parsed map[string]string
-			if err := json.Unmarshal(w.Body.Bytes(), &parsed); err != nil {
-				t.Errorf("ARCHITECTURE VIOLATION: error response is not valid JSON: %v\nbody: %s", err, w.Body.String())
-			}
-		})
-	}
-}
-
 func TestA53_Security_RateLimiterEvictsStaleEntries(t *testing.T) {
 	claim(t, "A53", "security", "CDD", "Rate limiter evicts stale buckets to prevent memory leaks")
 
@@ -2094,16 +1891,6 @@ func TestA55_IntentConsumerAcceptsPreWarm(t *testing.T) {
 // PHASE 1-6 ROADMAP PROOFS (A56-A62)
 // ===========================================================================
 
-func TestA56_Observability_AgentMetricsReExportedAsPrometheus(t *testing.T) {
-	claim(t, "A56", "observability", "CDD", "Agent-reported metrics are re-exported as Prometheus counters via the metrics server")
-
-	routing.TokensTotal.Store(42)
-	if routing.TokensTotal.Load() != 42 {
-		t.Fatal("ARCHITECTURE VIOLATION: token counter not accessible from routing package")
-	}
-	routing.TokensTotal.Store(0)
-}
-
 func TestA57_ModelPack_GaudiInGPUTable(t *testing.T) {
 	claim(t, "A57", "modelpack", "CDD", "ModelPack GPU table includes Intel Gaudi2 and Gaudi3 accelerators")
 
@@ -2157,64 +1944,6 @@ func TestA58_Cost_GaudiInPricingTable(t *testing.T) {
 	}
 }
 
-func TestA59_Observability_TokenCountersExported(t *testing.T) {
-	claim(t, "A59", "observability", "CDD", "Inference proxy exports atomic token counters readable by the metrics server")
-
-	routing.TokensTotal.Store(0)
-	routing.PromptTokensTotal.Store(0)
-	routing.CompletionTokensTotal.Store(0)
-
-	routing.TokensTotal.Add(100)
-	routing.PromptTokensTotal.Add(40)
-	routing.CompletionTokensTotal.Add(60)
-
-	if routing.TokensTotal.Load() != 100 {
-		t.Fatal("ARCHITECTURE VIOLATION: TokensTotal not tracking")
-	}
-	if routing.PromptTokensTotal.Load() != 40 {
-		t.Fatal("ARCHITECTURE VIOLATION: PromptTokensTotal not tracking")
-	}
-	if routing.CompletionTokensTotal.Load() != 60 {
-		t.Fatal("ARCHITECTURE VIOLATION: CompletionTokensTotal not tracking")
-	}
-}
-
-func TestA60_Routing_TraceparentGeneration(t *testing.T) {
-	claim(t, "A60", "routing", "CDD", "Inference proxy generates W3C traceparent headers for backend requests")
-
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tp := r.Header.Get("Traceparent")
-		if tp == "" {
-			t.Error("ARCHITECTURE VIOLATION: backend did not receive Traceparent header")
-		}
-		if !strings.HasPrefix(tp, "00-") {
-			t.Errorf("ARCHITECTURE VIOLATION: Traceparent does not follow W3C format: %s", tp)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"choices":[]}`))
-	}))
-	defer backend.Close()
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("test-model", routing.Backend{
-		Name:    "test-backend",
-		URL:     backend.URL,
-		Runtime: "vllm",
-		Healthy: true,
-	})
-
-	body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	proxy.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("ARCHITECTURE VIOLATION: proxy returned %d", w.Code)
-	}
-}
-
 func TestA61_Placement_CompositeScorer_AcceptsExternalScorer(t *testing.T) {
 	claim(t, "A61", "placement", "CDD", "Placement solver accepts an ExternalScorer for composite scoring")
 
@@ -2256,7 +1985,7 @@ func TestA62_Observability_ServiceMonitorResourcesExist(t *testing.T) {
 	}
 	content := string(data)
 
-	required := []string{"fleet-controller", "fleet-gateway", "fleet-agent"}
+	required := []string{"fleet-controller", "fleet-agent"}
 	for _, name := range required {
 		if !strings.Contains(content, "name: "+name) {
 			t.Fatalf("ARCHITECTURE VIOLATION: ServiceMonitor for %s not found in servicemonitors.yaml", name)

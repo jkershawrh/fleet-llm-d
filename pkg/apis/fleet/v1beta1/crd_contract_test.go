@@ -54,7 +54,7 @@ func TestProviderEnumsArePublishedInCRDs(t *testing.T) {
 	crdDir := filepath.Join("..", "..", "..", "..", "api", "crds")
 	tests := map[string][]string{
 		"fleetinferencepool.yaml":    {"enum: [ModelPlane, DirectAgent]", "default: ModelPlane"},
-		"fleetroutingpolicy.yaml":    {"enum: [ModelPlaneGateway, FleetGateway]", "default: ModelPlaneGateway"},
+		"fleetroutingpolicy.yaml":    {"enum: [ModelPlaneGateway, FleetGateway, PraxisGateway]", "default: ModelPlaneGateway"},
 		"kvcachetransferpolicy.yaml": {"enum: [LlmDNative, FleetTransfer]", "enum: [GRPC, NIXL, TCP]", "enum: [Deny, GRPC, TCP]"},
 	}
 	for name, expected := range tests {

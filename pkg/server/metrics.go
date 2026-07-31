@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/llm-d/fleet-llm-d/pkg/routing"
+
 )
 
 // fleet-llm-d metrics registry.
@@ -262,11 +262,6 @@ func handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// Autoscaler actions
 	writeCounterVec(w, "fleet_autoscaler_actions_total", "Autoscaler actions by type", "action", autoscalerActions.snapshot())
-
-	// Token counters (from inference proxy)
-	writeCounter(w, "fleet_inference_tokens_total", "Total inference tokens processed", routing.TokensTotal.Load())
-	writeCounter(w, "fleet_inference_prompt_tokens_total", "Total prompt tokens processed", routing.PromptTokensTotal.Load())
-	writeCounter(w, "fleet_inference_completion_tokens_total", "Total completion tokens generated", routing.CompletionTokensTotal.Load())
 
 	// Resource gauges
 	writeGauge(w, "fleet_clusters_registered", "Number of registered clusters", clustersGauge.Value())

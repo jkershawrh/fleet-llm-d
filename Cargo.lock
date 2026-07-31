@@ -634,29 +634,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fleet-gateway"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.8.9",
- "chrono",
- "clap",
- "fleet-common",
- "hyper",
- "hyper-util",
- "prometheus-client",
- "prost",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "fleet-ledger"
 version = "0.1.0"
 dependencies = [

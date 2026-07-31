@@ -47,7 +47,7 @@ func TestAlphaConversionPreservesLegacyProviderOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if betaRouting.Provider != RoutingProviderFleetGateway {
+	if betaRouting.Provider != RoutingProviderPraxisGateway {
 		t.Fatalf("legacy routing provider = %q", betaRouting.Provider)
 	}
 

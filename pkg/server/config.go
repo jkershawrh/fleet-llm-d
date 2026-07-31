@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
-	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
@@ -39,32 +37,6 @@ func (fc *FleetController) OverrideWithPostgres(db *sql.DB) error {
 	fc.PoolRepo = postgres.NewPGFleetPoolRepository(pgClient)
 	fc.TenantRepo = postgres.NewPGTenantRepository(pgClient)
 	fc.RolloutRepo = postgres.NewPGRolloutRepository(pgClient)
-	return nil
-}
-
-// RegisterBackendsFromJSON parses a JSON array of backend configurations and
-// registers each with the inference proxy.
-func (fc *FleetController) RegisterBackendsFromJSON(backendsJSON string) error {
-	var backendList []struct {
-		Model      string `json:"model"`
-		URL        string `json:"url"`
-		Runtime    string `json:"runtime"`
-		PathPrefix string `json:"path_prefix"`
-	}
-	if err := json.Unmarshal([]byte(backendsJSON), &backendList); err != nil {
-		return fmt.Errorf("failed to parse --backends JSON: %w", err)
-	}
-	for _, b := range backendList {
-		fc.InferenceProxy.RegisterBackend(b.Model, routing.Backend{
-			Name:       fmt.Sprintf("%s-%s", b.Runtime, b.Model),
-			URL:        b.URL,
-			Runtime:    b.Runtime,
-			PathPrefix: b.PathPrefix,
-			Healthy:    true,
-			LatencyMs:  500,
-		})
-		slog.Info("registered backend", "model", b.Model, "url", b.URL, "runtime", b.Runtime)
-	}
 	return nil
 }
 

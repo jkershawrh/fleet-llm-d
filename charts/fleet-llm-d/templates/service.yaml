@@ -32,54 +32,6 @@ spec:
       protocol: TCP
     {{- end }}
 {{- end }}
-{{- if .Values.gateway.enabled }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "fleet-llm-d.fullname" . }}-gateway
-  labels:
-    {{- include "fleet-llm-d.labels" . | nindent 4 }}
-    app.kubernetes.io/name: fleet-gateway
-    app.kubernetes.io/component: gateway
-  {{- with .Values.gateway.service.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-spec:
-  type: {{ .Values.gateway.service.type }}
-  selector:
-    app.kubernetes.io/name: fleet-gateway
-    app.kubernetes.io/instance: {{ .Release.Name }}
-  ports:
-    - name: proxy
-      port: {{ .Values.gateway.ports.proxy }}
-      targetPort: proxy
-      protocol: TCP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "fleet-llm-d.fullname" . }}-gateway-observability
-  labels:
-    {{- include "fleet-llm-d.labels" . | nindent 4 }}
-    app.kubernetes.io/name: fleet-gateway
-    app.kubernetes.io/component: gateway
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: fleet-gateway
-    app.kubernetes.io/instance: {{ .Release.Name }}
-  ports:
-    - name: health
-      port: {{ .Values.gateway.ports.health }}
-      targetPort: health
-      protocol: TCP
-    - name: metrics
-      port: {{ .Values.gateway.ports.metrics }}
-      targetPort: metrics
-      protocol: TCP
-{{- end }}
 {{- if .Values.agent.enabled }}
 ---
 apiVersion: v1

@@ -4,7 +4,6 @@ resources:
   - namespace.yaml
   - fleet-controller.yaml
   - fleet-agent.yaml
-  - fleet-gateway.yaml
   - rbac.yaml
   - network-policies.yaml
   - servicemonitors.yaml

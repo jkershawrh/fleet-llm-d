@@ -44,14 +44,6 @@ scrape_configs:
         labels:
           service: "fleet-controller"
 
-  # fleet-llm-d gateway (cross-cluster request routing)
-  - job_name: "fleet-gateway"
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["fleet-gateway:9090"]
-        labels:
-          service: "fleet-gateway"
-
   # fleet-llm-d agent (per-cluster agent)
   - job_name: "fleet-agent"
     metrics_path: /metrics

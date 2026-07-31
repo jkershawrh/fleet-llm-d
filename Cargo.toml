@@ -2,7 +2,6 @@
 members = [
     "crates/fleet-common",
     "crates/fleet-agent",
-    "crates/fleet-gateway",
     "crates/kv-transfer",
     "crates/fleet-ledger",
 ]

@@ -211,7 +211,7 @@ spec:
               properties:
                 provider:
                   type: string
-                  enum: [ModelPlaneGateway, FleetGateway]
+                  enum: [ModelPlaneGateway, FleetGateway, PraxisGateway]
                   default: ModelPlaneGateway
                 authorizationRef:
                   type: object

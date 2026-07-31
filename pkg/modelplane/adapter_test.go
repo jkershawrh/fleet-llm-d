@@ -49,47 +49,6 @@ func TestInferenceClusterToClusterInfo(t *testing.T) {
 	}
 }
 
-func TestModelEndpointToBackend(t *testing.T) {
-	me := ModelEndpoint{
-		Name:      "granite-vllm-ep",
-		Namespace: "fleet",
-		URL:       "http://granite-vllm.fleet.svc:8000",
-		Model:     "granite-3b",
-		Cluster:   "prod-east",
-		Ready:     true,
-	}
-
-	b := ModelEndpointToBackend(me)
-
-	if b.Name != "granite-vllm-ep" {
-		t.Fatalf("Name = %q, want 'granite-vllm-ep'", b.Name)
-	}
-	if b.URL != "http://granite-vllm.fleet.svc:8000" {
-		t.Fatalf("URL = %q, want 'http://granite-vllm.fleet.svc:8000'", b.URL)
-	}
-	if !b.Healthy {
-		t.Fatal("Healthy should be true when Ready is true")
-	}
-	if b.Runtime != "vllm" {
-		t.Fatalf("Runtime = %q, want 'vllm'", b.Runtime)
-	}
-}
-
-func TestModelEndpointToBackend_NotReady(t *testing.T) {
-	me := ModelEndpoint{
-		Name:  "offline-ep",
-		URL:   "http://offline.svc:8000",
-		Model: "test-model",
-		Ready: false,
-	}
-
-	b := ModelEndpointToBackend(me)
-
-	if b.Healthy {
-		t.Fatal("Healthy should be false when Ready is false")
-	}
-}
-
 func TestModelDeploymentToFleetPool(t *testing.T) {
 	md := ModelDeployment{
 		Name:      "granite-deploy",

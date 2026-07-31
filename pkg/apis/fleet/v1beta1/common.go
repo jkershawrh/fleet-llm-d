@@ -123,6 +123,7 @@ type RoutingProvider string
 const (
 	RoutingProviderModelPlaneGateway RoutingProvider = "ModelPlaneGateway"
 	RoutingProviderFleetGateway      RoutingProvider = "FleetGateway"
+	RoutingProviderPraxisGateway     RoutingProvider = "PraxisGateway"
 )
 
 type KVCacheProvider string

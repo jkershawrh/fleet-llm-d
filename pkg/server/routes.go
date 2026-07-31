@@ -129,12 +129,6 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/metrics/platform", metrics.HandlePlatformMetrics(platformCollector))
 	}
 
-	// Inference proxy routes
-	if mode == "all" || mode == "inference" {
-		mux.Handle("POST /v1/chat/completions", fc.InferenceProxy)
-		mux.Handle("POST /v1/completions", fc.InferenceProxy)
-	}
-
 	// Intents (predictive brain)
 	if mode == "all" || mode == "control" || mode == "inference" {
 		mux.HandleFunc("POST /api/v1/intents", fc.handleIntent)

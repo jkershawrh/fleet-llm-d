@@ -70,8 +70,8 @@ func ValidateFleetInferencePool(spec FleetInferencePoolSpec) []error {
 
 func ValidateFleetRoutingPolicy(spec FleetRoutingPolicySpec) []error {
 	var errs []error
-	if spec.Provider != RoutingProviderModelPlaneGateway && spec.Provider != RoutingProviderFleetGateway {
-		errs = append(errs, ValidationError{"spec.provider", "must be ModelPlaneGateway or FleetGateway"})
+	if spec.Provider != RoutingProviderModelPlaneGateway && spec.Provider != RoutingProviderFleetGateway && spec.Provider != RoutingProviderPraxisGateway {
+		errs = append(errs, ValidationError{"spec.provider", "must be ModelPlaneGateway, FleetGateway, or PraxisGateway"})
 	}
 	if strings.TrimSpace(spec.Strategy) == "" {
 		errs = append(errs, ValidationError{"spec.strategy", "must not be empty"})

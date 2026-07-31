@@ -78,8 +78,6 @@ jobs:
             dockerfile: deploy/docker/Dockerfile.controller
           - name: fleet-agent
             dockerfile: deploy/docker/Dockerfile.agent
-          - name: fleet-gateway
-            dockerfile: deploy/docker/Dockerfile.gateway
           - name: inference-mock
             dockerfile: deploy/docker/Dockerfile.inference-mock
     steps:

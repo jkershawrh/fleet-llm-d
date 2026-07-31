@@ -15,23 +15,6 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 ---
-{{- if and .Values.gateway.enabled .Values.podDisruptionBudget.gateway.enabled }}
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: {{ include "fleet-llm-d.fullname" . }}-gateway
-  labels:
-    {{- include "fleet-llm-d.labels" . | nindent 4 }}
-    app.kubernetes.io/name: fleet-gateway
-    app.kubernetes.io/component: gateway
-spec:
-  minAvailable: {{ .Values.podDisruptionBudget.gateway.minAvailable }}
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: fleet-gateway
-      app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
----
 {{- if and .Values.agent.enabled .Values.podDisruptionBudget.agent.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

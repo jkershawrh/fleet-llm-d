@@ -25,9 +25,9 @@ make lint           # Lint all code
 ## Project Structure
 
 - `api/` - API definitions (protobuf, OpenAPI, CRDs)
-- `cmd/` - Binary entry points (fleet-controller, fleet-agent, fleet-gateway, fleetctl)
+- `cmd/` - Binary entry points (fleet-controller, fleet-agent, fleetctl)
 - `pkg/` - Go packages (control plane logic)
-- `crates/` - Rust crates (data plane: agent, gateway, KV transfer)
+- `crates/` - Rust crates (data plane: agent, KV transfer, ledger)
 - `web/` - TypeScript dashboard (Next.js)
 - `python/` - Python analytics
 - `deploy/` - Kubernetes deployment manifests (Kustomize + Helm)
@@ -35,7 +35,7 @@ make lint           # Lint all code
 
 ## Architecture
 
-The Go fleet controller manages fleet CRDs and coordinates with per-cluster agents. The Rust fleet gateway handles cross-cluster traffic routing. The core ecosystem path is:
+The Go fleet controller manages fleet CRDs and coordinates with per-cluster agents. Praxis AI handles cross-cluster traffic routing (replacing the former fleet-gateway). The core ecosystem path is:
 
 `deepfield-fleet -> governed-cognitive-loop -> fleet-llm-d -> are-immutable-ledger`
 

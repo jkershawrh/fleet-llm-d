@@ -2,9 +2,9 @@
 //!
 //! Shared types, traits, and utilities for the fleet-llm-d orchestration platform.
 //!
-//! This crate provides the foundational types used across fleet-agent, fleet-gateway,
-//! and kv-transfer, including cluster identifiers, configuration, metrics, events,
-//! and core traits for reporting and policy enforcement.
+//! This crate provides the foundational types used across fleet-agent,
+//! kv-transfer, and fleet-ledger, including cluster identifiers, configuration,
+//! metrics, events, and core traits for reporting and policy enforcement.
 
 use std::fmt;
 use std::str::FromStr;

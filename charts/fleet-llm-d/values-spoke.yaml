@@ -3,11 +3,6 @@ profile: spoke
 controller:
   enabled: false
 
-gateway:
-  enabled: false
-  autoscaling:
-    enabled: false
-
 agent:
   enabled: true
   replicaCount: 1
@@ -17,8 +12,6 @@ agent:
 
 podDisruptionBudget:
   controller:
-    enabled: false
-  gateway:
     enabled: false
   agent:
     enabled: false

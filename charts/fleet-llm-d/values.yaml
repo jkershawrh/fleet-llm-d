@@ -90,47 +90,6 @@ controller:
   tolerations: []
   affinity: {}
 
-gateway:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: ghcr.io/llm-d/fleet-gateway
-    tag: ""
-    pullPolicy: IfNotPresent
-  ports:
-    proxy: 8080
-    health: 8081
-    metrics: 9090
-  controlPlaneURL: ""
-  healthIntervalSeconds: 10
-  loadBalancingStrategy: weighted
-  service:
-    type: ClusterIP
-    annotations: {}
-  serviceAccount:
-    create: true
-    name: ""
-    annotations: {}
-  autoscaling:
-    enabled: false
-    minReplicas: 1
-    maxReplicas: 3
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-  resources:
-    requests:
-      cpu: "1"
-      memory: 1Gi
-    limits:
-      cpu: "4"
-      memory: 4Gi
-  extraEnv: []
-  podAnnotations: {}
-  podLabels: {}
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-
 agent:
   enabled: true
   replicaCount: 1
@@ -178,9 +137,6 @@ agent:
 
 podDisruptionBudget:
   controller:
-    enabled: false
-    minAvailable: 1
-  gateway:
     enabled: false
     minAvailable: 1
   agent:

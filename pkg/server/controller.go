@@ -76,9 +76,6 @@ type FleetController struct {
 	// deliberately false unless explicitly enabled.
 	AllowOperatorJSONIntents bool
 
-	// Inference proxy
-	InferenceProxy *routing.InferenceProxy
-
 	// Cost and pricing
 	PricingTable *cost.PricingTable
 
@@ -123,37 +120,6 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	if err != nil {
 		return nil, fmt.Errorf("initialize immutable-ledger client in %q mode: %w", ledgerCfg.Mode, err)
 	}
-
-	proxy := routing.NewInferenceProxy()
-	proxy.RegisterBackend("granite-3.3-2b", routing.Backend{
-		Name:      "vllm-cpu",
-		URL:       backendVLLM,
-		Runtime:   "vllm",
-		Healthy:   true,
-		LatencyMs: 500,
-	})
-	ovmsBackend := routing.Backend{
-		Name:       "ovms-granite",
-		URL:        backendOVMS,
-		Runtime:    "ovms",
-		PathPrefix: "/v3",
-		Healthy:    true,
-		LatencyMs:  200,
-	}
-	proxy.RegisterBackend("granite-sovereign", ovmsBackend)
-	proxy.RegisterBackend("granite-3.2-sovereign", ovmsBackend)
-
-	// Semantic routing: classify prompts and route model="auto" to the right tier.
-	// GCL classify-prompt endpoint serves as the classifier.
-	semanticRouterURL := os.Getenv("SEMANTIC_CLASSIFIER_URL")
-	if semanticRouterURL == "" {
-		semanticRouterURL = "http://gcl-app.governed-cognitive-loop.svc:8000"
-	}
-	proxy.SemanticRouter = routing.NewSemanticRouter(semanticRouterURL, map[string]string{
-		"simple":   "granite-3.2-sovereign",
-		"standard": "granite-3.2-sovereign",
-		"complex":  "granite-3.2-sovereign",
-	})
 
 	clusterRepo := postgres.NewInMemoryClusterRepository()
 	tenantRepo := postgres.NewInMemoryTenantRepository()
@@ -246,7 +212,6 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}(),
 		LedgerGatewayToken: ledgerCfg.APIToken,
 		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
-		InferenceProxy:     proxy,
 		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,

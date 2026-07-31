@@ -39,7 +39,7 @@ func ConvertFleetRoutingPolicyFromV1Alpha1(in v1alpha1.FleetRoutingPolicySpec) (
 	if err := convertJSON(in, &out); err != nil {
 		return out, err
 	}
-	out.Provider = RoutingProviderFleetGateway
+	out.Provider = RoutingProviderPraxisGateway
 	return out, nil
 }
 
