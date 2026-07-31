@@ -22,7 +22,7 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 | Dashboard authentication and session management | Not Started | Confirm session tokens are HttpOnly, Secure, SameSite=Strict. Validate logout invalidates server-side session state. Check idle timeout policy. |
 | Service account credential rotation for PostgreSQL, Kafka, Redis | Not Started | Ensure credentials are not embedded in container images or environment variables in plaintext. Verify rotation automation and zero-downtime rollover. |
 | ARE Immutable Ledger gRPC authentication | Not Started | Validate that fleet-llm-d authenticates to the ARE Ledger over its separate network using dedicated service credentials. Confirm credentials are scoped to write-only for event submission. |
-| fleetctl CLI authentication flow | Not Started | Verify CLI uses short-lived tokens (not long-lived API keys). Confirm token storage on disk is encrypted or uses OS keychain. Audit token revocation path. |
+| fleetctl CLI authentication flow | Done | HMAC-SHA256 bearer tokens with configurable TTL via `fleetctl login`. Custom CA support via --tls-ca. Token sent as Authorization: Bearer header. Gap: tokens stored in memory only (no disk persistence or keychain). |
 
 ## Authorization
 
@@ -35,13 +35,13 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 | fleetctl CLI authorization scoping | Not Started | Ensure CLI commands respect the authenticated user's RBAC permissions. Verify that cluster-admin operations require explicit elevated credentials. |
 | Namespace-level isolation in Hub mode | Not Started | Confirm that the single active fleet-controller restricts operations to the fleet namespace and tenant-scoped sub-namespaces. Leader election is required before any multi-replica HA claim. Audit for namespace escape vectors. |
 | Gateway routing authorization | Not Started | Verify Praxis AI gateway enforces authorization on cross-cluster routing decisions. Confirm that RoutingPolicy CRDs cannot be modified by non-admin tenants. |
-| Admission webhook enforcement | Not Started | Validate that a validating admission webhook rejects CRD mutations from unauthorized service accounts. Test bypass scenarios (dry-run, server-side apply). |
+| Admission webhook enforcement | Done | `pkg/controller/webhook.go` validates FleetInferencePool, TenantProfile, PlacementPolicy via K8s AdmissionReview protocol. WebhookHandler dispatches by Kind. Tests in webhook_test.go. |
 
 ## Data Protection
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| TLS in transit for all communication channels | Not Started | Audit every network path: REST API, gRPC, Kafka producer/consumer, Redis client, PostgreSQL client, inter-cluster gateway, kv-transfer. Minimum TLS 1.2; prefer TLS 1.3. |
+| TLS in transit for all communication channels | Partial | Controller supports --tls-cert/--tls-key for HTTPS. fleetctl supports --tls-ca for custom CA. Gap: fleet-agent (Rust) communicates over plaintext HTTP. KV transfer (TCP) has no TLS. PostgreSQL uses sslmode=disable. |
 | Secrets management architecture | Partial | kustomize uses K8s Secrets with secretKeyRef; controller uses secretKeyRef; ecosystem components still have hardcoded creds |
 | KV cache encryption during NIXL-based transfer | Not Started | Confirm kv-transfer encrypts KV cache data in transit between clusters. Validate that encryption keys are per-transfer or per-tenant, not shared globally. |
 | Data at rest encryption for PostgreSQL fleet state | Not Started | Verify PostgreSQL uses encrypted storage (dm-crypt/LUKS or cloud-provider encryption). Confirm backup encryption. Audit key management for rotation. |
@@ -67,8 +67,8 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 
 | Requirement | Status | Notes |
 |-------------|--------|-------|
-| ARE Ledger hash chain verification | Not Started | Implement periodic verification that the ARE Ledger hash chain is intact and tamper-evident. Confirm fleet-llm-d can detect and alert on hash chain breaks. Document verification procedure for auditors. |
-| Audit trail completeness for all 11 event types | Not Started | Map each of the 11 event types to their trigger points in the codebase. Verify no code path can perform a state-changing action without emitting the corresponding audit event to the ARE Ledger. |
+| ARE Ledger hash chain verification | Done | `FleetRecorder.VerifyAllChains()` verifies 5 chain types. `fleetctl verify chains` CLI command. Soak test verified 253 chains over 30 hours. Benchmarks at 10/100/1000 entries. |
+| Audit trail completeness for all 11 event types | Partial | FleetRecorder records 9 event types: placement, routing, scaling, tenant usage, lifecycle (deploy/promote/rollback), KV cache transfer, auth failure, RBAC denial. Gap: cluster registration/deregistration and tenant CRUD not yet recorded. |
 | EU AI Act Article 12 (record-keeping) mapping | Not Started | Document how fleet-llm-d's audit trail satisfies Article 12 requirements for high-risk AI system logging. Map each required record type to the specific event type and data fields captured. |
 | NIST AI RMF mapping (Govern, Map, Measure, Manage) | Not Started | Produce a crosswalk document mapping fleet-llm-d capabilities to NIST AI RMF functions. Identify gaps in risk measurement and bias monitoring that require additional tooling. |
 | SOC 2 Type II evidence collection | Not Started | Identify SOC 2 trust service criteria (Security, Availability, Confidentiality) relevant to fleet-llm-d. Establish continuous evidence collection for access reviews, change management, and incident response. |
