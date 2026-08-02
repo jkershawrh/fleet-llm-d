@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: oberon-model-cache
+spec:
+  capacity:
+    storage: 200Gi
+  accessModes:
+    - ReadOnlyMany
+  nfs:
+    server: 192.168.1.199
+    path: /mnt/nfs/triforce-huggingface-model-cache-pvc-eb6b8194-939c-455c-8ab3-192d8ed0a17b
+  persistentVolumeReclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oberon-model-cache
+  namespace: fleet-llm-d
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 200Gi
+  volumeName: oberon-model-cache
+  storageClassName: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovms-granite-2b
+  namespace: fleet-llm-d
+  labels:
+    app: ovms-granite-2b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ovms-granite-2b
+  template:
+    metadata:
+      labels:
+        app: ovms-granite-2b
+    spec:
+      containers:
+        - name: ovms
+          image: openvino/model_server:latest
+          args:
+            - --model_name
+            - granite-2b-cpu
+            - --model_path
+            - /models/ov/granite-2b
+            - --rest_port
+            - "8080"
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8080
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: oberon-model-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovms-granite-2b
+  namespace: fleet-llm-d
+  labels:
+    app: ovms-granite-2b
+spec:
+  selector:
+    app: ovms-granite-2b
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http

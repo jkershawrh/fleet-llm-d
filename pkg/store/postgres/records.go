@@ -7,6 +7,7 @@ const (
 	ClusterStatusHealthy  = "Healthy"
 	ClusterStatusDraining = "Draining"
 	ClusterStatusDrained  = "Drained"
+	ClusterStatusDegraded = "Degraded"
 )
 
 // ClusterRecord matches the clusters table.

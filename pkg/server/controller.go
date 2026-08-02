@@ -132,6 +132,9 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 
 	// Create reconciler wired to the cluster client and constraint solver.
 	reconciler := controller.NewReconciler(constraintSolver, clusterClient.ListClusters)
+	if namespace != "" {
+		reconciler.SetNamespace(namespace)
+	}
 
 	// Wire the onChange callback so every placement decision is recorded
 	// to the standalone immutable ledger.

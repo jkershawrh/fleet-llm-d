@@ -64,6 +64,9 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 		return
 	}
 	clustersGauge.Add(1)
+	if fc.FleetRecorder != nil {
+		fc.FleetRecorder.RecordClusterRegistration(r.Context(), reg.ID, reg.Name, reg.Region)
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "registered", "id": reg.ID})
 }
 
@@ -81,5 +84,8 @@ func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *htt
 		return
 	}
 	clustersGauge.Add(-1)
+	if fc.FleetRecorder != nil {
+		fc.FleetRecorder.RecordClusterDeregistration(r.Context(), id, "operator-requested")
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deregistered", "id": id})
 }

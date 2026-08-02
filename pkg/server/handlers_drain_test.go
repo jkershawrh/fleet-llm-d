@@ -36,6 +36,30 @@ func TestDrainRunningCluster(t *testing.T) {
 	}
 }
 
+func TestDrainDegradedCluster(t *testing.T) {
+	fc := newTestController()
+	ctx := context.Background()
+	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{
+		ID:     "c1",
+		Name:   "Cluster 1",
+		Status: postgres.ClusterStatusDegraded,
+	})
+
+	req := httptest.NewRequest("POST", "/api/v1/clusters/c1/drain", nil)
+	req.SetPathValue("id", "c1")
+	w := httptest.NewRecorder()
+	fc.handleDrainCluster(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	record, _ := fc.ClusterRepo.Get(ctx, "c1")
+	if record.Status != postgres.ClusterStatusDraining {
+		t.Fatalf("expected Draining, got %s", record.Status)
+	}
+}
+
 func TestDrainAlreadyDraining(t *testing.T) {
 	fc := newTestController()
 	ctx := context.Background()

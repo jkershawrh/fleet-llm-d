@@ -153,7 +153,16 @@ func applyAgentStatus(record *postgres.ClusterRecord, report agentStatusReport, 
 	record.Region = report.Region
 	record.GPUAvailable = report.GPUAvailable
 	record.GPUTotal = report.GPUTotal
-	if record.Status != postgres.ClusterStatusDraining && record.Status != postgres.ClusterStatusDrained {
+	if record.Status == postgres.ClusterStatusDraining || record.Status == postgres.ClusterStatusDrained {
+		// Never let agent status override an active drain.
+	} else if activatedAt, ok := record.Labels["activated_at"]; ok {
+		if t, err := time.Parse(time.RFC3339, activatedAt); err == nil && time.Since(t) < 30*time.Second {
+			// Protect recently-activated clusters from immediate agent downgrade.
+		} else {
+			record.Status = status
+			delete(record.Labels, "activated_at")
+		}
+	} else {
 		record.Status = status
 	}
 	if record.Labels == nil {

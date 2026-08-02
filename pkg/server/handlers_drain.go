@@ -43,8 +43,8 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, "cluster is already drained")
 		return
 	}
-	if record.Status != postgres.ClusterStatusRunning && record.Status != postgres.ClusterStatusHealthy {
-		writeError(w, http.StatusConflict, "cluster must be Running or Healthy to drain")
+	if record.Status != postgres.ClusterStatusRunning && record.Status != postgres.ClusterStatusHealthy && record.Status != postgres.ClusterStatusDegraded {
+		writeError(w, http.StatusConflict, "cluster must be Running, Healthy, or Degraded to drain")
 		return
 	}
 
@@ -89,6 +89,10 @@ func (fc *FleetController) handleActivateCluster(w http.ResponseWriter, r *http.
 
 	record.Status = postgres.ClusterStatusRunning
 	delete(record.Labels, "drain_started_at")
+	if record.Labels == nil {
+		record.Labels = make(map[string]string)
+	}
+	record.Labels["activated_at"] = time.Now().UTC().Format(time.RFC3339)
 
 	if err := fc.ClusterRepo.Update(r.Context(), *record); err != nil {
 		errorsTotal.Inc()

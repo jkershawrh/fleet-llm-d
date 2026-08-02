@@ -26,7 +26,9 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Wrap the API server mux with auth middleware and rate limiting.
+	// Wrap the API server mux with auth middleware, rate limiting, and
+	// request logging. The logging middleware is outermost so it captures
+	// the final status code after all other middleware has run.
 	mux := fc.SetupRoutes(mode)
 	exempt := defaultExemptPaths(rateLimitExempt)
 	var handler http.Handler = fc.leaderGate(mux)
@@ -35,6 +37,7 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 	if rateLimiter != nil {
 		handler = auth.RateLimitMiddlewareWithExemptions(rateLimiter, exempt, handler)
 	}
+	handler = RequestLoggingMiddleware(handler)
 
 	apiServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),

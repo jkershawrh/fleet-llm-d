@@ -226,6 +226,84 @@ func (r *FleetRecorder) RecordRBACDenial(ctx context.Context, subject, resource,
 	})
 }
 
+// RecordClusterRegistration records a cluster joining the fleet.
+func (r *FleetRecorder) RecordClusterRegistration(ctx context.Context, clusterID, name, region string) (*LedgerReceipt, error) {
+	content, err := json.Marshal(map[string]interface{}{
+		"cluster_id": clusterID,
+		"name":       name,
+		"region":     region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal cluster registration: %w", err)
+	}
+	return r.client.RecordDecision(ctx, FleetDecision{
+		Type:        "fleet.cluster.registered",
+		AgentID:     r.agentID,
+		SourceID:    r.sourceID,
+		Content:     content,
+		ContentType: "application/json",
+		InputHash:   computeInputHash(content),
+	})
+}
+
+// RecordClusterDeregistration records a cluster leaving the fleet.
+func (r *FleetRecorder) RecordClusterDeregistration(ctx context.Context, clusterID, reason string) (*LedgerReceipt, error) {
+	content, err := json.Marshal(map[string]interface{}{
+		"cluster_id": clusterID,
+		"reason":     reason,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal cluster deregistration: %w", err)
+	}
+	return r.client.RecordDecision(ctx, FleetDecision{
+		Type:        "fleet.cluster.deregistered",
+		AgentID:     r.agentID,
+		SourceID:    r.sourceID,
+		Content:     content,
+		ContentType: "application/json",
+		InputHash:   computeInputHash(content),
+	})
+}
+
+// RecordTenantCreated records a new tenant being provisioned.
+func (r *FleetRecorder) RecordTenantCreated(ctx context.Context, tenantID, name string, priority int) (*LedgerReceipt, error) {
+	content, err := json.Marshal(map[string]interface{}{
+		"tenant_id": tenantID,
+		"name":      name,
+		"priority":  priority,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tenant created: %w", err)
+	}
+	return r.client.RecordDecision(ctx, FleetDecision{
+		Type:        "fleet.tenant.created",
+		AgentID:     r.agentID,
+		SourceID:    r.sourceID,
+		Content:     content,
+		ContentType: "application/json",
+		InputHash:   computeInputHash(content),
+	})
+}
+
+// RecordTenantDeleted records a tenant being removed.
+func (r *FleetRecorder) RecordTenantDeleted(ctx context.Context, tenantID, reason string) (*LedgerReceipt, error) {
+	content, err := json.Marshal(map[string]interface{}{
+		"tenant_id": tenantID,
+		"reason":    reason,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tenant deleted: %w", err)
+	}
+	return r.client.RecordDecision(ctx, FleetDecision{
+		Type:        "fleet.tenant.deleted",
+		AgentID:     r.agentID,
+		SourceID:    r.sourceID,
+		Content:     content,
+		ContentType: "application/json",
+		InputHash:   computeInputHash(content),
+	})
+}
+
 // VerifyAllChains verifies integrity of all fleet decision chains.
 func (r *FleetRecorder) VerifyAllChains(ctx context.Context) (map[string]*ChainVerification, error) {
 	chainTypes := []string{
@@ -233,7 +311,13 @@ func (r *FleetRecorder) VerifyAllChains(ctx context.Context) (map[string]*ChainV
 		"fleet.routing.shifted",
 		"fleet.scaling.adjusted",
 		"fleet.tenant.usage",
+		"fleet.tenant.created",
+		"fleet.tenant.deleted",
 		"fleet.kvcache.transferred",
+		"fleet.cluster.registered",
+		"fleet.cluster.deregistered",
+		"fleet.cluster.drain_started",
+		"fleet.cluster.activated",
 	}
 	results := make(map[string]*ChainVerification)
 	for _, ct := range chainTypes {

@@ -88,6 +88,10 @@ pub struct FleetAgentConfig {
     /// Port for the local inference proxy.
     #[arg(long, default_value = "8090", env = "FLEET_PROXY_PORT")]
     pub proxy_port: u16,
+
+    /// Accept invalid TLS certificates when connecting to the control plane.
+    #[arg(long, default_value = "false", env = "FLEET_TLS_INSECURE_SKIP_VERIFY")]
+    pub tls_insecure: bool,
 }
 
 #[tokio::main]
@@ -126,7 +130,8 @@ async fn main() -> anyhow::Result<()> {
     .with_interval(15)
     .with_token(config.control_plane_token.clone())
     .with_health_url(config.cluster_health_url.clone())
-    .with_inference_url(config.cluster_inference_url.clone());
+    .with_inference_url(config.cluster_inference_url.clone())
+    .with_tls_insecure(config.tls_insecure);
     let enforcer = enforcer::PolicyEnforcerImpl::new(cluster_id.clone());
     let _ = enforcer.cluster_id();
     enforcer
@@ -162,9 +167,10 @@ async fn main() -> anyhow::Result<()> {
 
     let enforcer_cp_url = config.control_plane_url.clone();
     let enforcer_token = config.control_plane_token.clone().unwrap_or_default();
+    let enforcer_tls_insecure = config.tls_insecure;
     let enforcer_handle = tokio::spawn(async move {
         info!("policy enforcer task started");
-        enforcer.run(&enforcer_cp_url, &enforcer_token).await
+        enforcer.run(&enforcer_cp_url, &enforcer_token, enforcer_tls_insecure).await
     });
 
     let proxy_handle = tokio::spawn(async move {

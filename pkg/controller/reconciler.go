@@ -26,13 +26,14 @@ type FleetPoolState struct {
 
 // Reconciler drives the reconciliation loop for fleet inference pools.
 type Reconciler struct {
-	mu       sync.RWMutex
-	pools    map[string]*FleetPoolState
-	solver   solver.ConstraintSolver
-	clusters func(ctx context.Context) ([]solver.ClusterInfo, error) // function to list available clusters
-	policies func(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error)
-	observe  func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error)
-	onChange func(pool *FleetPoolState) // callback when state changes
+	mu        sync.RWMutex
+	pools     map[string]*FleetPoolState
+	solver    solver.ConstraintSolver
+	namespace string // configured namespace; WatchEndpoint rejects events outside this namespace
+	clusters  func(ctx context.Context) ([]solver.ClusterInfo, error) // function to list available clusters
+	policies  func(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error)
+	observe   func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error)
+	onChange  func(pool *FleetPoolState) // callback when state changes
 }
 
 // NewReconciler creates a Reconciler with the given constraint solver and
@@ -72,6 +73,14 @@ func (r *Reconciler) SetActualClusterObserver(fn func(context.Context, v1alpha1.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.observe = fn
+}
+
+// SetNamespace configures the namespace that WatchEndpoint enforces. Events
+// targeting a different namespace are rejected with 403 Forbidden.
+func (r *Reconciler) SetNamespace(ns string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.namespace = ns
 }
 
 // SetOnChange registers a callback that is invoked whenever a pool's state
@@ -246,12 +255,15 @@ func (r *Reconciler) ListPools() []FleetPoolState {
 
 // watchEvent is the JSON structure expected by the WatchEndpoint handler.
 type watchEvent struct {
-	Type   string                          `json:"type"`
-	Object v1alpha1.FleetInferencePoolSpec `json:"object"`
+	Type      string                          `json:"type"`
+	Namespace string                          `json:"namespace,omitempty"`
+	Object    v1alpha1.FleetInferencePoolSpec `json:"object"`
 }
 
 // WatchEndpoint returns an http.HandlerFunc that accepts POST requests
-// containing watch events and reconciles them accordingly.
+// containing watch events and reconciles them accordingly. When a namespace
+// is configured via SetNamespace, events targeting a different namespace are
+// rejected with 403 Forbidden.
 func (r *Reconciler) WatchEndpoint() http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
@@ -262,6 +274,18 @@ func (r *Reconciler) WatchEndpoint() http.HandlerFunc {
 		var event watchEvent
 		if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 			http.Error(w, fmt.Sprintf("bad request: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Namespace guard: reject events that target a namespace other than
+		// the configured one. This prevents cross-namespace reconciliation
+		// when the controller is scoped to a single namespace.
+		r.mu.RLock()
+		configuredNS := r.namespace
+		r.mu.RUnlock()
+		if configuredNS != "" && event.Namespace != "" && event.Namespace != configuredNS {
+			slog.Warn("watch event rejected: namespace mismatch", "event_namespace", event.Namespace, "configured_namespace", configuredNS)
+			http.Error(w, fmt.Sprintf("forbidden: namespace %q is not allowed (configured: %q)", event.Namespace, configuredNS), http.StatusForbidden)
 			return
 		}
 

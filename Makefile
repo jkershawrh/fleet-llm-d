@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production multi-cluster-deploy-arena multi-cluster-test multi-cluster-teardown
 
 # ──────────────────────────────────────────────
 # Build
@@ -246,3 +246,25 @@ bench-scale:
 	go test -bench=BenchmarkSolve -benchmem -benchtime=3s ./pkg/placement/solver/...
 	go test -bench=BenchmarkWeightedBalancer -benchmem -benchtime=3s ./pkg/routing/balancer/...
 	go test -bench=BenchmarkReconcilePool -benchmem -benchtime=3s ./pkg/controller/...
+
+# ──────────────────────────────────────────────
+# Multi-Cluster (Arena + Oberon)
+# ──────────────────────────────────────────────
+
+OBERON_CONTROLLER_URL ?= https://fleet-controller.192.168.1.123.sslip.io
+ARENA_CLUSTER_ID ?= arena-xeon6
+OBERON_CLUSTER_ID ?= oberon-sno
+MULTI_CLUSTER_PROFILE ?= quick
+
+multi-cluster-deploy-arena:
+	OBERON_CONTROLLER_URL=$(OBERON_CONTROLLER_URL) bash deploy/arena/deploy.sh
+
+multi-cluster-test:
+	python3 test/soak/multi_cluster_test.py \
+		--fleet-url=$(OBERON_CONTROLLER_URL) \
+		--arena-cluster-id=$(ARENA_CLUSTER_ID) \
+		--oberon-cluster-id=$(OBERON_CLUSTER_ID) \
+		--profile=$(MULTI_CLUSTER_PROFILE) --timeout=30
+
+multi-cluster-teardown:
+	bash deploy/arena/teardown.sh

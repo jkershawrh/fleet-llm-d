@@ -36,6 +36,15 @@ Available Commands:
   install     Generate Helm or kubectl install instructions
 `
 
+// warnIfNoToken prints a warning to stderr when a destructive or admin-only
+// operation is about to be performed without an authentication token. This is
+// a client-side guard only; the server enforces RBAC independently.
+func warnIfNoToken(client *FleetClient, operation string) {
+	if client.Token == "" {
+		fmt.Fprintf(os.Stderr, "warning: no --token provided for %s operation; the server may reject this request\n", operation)
+	}
+}
+
 // printJSON marshals v as indented JSON and prints it to stdout.
 func printJSON(v interface{}) {
 	data, err := json.MarshalIndent(v, "", "  ")
@@ -258,6 +267,7 @@ func runClusters(ctx context.Context, client *FleetClient, args []string, isTabl
 		fmt.Printf("cluster %q registered\n", *name)
 
 	case "deregister":
+		warnIfNoToken(client, "cluster deregister")
 		fs := flag.NewFlagSet("clusters deregister", flag.ExitOnError)
 		id := fs.String("id", "", "Cluster ID (required)")
 		_ = fs.Parse(args[1:])
@@ -402,6 +412,7 @@ func runRollouts(ctx context.Context, client *FleetClient, args []string, isTabl
 		}
 
 	case "promote":
+		warnIfNoToken(client, "rollout promote")
 		fs := flag.NewFlagSet("rollouts promote", flag.ExitOnError)
 		id := fs.String("id", "", "Rollout ID (required)")
 		_ = fs.Parse(args[1:])
@@ -424,6 +435,7 @@ func runRollouts(ctx context.Context, client *FleetClient, args []string, isTabl
 		}
 
 	case "rollback":
+		warnIfNoToken(client, "rollout rollback")
 		fs := flag.NewFlagSet("rollouts rollback", flag.ExitOnError)
 		id := fs.String("id", "", "Rollout ID (required)")
 		_ = fs.Parse(args[1:])
@@ -522,31 +534,86 @@ func runMetrics(ctx context.Context, client *FleetClient, args []string, isTable
 // ----------------------------------------------------------------------------
 
 func runVerify(ctx context.Context, client *FleetClient, args []string, isTable bool) {
-	if len(args) == 0 || args[0] != "chains" {
-		fmt.Fprintln(os.Stderr, "usage: fleetctl verify chains")
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: fleetctl verify <chains|export> [flags]")
 		os.Exit(1)
 	}
 
-	results, err := client.VerifyChains(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	switch args[0] {
+	case "chains":
+		results, err := client.VerifyChains(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if isTable {
+			headers := []string{"CHAIN", "VALID", "ENTRIES CHECKED", "VERIFIED AT"}
+			var rows [][]string
+			for chain, v := range results {
+				rows = append(rows, []string{
+					chain,
+					fmt.Sprintf("%v", v.Valid),
+					fmt.Sprintf("%d", v.EntriesChecked),
+					v.VerifiedAt,
+				})
+			}
+			printTable(headers, rows)
+		} else {
+			printJSON(results)
+		}
+
+	case "export":
+		outFile := "fleet-evidence-export.json"
+		if len(args) > 1 {
+			outFile = args[1]
+		}
+		runVerifyExport(ctx, client, outFile)
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown verify subcommand: %s\n", args[0])
+		fmt.Fprintln(os.Stderr, "usage: fleetctl verify <chains|export> [flags]")
 		os.Exit(1)
 	}
-	if isTable {
-		headers := []string{"CHAIN", "VALID", "ENTRIES CHECKED", "VERIFIED AT"}
-		var rows [][]string
-		for chain, v := range results {
-			rows = append(rows, []string{
-				chain,
-				fmt.Sprintf("%v", v.Valid),
-				fmt.Sprintf("%d", v.EntriesChecked),
-				v.VerifiedAt,
-			})
-		}
-		printTable(headers, rows)
-	} else {
-		printJSON(results)
+}
+
+func runVerifyExport(ctx context.Context, client *FleetClient, outFile string) {
+	fmt.Fprintf(os.Stderr, "Collecting compliance evidence for offline export...\n")
+
+	chains, err := client.VerifyChains(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: chain verification failed: %v\n", err)
+		chains = nil
 	}
+
+	clusters, _ := client.ListClusters(ctx)
+	tenants, _ := client.ListTenants(ctx)
+	rollouts, _ := client.ListRollouts(ctx)
+	fleetMetrics, _ := client.GetFleetMetrics(ctx)
+
+	export := map[string]interface{}{
+		"export_version": "1.0",
+		"exported_at":    time.Now().UTC().Format(time.RFC3339),
+		"project":        "fleet-llm-d",
+		"chain_verification": chains,
+		"fleet_state": map[string]interface{}{
+			"clusters": clusters,
+			"tenants":  tenants,
+			"rollouts": rollouts,
+			"metrics":  fleetMetrics,
+		},
+	}
+
+	data, err := json.MarshalIndent(export, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: marshal export: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(outFile, data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", outFile, err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Evidence exported to %s (%d bytes)\n", outFile, len(data))
 }
 
 // ----------------------------------------------------------------------------

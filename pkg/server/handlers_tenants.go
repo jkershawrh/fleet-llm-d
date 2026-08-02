@@ -67,6 +67,9 @@ func (fc *FleetController) handleCreateTenant(w http.ResponseWriter, r *http.Req
 		return
 	}
 	tenantsGauge.Inc()
+	if fc.FleetRecorder != nil {
+		fc.FleetRecorder.RecordTenantCreated(r.Context(), req.ID, req.Name, req.Priority)
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID, "status": "created"})
 }
 

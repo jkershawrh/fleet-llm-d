@@ -19,6 +19,13 @@ type RoutingRequest struct {
 	TokenCount   int
 	Priority     string
 	SessionID    string
+
+	// AllowedClusters restricts routing to only these clusters when non-empty.
+	// Populated from TenantProfile.spec.clusters.allowed.
+	AllowedClusters []string
+	// DeniedClusters excludes these clusters from routing consideration.
+	// Populated from TenantProfile.spec.clusters.denied.
+	DeniedClusters []string
 }
 
 // RouteDecision describes where to send a request and why.
@@ -57,8 +64,13 @@ func NewRoutingPolicyEvaluator() RoutingPolicyEvaluator {
 }
 
 // Evaluate matches the request against routing rules and applies the
-// corresponding action to select a target cluster.
+// corresponding action to select a target cluster. When the request carries
+// tenant cluster restrictions (AllowedClusters / DeniedClusters from the
+// TenantProfile CRD), the candidate list is filtered before evaluation.
 func (e *defaultRoutingPolicyEvaluator) Evaluate(ctx context.Context, request RoutingRequest, clusters []ClusterHealth, policy v1alpha1.FleetRoutingPolicySpec) (RouteDecision, error) {
+	// Apply tenant cluster restrictions before any routing logic.
+	clusters = filterClustersByTenant(clusters, request.AllowedClusters, request.DeniedClusters)
+
 	for _, rule := range policy.Rules {
 		if matchesRule(request, rule.Match) {
 			return applyAction(request, clusters, rule.Action)
@@ -74,6 +86,39 @@ func (e *defaultRoutingPolicyEvaluator) Evaluate(ctx context.Context, request Ro
 		}
 	}
 	return RouteDecision{}, fmt.Errorf("no suitable cluster found")
+}
+
+// filterClustersByTenant restricts the candidate cluster list based on tenant
+// cluster scope. If allowed is non-empty, only clusters in the allowed list
+// are kept. Clusters in the denied list are always removed. When both lists
+// are empty the full set is returned unchanged (backward compatible).
+func filterClustersByTenant(clusters []ClusterHealth, allowed, denied []string) []ClusterHealth {
+	if len(allowed) == 0 && len(denied) == 0 {
+		return clusters
+	}
+
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, id := range allowed {
+		allowedSet[id] = struct{}{}
+	}
+	deniedSet := make(map[string]struct{}, len(denied))
+	for _, id := range denied {
+		deniedSet[id] = struct{}{}
+	}
+
+	filtered := make([]ClusterHealth, 0, len(clusters))
+	for _, c := range clusters {
+		if _, ok := deniedSet[c.ClusterID]; ok {
+			continue
+		}
+		if len(allowedSet) > 0 {
+			if _, ok := allowedSet[c.ClusterID]; !ok {
+				continue
+			}
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
 }
 
 // matchesRule checks whether a request satisfies a routing rule's match

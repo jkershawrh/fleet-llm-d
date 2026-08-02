@@ -31,6 +31,8 @@ pub struct MetricsReporter {
     health_url: String,
     /// Gateway-reachable inference proxy base URL advertised with cluster status.
     inference_url: String,
+    /// Accept invalid TLS certificates (for cross-cluster OpenShift Routes).
+    tls_insecure: bool,
     /// Shared HTTP client with bounded request latency.
     http: reqwest::Client,
 }
@@ -50,6 +52,7 @@ impl MetricsReporter {
             control_plane_token: None,
             health_url: String::new(),
             inference_url: String::new(),
+            tls_insecure: false,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
@@ -78,6 +81,19 @@ impl MetricsReporter {
     /// Advertise the cluster inference proxy URL used by the fleet gateway.
     pub fn with_inference_url(mut self, inference_url: String) -> Self {
         self.inference_url = inference_url;
+        self
+    }
+
+    /// Accept invalid TLS certificates when connecting to the control plane.
+    pub fn with_tls_insecure(mut self, insecure: bool) -> Self {
+        self.tls_insecure = insecure;
+        if insecure {
+            self.http = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .danger_accept_invalid_certs(true)
+                .build()
+                .unwrap_or_default();
+        }
         self
     }
 

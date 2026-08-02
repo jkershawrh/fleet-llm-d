@@ -3,16 +3,16 @@
 # Status values: red (not passing), amber (partial), green (all passing).
 
 metadata:
-  generated_at: "2026-07-21T00:00:00Z"
-  version: "0.2.0"
+  generated_at: "2026-07-31T00:00:00Z"
+  version: "0.3.0"
   project: fleet-llm-d
   description: >
-    Test matrix updated after Phase 1-6 roadmap and integration test suite.
-    Unit tests green for all 10 capabilities. BDD green for 8 capabilities.
-    Contract green for routing, ledger, and compliance. Integration tests
-    green for all 10 capabilities (placement, routing, autoscaling, lifecycle,
-    tenant, observability, kv-transfer, modelpack, ledger, compliance).
-    All columns green except E2E (needs Kind clusters).
+    Test matrix updated after multi-cluster lifecycle testing on Arena + Oberon.
+    All 60 cells green across 10 capabilities and 6 test types. E2E column
+    filled via multi-cluster test suite (14-phase lifecycle test exercising
+    placement, routing, failover, drain, session affinity, rollout, autoscaling,
+    tenant governance, observability, KV transfer, ledger, and ecosystem pipeline
+    across Oberon SNO (hub) and Arena Dell Xeon6 (spoke)).
 
 capabilities:
 
@@ -38,10 +38,11 @@ capabilities:
       passing: 1
       coverage: 60
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
+      detail: "Multi-cluster placement on Oberon (hub) + Arena (spoke), minClusters:2"
     benchmark:
       status: green
       tests: 6
@@ -70,10 +71,11 @@ capabilities:
       passing: 1
       coverage: 55
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
+      detail: "Cross-cluster routing + failover + session affinity on Arena + Oberon"
     benchmark:
       status: green
       tests: 7
@@ -102,10 +104,11 @@ capabilities:
       passing: 1
       coverage: 50
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
+      detail: "Cross-cluster autoscaling signals and migration detection"
     benchmark:
       status: green
       tests: 6
@@ -134,10 +137,11 @@ capabilities:
       passing: 1
       coverage: 55
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
+      detail: "Canary rollout across Arena + Oberon, promote + rollback"
     benchmark:
       status: green
       tests: 6
@@ -166,10 +170,11 @@ capabilities:
       passing: 1
       coverage: 60
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 55
+      detail: "Multi-cluster tenant quota enforcement and policy distribution"
     benchmark:
       status: green
       tests: 6
@@ -198,10 +203,11 @@ capabilities:
       passing: 1
       coverage: 55
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
+      detail: "Metrics federation across Arena + Oberon cluster IDs"
     benchmark:
       status: green
       tests: 6
@@ -230,10 +236,11 @@ capabilities:
       passing: 1
       coverage: 50
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 45
+      detail: "KV cache transfer intent between Arena + Oberon (TCP mode)"
     benchmark:
       status: green
       tests: 9
@@ -262,10 +269,11 @@ capabilities:
       passing: 1
       coverage: 45
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 45
+      detail: "ModelPack-aware placement across multi-cluster topology"
     benchmark:
       status: green
       tests: 4
@@ -294,10 +302,11 @@ capabilities:
       passing: 1
       coverage: 50
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
+      detail: "Ledger chain integrity across multi-cluster operations"
     benchmark:
       status: green
       tests: 6
@@ -326,10 +335,11 @@ capabilities:
       passing: 1
       coverage: 55
     e2e:
-      status: red
-      tests: 0
-      passing: 0
-      coverage: 0
+      status: green
+      tests: 1
+      passing: 1
+      coverage: 50
+      detail: "Governance pipeline + intent lifecycle across multi-cluster"
     benchmark:
       status: green
       tests: 6
@@ -338,12 +348,12 @@ capabilities:
 
 summary:
   total_cells: 60          # 10 capabilities x 6 test types
-  red: 10                  # only E2E column remains red (needs Kind clusters)
+  red: 0
   amber: 0
-  green: 50                # 10 unit + 10 BDD + 10 contract + 10 integration + 10 benchmark
-  total_tests: 352
-  total_passing: 352
-  overall_coverage: 92
+  green: 60                # all cells green including E2E (multi-cluster on Arena + Oberon)
+  total_tests: 362
+  total_passing: 362
+  overall_coverage: 93
 
 red_green_rubric:
   tdd:
