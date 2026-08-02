@@ -32,7 +32,11 @@ pub struct MetricsReporter {
     /// Gateway-reachable inference proxy base URL advertised with cluster status.
     inference_url: String,
     /// Accept invalid TLS certificates (for cross-cluster OpenShift Routes).
+    /// Only takes effect when no CA cert is configured via `tls_ca_cert`.
     tls_insecure: bool,
+    /// Optional path to a PEM-encoded CA certificate file for proper TLS
+    /// verification of the control plane.
+    tls_ca_cert: Option<String>,
     /// Shared HTTP client with bounded request latency.
     http: reqwest::Client,
 }
@@ -53,11 +57,44 @@ impl MetricsReporter {
             health_url: String::new(),
             inference_url: String::new(),
             tls_insecure: false,
+            tls_ca_cert: None,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap_or_default(),
         }
+    }
+
+    /// Build an HTTP client with the appropriate TLS configuration.
+    /// When a CA cert path is provided, the certificate is loaded and added
+    /// as a trusted root. Otherwise, if `insecure` is true, invalid
+    /// certificates are accepted.
+    fn build_http_client(insecure: bool, ca_cert_path: Option<&str>) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5));
+
+        if let Some(path) = ca_cert_path {
+            match std::fs::read(path) {
+                Ok(pem_bytes) => {
+                    match reqwest::Certificate::from_pem(&pem_bytes) {
+                        Ok(cert) => {
+                            builder = builder.add_root_certificate(cert);
+                            tracing::info!(path = %path, "loaded CA certificate for TLS verification");
+                        }
+                        Err(e) => {
+                            tracing::error!(path = %path, error = %e, "failed to parse CA certificate; falling back to system roots");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(path = %path, error = %e, "failed to read CA certificate file; falling back to system roots");
+                }
+            }
+        } else if insecure {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        builder.build().unwrap_or_default()
     }
 
     /// Override the default collection interval.
@@ -84,16 +121,19 @@ impl MetricsReporter {
         self
     }
 
+    /// Set a PEM-encoded CA certificate file for proper TLS verification.
+    /// When set, this takes precedence over `tls_insecure`.
+    pub fn with_tls_ca_cert(mut self, path: Option<String>) -> Self {
+        self.tls_ca_cert = path;
+        self
+    }
+
     /// Accept invalid TLS certificates when connecting to the control plane.
+    /// Only falls back to `danger_accept_invalid_certs` when no CA cert is
+    /// configured via `with_tls_ca_cert`.
     pub fn with_tls_insecure(mut self, insecure: bool) -> Self {
         self.tls_insecure = insecure;
-        if insecure {
-            self.http = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .danger_accept_invalid_certs(true)
-                .build()
-                .unwrap_or_default();
-        }
+        self.http = Self::build_http_client(insecure, self.tls_ca_cert.as_deref());
         self
     }
 

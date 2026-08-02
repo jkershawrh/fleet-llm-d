@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -9,15 +10,24 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
-func (fc *FleetController) recordToLedger(entryType, clusterID string) {
+// recordToLedger writes an audit evidence entry to the immutable ledger.
+// When the ledger is configured in HTTP mode (LedgerGatewayURL is set), write
+// failures return an error so the caller can fail closed -- a configured
+// ledger error must never be silently ignored.
+func (fc *FleetController) recordToLedger(entryType, clusterID string) error {
 	if fc.FleetRecorder == nil {
-		return
+		return nil
 	}
 	if _, err := fc.FleetRecorder.RecordPlacement(
 		context.Background(), entryType, clusterID, 0, "", entryType,
 	); err != nil {
+		if fc.LedgerGatewayURL != "" {
+			// Fail closed: configured ledger must not be bypassed.
+			return fmt.Errorf("ledger write failed (fail-closed): %w", err)
+		}
 		slog.Warn("failed to record to ledger", "type", entryType, "cluster", clusterID, "error", err)
 	}
+	return nil
 }
 
 func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +74,11 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		fc.SessionTable.UnbindCluster(clusterID)
 	}
 
-	fc.recordToLedger("fleet.cluster.drain_started", clusterID)
+	if err := fc.recordToLedger("fleet.cluster.drain_started", clusterID); err != nil {
+		errorsTotal.Inc()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"cluster_id": clusterID,
@@ -100,7 +114,11 @@ func (fc *FleetController) handleActivateCluster(w http.ResponseWriter, r *http.
 		return
 	}
 
-	fc.recordToLedger("fleet.cluster.activated", clusterID)
+	if err := fc.recordToLedger("fleet.cluster.activated", clusterID); err != nil {
+		errorsTotal.Inc()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"cluster_id": clusterID,

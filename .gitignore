@@ -94,3 +94,4 @@ test/soak/results/
 
 # Container image build caches
 .git-backup-*
+fleetctl

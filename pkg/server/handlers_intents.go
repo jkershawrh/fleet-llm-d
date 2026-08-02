@@ -122,8 +122,11 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 		InputHash:      payloadHash,
 	})
 	if err != nil || receipt == nil {
-		// Admission remains durable. Missing audit evidence is retried separately
-		// and never stands in for fleet authorization.
+		if fc.LedgerGatewayURL != "" {
+			// Fail closed: a configured ledger error must not be bypassed.
+			return intents.SubmissionResponse{}, fmt.Errorf("ledger write failed (fail-closed): %w", err)
+		}
+		// Memory/disabled mode: missing audit evidence is non-fatal.
 		return submission, nil
 	}
 	if _, attachErr := fc.IntentService.AttachLedgerReceipt(ctx, submission.OperationID, intents.OperationLedgerReceipt{

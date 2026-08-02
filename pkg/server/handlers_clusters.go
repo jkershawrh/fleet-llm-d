@@ -65,7 +65,11 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 	}
 	clustersGauge.Add(1)
 	if fc.FleetRecorder != nil {
-		fc.FleetRecorder.RecordClusterRegistration(r.Context(), reg.ID, reg.Name, reg.Region)
+		if _, err := fc.FleetRecorder.RecordClusterRegistration(r.Context(), reg.ID, reg.Name, reg.Region); err != nil && fc.LedgerGatewayURL != "" {
+			errorsTotal.Inc()
+			writeError(w, http.StatusInternalServerError, "ledger write failed (fail-closed): "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "registered", "id": reg.ID})
 }
@@ -85,7 +89,11 @@ func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *htt
 	}
 	clustersGauge.Add(-1)
 	if fc.FleetRecorder != nil {
-		fc.FleetRecorder.RecordClusterDeregistration(r.Context(), id, "operator-requested")
+		if _, err := fc.FleetRecorder.RecordClusterDeregistration(r.Context(), id, "operator-requested"); err != nil && fc.LedgerGatewayURL != "" {
+			errorsTotal.Inc()
+			writeError(w, http.StatusInternalServerError, "ledger write failed (fail-closed): "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deregistered", "id": id})
 }

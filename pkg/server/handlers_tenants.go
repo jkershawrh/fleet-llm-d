@@ -68,7 +68,11 @@ func (fc *FleetController) handleCreateTenant(w http.ResponseWriter, r *http.Req
 	}
 	tenantsGauge.Inc()
 	if fc.FleetRecorder != nil {
-		fc.FleetRecorder.RecordTenantCreated(r.Context(), req.ID, req.Name, req.Priority)
+		if _, err := fc.FleetRecorder.RecordTenantCreated(r.Context(), req.ID, req.Name, req.Priority); err != nil && fc.LedgerGatewayURL != "" {
+			errorsTotal.Inc()
+			writeError(w, http.StatusInternalServerError, "ledger write failed (fail-closed): "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID, "status": "created"})
 }

@@ -22,7 +22,10 @@ spec:
             - name: POSTGRESQL_USER
               value: fleet
             - name: POSTGRESQL_PASSWORD
-              value: fleet
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-postgres-credentials
+                  key: password
             - name: POSTGRESQL_DATABASE
               value: fleet_llm_d
           ports:

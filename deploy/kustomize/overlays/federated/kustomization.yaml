@@ -36,6 +36,8 @@ patches:
                     valueFrom:
                       fieldRef:
                         fieldPath: spec.nodeName
+                  - name: FLEET_MODELPACK_REQUIRE_SIGNATURE
+                    value: "true"
   # Patch fleet-agent: mesh networking annotations
   - target:
       kind: Deployment

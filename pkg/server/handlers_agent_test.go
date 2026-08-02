@@ -17,13 +17,20 @@ func TestAgentIngestionRoutes(t *testing.T) {
 	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
 	mux := fc.SetupRoutes("control")
 
+	// Pre-register the cluster so agent status reports are accepted.
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{
+		ID: "spoke-1", Name: "spoke-1", Region: "us-east", Status: "Running",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	status := postAgentJSON(t, mux, "/api/v1/agent/status", `{
 		"cluster_id":"spoke-1","name":"spoke-1","region":"us-east",
 		"phase":"Running","gpu_available":4,"gpu_total":8,"healthy":true,
 		"health_url":"http://spoke-1.example/readyz",
 		"inference_url":"http://spoke-1.example"
 	}`)
-	if status.Code != http.StatusCreated {
+	if status.Code != http.StatusOK {
 		t.Fatalf("status report returned %d: %s", status.Code, status.Body.String())
 	}
 	record, err := fc.ClusterRepo.Get(context.Background(), "spoke-1")
@@ -81,20 +88,15 @@ func TestAgentStatusDoesNotCreateAfterRepositoryReadFailure(t *testing.T) {
 	}
 }
 
-func TestAgentStatusCompletesConcurrentCreateAsUpdate(t *testing.T) {
+func TestAgentStatusRejectsUnregisteredCluster(t *testing.T) {
 	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
-	repo := &racingClusterRepo{record: postgres.ClusterRecord{ID: "spoke-1", Name: "old"}}
-	fc.ClusterRepo = repo
 
 	response := postAgentJSON(t, fc.SetupRoutes("control"), "/api/v1/agent/status", `{
-		"cluster_id":"spoke-1","name":"new","phase":"Running",
+		"cluster_id":"unregistered-1","name":"rogue","phase":"Running",
 		"gpu_available":1,"gpu_total":2,"healthy":true
 	}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status report returned %d: %s", response.Code, response.Body.String())
-	}
-	if repo.record.Name != "new" || repo.updateCalls != 1 {
-		t.Fatalf("concurrent create was not completed as an update: %+v", repo)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("unregistered agent status should return 403, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -162,27 +164,3 @@ func (r *failingClusterRepo) List(context.Context) ([]postgres.ClusterRecord, er
 func (r *failingClusterRepo) Update(context.Context, postgres.ClusterRecord) error   { return nil }
 func (r *failingClusterRepo) Delete(context.Context, string) error                   { return nil }
 
-type racingClusterRepo struct {
-	record      postgres.ClusterRecord
-	getCalls    int
-	updateCalls int
-}
-
-func (r *racingClusterRepo) Create(context.Context, postgres.ClusterRecord) error {
-	return postgres.ErrClusterAlreadyExists
-}
-func (r *racingClusterRepo) Get(context.Context, string) (*postgres.ClusterRecord, error) {
-	r.getCalls++
-	if r.getCalls == 1 {
-		return nil, postgres.ErrClusterNotFound
-	}
-	copy := r.record
-	return &copy, nil
-}
-func (r *racingClusterRepo) List(context.Context) ([]postgres.ClusterRecord, error) { return nil, nil }
-func (r *racingClusterRepo) Update(_ context.Context, record postgres.ClusterRecord) error {
-	r.updateCalls++
-	r.record = record
-	return nil
-}
-func (r *racingClusterRepo) Delete(context.Context, string) error { return nil }

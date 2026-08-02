@@ -21,6 +21,9 @@ patches:
           spec:
             containers:
               - name: fleet-controller
+                env:
+                  - name: FLEET_MODELPACK_REQUIRE_SIGNATURE
+                    value: "true"
                 resources:
                   limits:
                     cpu: "4"

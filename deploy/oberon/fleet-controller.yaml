@@ -68,13 +68,11 @@ spec:
                 secretKeyRef:
                   name: fleet-identity
                   key: hmac-secret
-                  optional: true
             - name: GCL_DECISION_SIGNING_KEY
               valueFrom:
                 secretKeyRef:
                   name: fleet-identity
                   key: gcl-signing-key
-                  optional: true
             - name: FLEET_ALLOW_OPERATOR_JSON_INTENTS
               value: "true"
             - name: GCL_URL
@@ -86,7 +84,10 @@ spec:
             - name: LEDGER_GATEWAY_URL
               value: http://ledger-gateway.sovereign-ai-lab.svc:28099
             - name: PG_URL
-              value: postgres://fleet:fleet@fleet-postgres.fleet-llm-d.svc:5432/fleet_llm_d?sslmode=prefer
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-postgres-credentials
+                  key: pg-url
           readinessProbe:
             httpGet:
               path: /readyz

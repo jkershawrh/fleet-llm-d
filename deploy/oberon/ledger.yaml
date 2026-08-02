@@ -40,7 +40,10 @@ spec:
             - name: POSTGRESQL_USER
               value: ledger
             - name: POSTGRESQL_PASSWORD
-              value: ledger
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-postgres-credentials
+                  key: password
             - name: POSTGRESQL_DATABASE
               value: are_ledger
           ports:
@@ -119,7 +122,10 @@ spec:
           image: quay.io/rh-ee-jkershaw/are-immutable-ledger:latest
           env:
             - name: DATABASE_URL
-              value: "postgres://ledger:ledger@ledger-db.sovereign-ai-lab.svc:5432/are_ledger"
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-postgres-credentials
+                  key: database-url
             - name: GRPC_PORT
               value: "19292"
             - name: HEALTH_PORT

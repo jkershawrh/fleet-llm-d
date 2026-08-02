@@ -111,41 +111,10 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Cluster not found: attempt to create.
-	newRecord := postgres.ClusterRecord{
-		ID:           report.ClusterID,
-		Name:         report.Name,
-		Region:       report.Region,
-		GPUAvailable: report.GPUAvailable,
-		GPUTotal:     report.GPUTotal,
-		Status:       status,
-		Labels:       labels,
-		RegisteredAt: time.Now().UTC(),
-	}
-	if err := fc.ClusterRepo.Create(r.Context(), newRecord); err != nil {
-		if errors.Is(err, postgres.ErrClusterAlreadyExists) {
-			// Another report won the create race. Complete the idempotent upsert.
-			record, getErr := fc.ClusterRepo.Get(r.Context(), report.ClusterID)
-			if getErr != nil {
-				errorsTotal.Inc()
-				writeError(w, http.StatusInternalServerError, getErr.Error())
-				return
-			}
-			applyAgentStatus(record, report, status)
-			if updateErr := fc.ClusterRepo.Update(r.Context(), *record); updateErr != nil {
-				errorsTotal.Inc()
-				writeError(w, http.StatusInternalServerError, updateErr.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"status": "accepted", "created": false})
-			return
-		}
-		errorsTotal.Inc()
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	clustersGauge.Add(1)
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "accepted", "created": true})
+	// Cluster not found: reject unregistered agents. Clusters must be
+	// pre-registered via POST /api/v1/clusters before agents can report
+	// status. This prevents rogue agents from self-declaring identities.
+	writeError(w, http.StatusForbidden, fmt.Sprintf("cluster %q is not registered; register via POST /api/v1/clusters first", report.ClusterID))
 }
 
 func applyAgentStatus(record *postgres.ClusterRecord, report agentStatusReport, status string) {

@@ -2,7 +2,14 @@ package modelpack
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +31,7 @@ type RegistryModelResolver struct {
 	scheme           string
 	http             *http.Client
 	requireSignature bool
+	cosignPublicKey  crypto.PublicKey
 }
 
 // RegistryResolverOption customizes RegistryModelResolver.
@@ -44,6 +52,33 @@ func WithRequireSignature(require bool) RegistryResolverOption {
 	return func(r *RegistryModelResolver) {
 		r.requireSignature = require
 	}
+}
+
+// WithCosignPublicKey configures a PEM-encoded public key for cryptographic
+// cosign signature verification. When set alongside WithRequireSignature(true),
+// signatures are verified against this key rather than performing a
+// tag-existence-only check.
+func WithCosignPublicKey(pemData []byte) RegistryResolverOption {
+	return func(r *RegistryModelResolver) {
+		key, err := parseCosignPublicKey(pemData)
+		if err != nil {
+			return
+		}
+		r.cosignPublicKey = key
+	}
+}
+
+// parseCosignPublicKey decodes a PEM-encoded public key (ECDSA or RSA).
+func parseCosignPublicKey(pemData []byte) (crypto.PublicKey, error) {
+	block, _ := pem.Decode(pemData)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found in cosign public key data")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse cosign public key: %w", err)
+	}
+	return pub, nil
 }
 
 type ociDescriptor struct {
@@ -116,27 +151,83 @@ func (r *RegistryModelResolver) Resolve(ctx context.Context, ociRef string) (*Mo
 	return &config, nil
 }
 
+// ociSignatureManifest extends ociManifest with annotation-bearing layers used
+// by cosign to store signature payloads.
+type ociSignatureLayer struct {
+	MediaType   string            `json:"mediaType"`
+	Digest      string            `json:"digest"`
+	Size        int64             `json:"size"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+type ociSignatureManifest struct {
+	SchemaVersion int                 `json:"schemaVersion,omitempty"`
+	MediaType     string              `json:"mediaType,omitempty"`
+	Config        ociDescriptor       `json:"config"`
+	Layers        []ociSignatureLayer `json:"layers,omitempty"`
+}
+
 // verifySignature checks for a cosign signature at the standard OCI location.
-// Currently returns an error for any model when requireSignature is true and
-// no signature is found. Full cosign integration would use the cosign Go
-// library to verify against a public key or keyless (Fulcio) signing.
+// When a cosignPublicKey is configured, the signature payload is
+// cryptographically verified against the key (ECDSA or RSA). Without a key,
+// only tag existence is checked.
 func (r *RegistryModelResolver) verifySignature(ctx context.Context, ref string) error {
 	parsed, err := parseOCIRef(ref)
 	if err != nil {
 		return fmt.Errorf("invalid reference for signature check: %w", err)
 	}
 
-	// Check for cosign signature tag at the standard location:
-	// <registry>/<repo>:sha256-<digest>.sig
-	// Attempt to fetch the signature manifest. If it does not exist (404 or
-	// network error), the image is considered unsigned.
+	// Fetch the cosign signature manifest at the standard .sig tag.
 	sigTag := parsed.reference + ".sig"
 	sigURL := r.registryURL(parsed.host, "/v2/"+parsed.repository+"/manifests/"+sigTag)
-	_, err = r.doGet(ctx, sigURL, "application/vnd.oci.image.manifest.v1+json")
+	sigManifestBytes, err := r.doGet(ctx, sigURL, "application/vnd.oci.image.manifest.v1+json")
 	if err != nil {
 		return fmt.Errorf("no cosign signature found for %s: %w", ref, err)
 	}
-	return nil
+
+	// Without a configured public key, tag existence is sufficient.
+	if r.cosignPublicKey == nil {
+		return nil
+	}
+
+	// Parse the signature manifest and verify at least one layer's signature
+	// against the configured public key.
+	var sigManifest ociSignatureManifest
+	if err := json.Unmarshal(sigManifestBytes, &sigManifest); err != nil {
+		return fmt.Errorf("parse signature manifest for %s: %w", ref, err)
+	}
+
+	if len(sigManifest.Layers) == 0 {
+		return fmt.Errorf("signature manifest for %s has no layers", ref)
+	}
+
+	for _, layer := range sigManifest.Layers {
+		sig64, ok := layer.Annotations["dev.cosignproject.cosign/signature"]
+		if !ok {
+			continue
+		}
+		sigBytes, err := base64.StdEncoding.DecodeString(sig64)
+		if err != nil {
+			continue
+		}
+		// The cosign simple-signing payload is the image digest; hash it
+		// and verify the signature.
+		payload := []byte(parsed.reference)
+		digest := sha256.Sum256(payload)
+
+		switch key := r.cosignPublicKey.(type) {
+		case *ecdsa.PublicKey:
+			if ecdsa.VerifyASN1(key, digest[:], sigBytes) {
+				return nil
+			}
+		case *rsa.PublicKey:
+			if rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sigBytes) == nil {
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("no valid cosign signature verified against the configured public key for %s", ref)
 }
 
 type parsedOCIRef struct {

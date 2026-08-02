@@ -118,14 +118,24 @@ impl PolicyEnforcerImpl {
     }
 
     /// Start the policy sync loop that periodically fetches updated policies
-    /// from the control plane. Runs until cancelled.
-    pub async fn run(&self, control_plane_url: &str, token: &str, tls_insecure: bool) -> anyhow::Result<()> {
+    /// from the control plane. Runs until cancelled. When `tls_ca_cert` is
+    /// provided, proper certificate verification is used; `tls_insecure`
+    /// only takes effect when no CA cert is configured.
+    pub async fn run(&self, control_plane_url: &str, token: &str, tls_insecure: bool, tls_ca_cert: Option<&str>) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting policy enforcer sync");
 
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(tls_insecure)
-            .build()
-            .unwrap_or_default();
+        let mut builder = reqwest::Client::builder();
+        if let Some(ca_path) = tls_ca_cert {
+            if let Ok(pem_bytes) = std::fs::read(ca_path) {
+                if let Ok(cert) = reqwest::Certificate::from_pem(&pem_bytes) {
+                    builder = builder.add_root_certificate(cert);
+                    tracing::info!(path = %ca_path, "enforcer: loaded CA certificate for TLS verification");
+                }
+            }
+        } else if tls_insecure {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        let client = builder.build().unwrap_or_default();
         let url = format!("{}/api/v1/agent/policies/{}", control_plane_url.trim_end_matches('/'), self.cluster_id);
         let mut interval = time::interval(Duration::from_secs(30));
 

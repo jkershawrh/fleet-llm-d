@@ -24,7 +24,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import hashlib
+import hmac as hmac_mod
 import json
+import os
 import statistics
 import sys
 import time
@@ -32,6 +36,94 @@ import uuid
 from dataclasses import dataclass, field
 
 import httpx
+
+
+def _build_signed_cloudevent(action_class: str, parameters: dict,
+                             signing_key_b64: str, key_id: str) -> tuple[dict, str]:
+    """Build a GCL DecisionPackage CloudEvent with HMAC-SHA256 signature."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    expires = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                            time.gmtime(time.time() + 300))
+    pkg_id = str(uuid.uuid4())
+    candidate_id = str(uuid.uuid4())
+    confidence = 0.95
+    ev_hash = f"sha256:{hashlib.sha256(pkg_id.encode()).hexdigest()}"
+
+    package = {
+        "schema_version": "gcl.llm-d.ai/decision-package/v1",
+        "package_id": pkg_id,
+        "created_at": now,
+        "expires_at": expires,
+        "correlation_id": str(uuid.uuid4()),
+        "causation_id": str(uuid.uuid4()),
+        "idempotency_id": str(uuid.uuid4()),
+        "tenant": "system",
+        "zone": "us-east-1",
+        "proposer": {
+            "agent_id": "gcl-multi-cluster-test",
+            "workload_identity": "spiffe://fleet.llm-d.ai/gcl-test",
+            "trust_domain": "fleet.llm-d.ai",
+        },
+        "constraints": [{"constraint_id": str(uuid.uuid4()),
+                         "constraint_type": "availability",
+                         "hard": True, "bound": 0.99,
+                         "confidence": 0.99,
+                         "evidence_refs": [ev_hash]}],
+        "candidates": [{
+            "candidate_id": candidate_id,
+            "action_class": f"fleet.{action_class}",
+            "parameters": parameters,
+            "predicted_effect": {},
+            "confidence": confidence,
+        }],
+        "selected_candidate_id": candidate_id,
+        "rejected_alternatives": [],
+        "falsification_results": [{"candidate_id": candidate_id,
+                                    "check_id": str(uuid.uuid4()),
+                                    "verdict": "survives",
+                                    "reasoning": "multi-cluster lifecycle test",
+                                    "evidence_refs": [ev_hash]}],
+        "confidence": confidence,
+        "evidence_sources": [f"urn:fleet:multi-cluster-test:{pkg_id}"],
+        "evidence_refs": [f"sha256:{hashlib.sha256(pkg_id.encode()).hexdigest()}"],
+    }
+
+    canonical = json.dumps(package, sort_keys=True, separators=(",", ":"))
+    canonical_bytes = canonical.encode()
+    digest = "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
+    key = base64.b64decode(signing_key_b64)
+    sig = hmac_mod.new(key, canonical_bytes, hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+
+    # Use canonical form as the package to ensure Go's re-canonicalization
+    # produces identical bytes for signature verification.
+    package_for_wire = json.loads(canonical)
+
+    event = {
+        "specversion": "1.0",
+        "id": str(uuid.uuid4()),
+        "source": "urn:fleet:multi-cluster-test",
+        "type": "ai.llm-d.gcl.decision-package.v1",
+        "subject": f"fleet/{action_class}",
+        "time": now,
+        "datacontenttype": "application/json",
+        "dataschema": "https://schemas.llm-d.ai/gcl/decision-package/v1/schema.json",
+        "correlationid": package["correlation_id"],
+        "causationid": package["causation_id"],
+        "idempotencyid": package["idempotency_id"],
+        "tenant": "system",
+        "zone": "us-east-1",
+        "expiry": expires,
+        "evidence": [],
+        "data": {
+            "package": package_for_wire,
+            "digest": digest,
+            "signature": sig_b64,
+            "algorithm": "HMAC-SHA256",
+            "key_id": key_id,
+        },
+    }
+    return event, "application/cloudevents+json"
 
 # ── Profiles ──
 
@@ -148,7 +240,9 @@ class MultiClusterTest:
     def __init__(self, fleet_url: str, ledger_url: str = "",
                  arena_cluster_id: str = "arena-xeon6",
                  oberon_cluster_id: str = "oberon-sno",
-                 timeout: float = 30.0):
+                 timeout: float = 30.0,
+                 gcl_signing_key: str = "",
+                 gcl_key_id: str = ""):
         self.fleet = fleet_url.rstrip("/")
         self.ledger = ledger_url.rstrip("/") if ledger_url else ""
         self.arena_id = arena_cluster_id
@@ -156,6 +250,8 @@ class MultiClusterTest:
         self.timeout = timeout
         self._cycle = 0
         self._inference_counter = 0
+        self.gcl_signing_key = gcl_signing_key or os.environ.get("GCL_DECISION_SIGNING_KEY", "")
+        self.gcl_key_id = gcl_key_id or os.environ.get("GCL_DECISION_SIGNING_KEY_ID", "")
         self._http = httpx.AsyncClient(
             verify=False,
             timeout=timeout,
@@ -786,20 +882,25 @@ class MultiClusterTest:
     async def phase_kv_cache_transfer(self, state: SoakState):
         cap = state.phase(11)
         try:
-            intent_id = f"kv-xfer-{uuid.uuid4().hex[:8]}"
-            intent = {
-                "action_class": "kv_transfer",
-                "target_ref": "granite-3.3-2b-pool",
-                "parameters": {
-                    "source_cluster": self.oberon_id,
-                    "target_cluster": self.arena_id,
-                    "model": "granite-3.3-2b",
-                    "reason": "multi-cluster lifecycle test: rebalance KV cache",
-                },
+            params = {
+                "source_cluster": self.oberon_id,
+                "target_cluster": self.arena_id,
+                "model": "granite-3.3-2b",
+                "reason": "multi-cluster lifecycle test: rebalance KV cache",
             }
-            resp, ms = await self._req(
-                "POST", f"{self.fleet}/api/v1/intents", intent,
-                {"Content-Type": "application/json"})
+            if self.gcl_signing_key and self.gcl_key_id:
+                event, ct = _build_signed_cloudevent(
+                    "kv_transfer", params, self.gcl_signing_key, self.gcl_key_id)
+                resp, ms = await self._req(
+                    "POST", f"{self.fleet}/api/v2/intents",
+                    json.dumps(event), {"Content-Type": ct})
+            else:
+                intent = {"action_class": "kv_transfer",
+                          "target_ref": "granite-3.3-2b-pool",
+                          "parameters": params}
+                resp, ms = await self._req(
+                    "POST", f"{self.fleet}/api/v1/intents", intent,
+                    {"Content-Type": "application/json"})
             if resp.status_code in (200, 201, 202):
                 cap.successes += 1
                 cap.latencies.append(ms)
@@ -878,27 +979,27 @@ class MultiClusterTest:
     async def phase_ecosystem_pipeline(self, state: SoakState):
         cap = state.phase(13)
         try:
-            intent_id = f"eco-{uuid.uuid4().hex[:8]}"
-            now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
-            expires = time.strftime(
-                "%Y-%m-%dT%H:%M:%S+00:00",
-                time.gmtime(time.time() + 300))
-            sha = f"{self._cycle:064x}"
-
-            decision_package = {
-                "action_class": "scale_inference_pool",
-                "target_ref": "granite-3.3-2b-pool",
-                "parameters": {
-                    "target_replicas": 3,
-                    "clusters": [self.arena_id, self.oberon_id],
-                    "reason": "multi-cluster lifecycle test: ecosystem pipeline",
-                },
+            params = {
+                "target_replicas": 3,
+                "clusters": [self.arena_id, self.oberon_id],
+                "reason": "multi-cluster lifecycle test: ecosystem pipeline",
             }
 
-            # Submit via intent pipeline
-            resp, ms = await self._req(
-                "POST", f"{self.fleet}/api/v1/intents", decision_package,
-                {"Content-Type": "application/json"})
+            if self.gcl_signing_key and self.gcl_key_id:
+                event, ct = _build_signed_cloudevent(
+                    "scale", params, self.gcl_signing_key, self.gcl_key_id)
+                resp, ms = await self._req(
+                    "POST", f"{self.fleet}/api/v2/intents",
+                    json.dumps(event), {"Content-Type": ct})
+            else:
+                decision_package = {
+                    "action_class": "scale_inference_pool",
+                    "target_ref": "granite-3.3-2b-pool",
+                    "parameters": params,
+                }
+                resp, ms = await self._req(
+                    "POST", f"{self.fleet}/api/v1/intents", decision_package,
+                    {"Content-Type": "application/json"})
             if resp.status_code in (200, 201, 202):
                 cap.successes += 1
                 cap.latencies.append(ms)
@@ -1247,6 +1348,10 @@ async def main():
                         help="HTTP timeout in seconds")
     parser.add_argument("--json", action="store_true", dest="output_json",
                         help="Emit JSON results to stdout")
+    parser.add_argument("--gcl-signing-key", default="",
+                        help="Base64-encoded HMAC-SHA256 key for GCL CloudEvent signing (or GCL_DECISION_SIGNING_KEY env)")
+    parser.add_argument("--gcl-key-id", default="",
+                        help="Key ID for GCL signing (or GCL_DECISION_SIGNING_KEY_ID env)")
     args = parser.parse_args()
 
     test = MultiClusterTest(
@@ -1255,6 +1360,8 @@ async def main():
         arena_cluster_id=args.arena_cluster_id,
         oberon_cluster_id=args.oberon_cluster_id,
         timeout=args.timeout,
+        gcl_signing_key=args.gcl_signing_key,
+        gcl_key_id=args.gcl_key_id,
     )
     _, slo_pass = await test.run(args.profile, output_json=args.output_json)
     sys.exit(0 if slo_pass else 1)
