@@ -18,6 +18,9 @@ oc apply -f deploy/brutus/vllm-gpu-inference.yaml
 echo "--- Applying network policies ---"
 oc apply -f deploy/brutus/network-policies.yaml
 
+echo "--- Creating inference Route (for cross-cluster access from Praxis) ---"
+oc apply -f deploy/brutus/inference-route.yaml
+
 echo "--- Deploying fleet-agent ---"
 sed "s|FLEET_CONTROL_PLANE_URL_PLACEHOLDER|${OBERON_CONTROLLER_URL}|g" \
   deploy/brutus/fleet-agent.yaml | oc apply -f -
@@ -30,8 +33,10 @@ oc rollout status deploy/fleet-agent -n fleet-llm-d --timeout=120s
 
 echo ""
 echo "=== Health checks ==="
+INFERENCE_ROUTE=$(oc get route vllm-granite-8b-gpu -n fleet-llm-d -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 echo "Fleet agent proxy:   http://fleet-agent.fleet-llm-d.svc:8090/healthz"
 echo "vLLM GPU inference:  http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000/health"
+echo "Inference Route:     https://$INFERENCE_ROUTE"
 
 echo ""
 echo "=== Brutus GPU spoke deployment complete ==="

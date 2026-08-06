@@ -18,6 +18,9 @@ oc apply -f deploy/arena/granite-inference.yaml
 echo "--- Applying network policies ---"
 oc apply -f deploy/arena/network-policies.yaml
 
+echo "--- Creating inference Route (for cross-cluster access from Praxis) ---"
+oc apply -f deploy/arena/inference-route.yaml
+
 echo "--- Deploying fleet-agent ---"
 sed "s|FLEET_CONTROL_PLANE_URL_PLACEHOLDER|${OBERON_CONTROLLER_URL}|g" \
   deploy/arena/fleet-agent.yaml | oc apply -f -
@@ -30,8 +33,10 @@ oc rollout status deploy/fleet-agent -n fleet-llm-d --timeout=120s
 
 echo ""
 echo "=== Health checks ==="
+INFERENCE_ROUTE=$(oc get route ovms-granite-2b -n fleet-llm-d -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 echo "Fleet agent proxy:   http://fleet-agent.fleet-llm-d.svc:8090/healthz"
 echo "Granite inference:   http://granite-real.fleet-llm-d.svc:8000/health"
+echo "Inference Route:     https://$INFERENCE_ROUTE"
 
 echo ""
 echo "=== Arena spoke deployment complete ==="

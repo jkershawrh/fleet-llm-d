@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovms-granite-2b
+  namespace: fleet-llm-d
+  labels:
+    app: ovms-granite-2b
+    fleet.llm-d.ai/purpose: cross-cluster-inference
+spec:
+  to:
+    kind: Service
+    name: ovms-granite-2b
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

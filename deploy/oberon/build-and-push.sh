@@ -24,17 +24,16 @@ podman build --platform "$PLATFORM" \
   -t "$REGISTRY/fleet-agent:latest" \
   -f deploy/docker/Dockerfile.agent .
 
-echo "=== Building fleet-gateway ==="
-podman build --platform "$PLATFORM" \
-  -t "$REGISTRY/fleet-gateway:latest" \
-  -f deploy/docker/Dockerfile.gateway .
+echo "=== Mirroring Praxis AI (external) ==="
+podman pull ghcr.io/praxis-proxy/ai:latest
+podman tag ghcr.io/praxis-proxy/ai:latest "$REGISTRY/praxis-ai:latest"
 
 echo "=== Pushing images ==="
 podman push "$REGISTRY/fleet-controller:latest"
 podman push "$REGISTRY/modelplane-mock:latest"
 podman push "$REGISTRY/mock-inference:latest"
 podman push "$REGISTRY/fleet-agent:latest"
-podman push "$REGISTRY/fleet-gateway:latest"
+podman push "$REGISTRY/praxis-ai:latest"
 
 echo "=== Done ==="
 echo "Images pushed to $REGISTRY"

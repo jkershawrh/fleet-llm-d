@@ -118,17 +118,23 @@ kc apply -f "$SCRIPT_DIR/fleet-controller.yaml"
 echo "Waiting for fleet-controller..."
 kc rollout status deploy/fleet-controller -n fleet-llm-d --timeout=120s
 
-# ---- Step 7: Fleet Agent (Oberon as local spoke) ----
-echo "--- Step 7: Fleet Agent (oberon-sno) ---"
+# ---- Step 7: Praxis AI Gateway ----
+echo "--- Step 7: Praxis AI Gateway ---"
+kc apply -f "$SCRIPT_DIR/../praxis/praxis-deployment.yaml"
+echo "Waiting for praxis-ai..."
+kc rollout status deploy/praxis-ai -n fleet-llm-d --timeout=120s
+
+# ---- Step 8: Fleet Agent (Oberon as local spoke) ----
+echo "--- Step 8: Fleet Agent (oberon-sno) ---"
 kc apply -f "$SCRIPT_DIR/fleet-agent.yaml"
 kc rollout status deploy/fleet-agent -n fleet-llm-d --timeout=120s
 
-# ---- Step 8: Network Policies ----
-echo "--- Step 8: Network Policies ---"
+# ---- Step 9: Network Policies ----
+echo "--- Step 9: Network Policies ---"
 kc apply -f "$SCRIPT_DIR/network-policies.yaml"
 
-# ---- Step 9: deepfield-fleet ----
-echo "--- Step 9: deepfield-fleet ---"
+# ---- Step 10: deepfield-fleet ----
+echo "--- Step 10: deepfield-fleet ---"
 if [[ -d "$DEEPFIELD_ROOT/deploy" ]]; then
   # Create deepfield secrets
   kc apply -f - <<EOF
@@ -155,8 +161,8 @@ else
   echo "WARNING: deepfield-fleet repo not found at $DEEPFIELD_ROOT — skipping"
 fi
 
-# ---- Step 10: Governed Cognitive Loop ----
-echo "--- Step 10: Governed Cognitive Loop ---"
+# ---- Step 11: Governed Cognitive Loop ----
+echo "--- Step 11: Governed Cognitive Loop ---"
 if [[ -d "$GCL_ROOT/deploy" ]]; then
   kc apply -f "$GCL_ROOT/deploy/namespace.yaml"
   # Apply deployment (update image ref inline)
@@ -180,7 +186,9 @@ fi
 echo ""
 echo "=== Deployment complete ==="
 echo ""
+PRAXIS_ROUTE=$(kc get route praxis-ai -n fleet-llm-d -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 echo "Fleet URL:      https://$FLEET_ROUTE"
+echo "Praxis AI:      https://$PRAXIS_ROUTE"
 echo "Ledger:         http://ledger-gateway.immutable-ledger.svc:28099"
 echo "deepfield:      http://deepfield-fleet.fleet-llm-d.svc:8000"
 echo "GCL:            http://gcl-app.governed-cognitive-loop.svc:8000"

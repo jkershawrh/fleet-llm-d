@@ -93,3 +93,10 @@ spec:
       ports:
         - port: 8080
           protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 8080
+          protocol: TCP

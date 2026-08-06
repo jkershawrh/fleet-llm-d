@@ -67,6 +67,13 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - protocol: TCP
+          port: 8000
   egress:
     - to:
         - namespaceSelector: {}

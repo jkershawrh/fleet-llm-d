@@ -80,6 +80,10 @@ build_images() {
     -t gcl-demo:latest \
     -f "$GCL_ROOT/Containerfile" "$GCL_ROOT"
 
+  echo "=== praxis-ai (mirror from GHCR) ==="
+  podman pull --platform "$PLATFORM" ghcr.io/praxis-proxy/ai:latest
+  podman tag ghcr.io/praxis-proxy/ai:latest praxis-ai:latest
+
   echo ""
   echo "All images built."
 }
@@ -92,7 +96,7 @@ push_to_oberon() {
   login_registry "$OBERON_REGISTRY" "$HOME/.kube/config" || return 1
 
   # fleet-llm-d namespace images
-  for img in fleet-controller fleet-agent mock-inference modelplane-mock deepfield-fleet; do
+  for img in fleet-controller fleet-agent mock-inference modelplane-mock deepfield-fleet praxis-ai; do
     echo "--- Pushing $img → Oberon/fleet-llm-d ---"
     podman tag "${img}:latest" "${OBERON_REGISTRY}/fleet-llm-d/${img}:latest"
     podman push --tls-verify=false "${OBERON_REGISTRY}/fleet-llm-d/${img}:latest"

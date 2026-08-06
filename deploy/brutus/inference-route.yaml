@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: vllm-granite-8b-gpu
+  namespace: fleet-llm-d
+  labels:
+    app: vllm-granite-8b-gpu
+    fleet.llm-d.ai/purpose: cross-cluster-inference
+spec:
+  to:
+    kind: Service
+    name: vllm-granite-8b-gpu
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
