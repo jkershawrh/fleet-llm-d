@@ -222,7 +222,7 @@ func waitForLeaderRetry(ctx context.Context) bool {
 }
 
 func (le *LeaderElector) createLease(ctx context.Context) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 	lease := k8sLease{
 		APIVersion: "coordination.k8s.io/v1",
 		Kind:       "Lease",
@@ -240,7 +240,7 @@ func (le *LeaderElector) createLease(ctx context.Context) error {
 }
 
 func (le *LeaderElector) acquireLease(ctx context.Context, existing *k8sLease) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 	existing.Spec.HolderIdentity = le.identity
 	existing.Spec.AcquireTime = now
 	existing.Spec.RenewTime = now
@@ -255,7 +255,7 @@ func (le *LeaderElector) renewLease(ctx context.Context) error {
 	if lease.Spec.HolderIdentity != le.identity {
 		return fmt.Errorf("lease held by %s, not %s", lease.Spec.HolderIdentity, le.identity)
 	}
-	lease.Spec.RenewTime = time.Now().UTC().Format(time.RFC3339Nano)
+	lease.Spec.RenewTime = time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 	return le.writeLease(ctx, http.MethodPut, le.leaseURL(), lease)
 }
 
@@ -289,7 +289,7 @@ func (le *LeaderElector) isHeldByMe(lease *k8sLease) bool {
 }
 
 func (le *LeaderElector) isExpired(lease *k8sLease) bool {
-	renewTime, err := time.Parse(time.RFC3339Nano, lease.Spec.RenewTime)
+	renewTime, err := time.Parse("2006-01-02T15:04:05.000000Z", lease.Spec.RenewTime)
 	if err != nil {
 		return true
 	}
