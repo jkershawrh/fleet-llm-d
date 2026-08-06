@@ -37,7 +37,7 @@ spec:
           args:
             - "--gcl-url=http://gcl-app.governed-cognitive-loop.svc:8000"
             - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
-            - "--ledger-url=http://ledger-gateway.sovereign-ai-lab.svc:28099"
+            - "--ledger-url=http://ledger-gateway.immutable-ledger.svc:28099"
             - "--deepfield-token=$(DEEPFIELD_TOKEN)"
             - "--profile=72hr"
             - "--timeout=15"

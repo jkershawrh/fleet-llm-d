@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-granite-8b-gpu
+  namespace: fleet-llm-d
+  labels:
+    app: vllm-granite-8b-gpu
+    fleet.llm-d.ai/model: granite-3.1-8b
+    fleet.llm-d.ai/runtime: vllm
+    fleet.llm-d.ai/hardware: gpu-nvidia-h100
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-granite-8b-gpu
+  template:
+    metadata:
+      labels:
+        app: vllm-granite-8b-gpu
+        fleet.llm-d.ai/model: granite-3.1-8b
+        fleet.llm-d.ai/runtime: vllm
+        fleet.llm-d.ai/hardware: gpu-nvidia-h100
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          args:
+            - "--model=ibm-granite/granite-3.1-8b-instruct"
+            - "--device=cuda"
+            - "--dtype=bfloat16"
+            - "--max-model-len=8192"
+            - "--port=8000"
+            - "--gpu-memory-utilization=0.85"
+            - "--tensor-parallel-size=1"
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+                  optional: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "32Gi"
+              nvidia.com/gpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 180
+            periodSeconds: 30
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-granite-8b-gpu
+  namespace: fleet-llm-d
+  labels:
+    app: vllm-granite-8b-gpu
+    fleet.llm-d.ai/model: granite-3.1-8b
+    fleet.llm-d.ai/runtime: vllm
+spec:
+  selector:
+    app: vllm-granite-8b-gpu
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http

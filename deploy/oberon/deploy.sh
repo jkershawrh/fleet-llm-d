@@ -10,9 +10,9 @@ oc apply -f deploy/oberon/fleet-controller.yaml 2>/dev/null | head -1 || true
 echo "--- Deploying ARE ledger ---"
 oc apply -f deploy/oberon/ledger.yaml
 echo "Waiting for ledger-db..."
-oc rollout status deploy/ledger-db -n sovereign-ai-lab --timeout=120s
+oc rollout status deploy/ledger-db -n immutable-ledger --timeout=120s
 echo "Waiting for ledger-gateway..."
-oc rollout status deploy/ledger-gateway -n sovereign-ai-lab --timeout=120s
+oc rollout status deploy/ledger-gateway -n immutable-ledger --timeout=120s
 
 echo "--- Deploying fleet-llm-d components ---"
 oc apply -f deploy/oberon/modelplane-mock.yaml

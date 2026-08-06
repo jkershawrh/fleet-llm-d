@@ -25,7 +25,7 @@ Audience: Red Hat internal engineers working on AI inference PoCs.
 ### Cluster access
 
 You need `oc login` access to an OpenShift cluster. The deploy scripts target the
-`fleet-llm-d` and `sovereign-ai-lab` namespaces. Ask your cluster admin for
+`fleet-llm-d` and `immutable-ledger` namespaces. Ask your cluster admin for
 project-admin access to both.
 
 ### Verify prerequisites
@@ -152,7 +152,7 @@ it before deploying:
 
 ```bash
 oc create namespace fleet-llm-d || true
-oc create namespace sovereign-ai-lab || true
+oc create namespace immutable-ledger || true
 
 # Create the pull secret in both namespaces
 oc create secret docker-registry quay-pull-secret \
@@ -165,7 +165,7 @@ oc create secret docker-registry quay-pull-secret \
   --docker-server=quay.io \
   --docker-username=<your-quay-user> \
   --docker-password=<your-quay-token> \
-  -n sovereign-ai-lab
+  -n immutable-ledger
 ```
 
 ### 3c. Deploy
@@ -175,8 +175,8 @@ bash deploy/oberon/deploy.sh
 ```
 
 This script:
-1. Creates the `sovereign-ai-lab` and `fleet-llm-d` namespaces
-2. Deploys the ARE ledger database and gateway into `sovereign-ai-lab`
+1. Creates the `immutable-ledger` and `fleet-llm-d` namespaces
+2. Deploys the ARE ledger database and gateway into `immutable-ledger`
 3. Deploys `modelplane-mock`, `mock-inference`, and `fleet-controller` into `fleet-llm-d`
 4. Waits for all rollouts to complete
 5. Runs health checks and prints the route URLs
@@ -285,13 +285,13 @@ oc apply -f deploy/oberon/deepfield-fleet.yaml  # if available
 
 ### 4c. The ARE ledger is already deployed
 
-The `deploy.sh` script deploys the ledger into `sovereign-ai-lab`. Verify it:
+The `deploy.sh` script deploys the ledger into `immutable-ledger`. Verify it:
 
 ```bash
-LEDGER_POD=$(oc get pods -n sovereign-ai-lab -l app=ledger-gateway -o jsonpath='{.items[0].metadata.name}')
+LEDGER_POD=$(oc get pods -n immutable-ledger -l app=ledger-gateway -o jsonpath='{.items[0].metadata.name}')
 
 # Health check via port-forward
-oc port-forward -n sovereign-ai-lab $LEDGER_POD 28099:28099 &
+oc port-forward -n immutable-ledger $LEDGER_POD 28099:28099 &
 curl -s http://localhost:28099/api/health | jq .
 kill %1
 ```
@@ -613,7 +613,7 @@ Fix: make sure the allow rules are applied for all components.
 ```bash
 # Check active NetworkPolicies
 oc get networkpolicy -n fleet-llm-d
-oc get networkpolicy -n sovereign-ai-lab
+oc get networkpolicy -n immutable-ledger
 
 # If policies are blocking traffic, either remove default-deny or add explicit allows
 oc apply -f deploy/oberon/network-policies.yaml
@@ -627,7 +627,7 @@ oc delete networkpolicy default-deny-ingress -n fleet-llm-d
 ```bash
 # From a fleet-llm-d pod, curl the ledger
 oc exec deploy/fleet-controller -n fleet-llm-d -- \
-  curl -s http://ledger-gateway.sovereign-ai-lab.svc:28099/api/health
+  curl -s http://ledger-gateway.immutable-ledger.svc:28099/api/health
 # Expected: healthy response
 ```
 
@@ -658,7 +658,7 @@ oc get kubeletconfig -o yaml
 ```bash
 # All pods should be Running (not Pending)
 oc get pods -n fleet-llm-d
-oc get pods -n sovereign-ai-lab
+oc get pods -n immutable-ledger
 oc get pods -n governed-cognitive-loop
 ```
 

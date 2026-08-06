@@ -81,7 +81,7 @@ The ledger verify errors are caused by `/api/verify` scanning 41 hash chains acr
 | OVMS granite-2b-cpu | ovms-granite-2b | triforce |
 | DeepField | deepfield-fleet | fleet-llm-d |
 | GCL | gcl-app | governed-cognitive-loop |
-| ARE Ledger | ledger + ledger-gateway | sovereign-ai-lab |
+| ARE Ledger | ledger + ledger-gateway | immutable-ledger |
 | Grafana | fleet-grafana | fleet-llm-d |
 
 ## Fixes Applied During Soak

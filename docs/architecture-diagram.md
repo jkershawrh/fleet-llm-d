@@ -317,7 +317,7 @@ Client Request (model="auto")
 │    ovms-granite-2b (real inference)     │
 │    + 5 more OVMS models                 │
 │                                         │
-│  sovereign-ai-lab namespace:            │
+│  immutable-ledger namespace:            │
 │    ledger (Rust gRPC core)              │
 │    ledger-gateway (Python REST)         │
 │    postgres (ledger DB)                 │

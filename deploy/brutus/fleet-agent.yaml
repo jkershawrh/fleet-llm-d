@@ -25,32 +25,30 @@ spec:
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: fleet-agent
           image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-agent:latest
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
-            runAsUser: 65534
-            runAsGroup: 65534
-            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
           env:
             - name: FLEET_CONTROL_PLANE_URL
-              value: http://fleet-controller.fleet-llm-d.svc:8080
+              value: FLEET_CONTROL_PLANE_URL_PLACEHOLDER
             - name: FLEET_CLUSTER_ID
-              value: oberon-sno
+              value: brutus-h100
             - name: FLEET_PROXY_PORT
               value: "8090"
+            - name: FLEET_TLS_INSECURE_SKIP_VERIFY
+              value: "true"
+            - name: FLEET_CLUSTER_HEALTH_URL
+              value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000/health
+            - name: FLEET_CLUSTER_INFERENCE_URL
+              value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000
+            - name: FLEET_UPSTREAM_URL
+              value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000
           ports:
             - name: proxy
               containerPort: 8090

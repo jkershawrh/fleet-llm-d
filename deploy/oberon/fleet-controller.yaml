@@ -23,34 +23,22 @@ spec:
         app.kubernetes.io/name: fleet-controller
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
-      imagePullSecrets:
-        - name: quay-pull-secret
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: fleet-controller
-          image: quay.io/rh-ee-jkershaw/fleet-controller:latest
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller:latest
           securityContext:
             runAsNonRoot: true
-            runAsUser: 65534
-            runAsGroup: 65534
-            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
           args:
             - "--port=8080"
             - "--metrics-port=9091"
             - "--ledger-mode=http"
-            - "--ledger-endpoint=http://ledger-gateway.sovereign-ai-lab.svc:28099"
+            - "--ledger-endpoint=http://ledger-gateway.immutable-ledger.svc:28099"
             - "--backend-vllm=http://granite-real.fleet-llm-d.svc:8000"
             - "--backend-ovms=http://ovms-granite-2b.triforce.svc:8080"
             - "--modelplane-api=http://modelplane-mock.fleet-llm-d.svc:8090"
@@ -82,7 +70,7 @@ spec:
             - name: DEEPFIELD_URL
               value: http://deepfield-fleet.fleet-llm-d.svc:8000
             - name: LEDGER_GATEWAY_URL
-              value: http://ledger-gateway.sovereign-ai-lab.svc:28099
+              value: http://ledger-gateway.immutable-ledger.svc:28099
             - name: PG_URL
               valueFrom:
                 secretKeyRef:

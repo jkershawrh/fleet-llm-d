@@ -30,7 +30,7 @@ The capability soak exercises 12 fleet-llm-d capabilities every 30 seconds again
 | Fleet-controller | Go control plane with PostgreSQL persistence | fleet-llm-d namespace |
 | PostgreSQL | State store -- survives controller restarts | fleet-llm-d namespace |
 | OVMS inference | Granite 2B on Intel Xeon, sub-second responses | triforce namespace |
-| ARE Immutable Ledger | Rust core + Python REST gateway, PostgreSQL-backed | sovereign-ai-lab namespace |
+| ARE Immutable Ledger | Rust core + Python REST gateway, PostgreSQL-backed | immutable-ledger namespace |
 | GCL | Governed Cognitive Loop, prompt classification | governed-cognitive-loop namespace |
 | DeepField | Observation and forecast pipeline | fleet-llm-d namespace |
 | Praxis AI | Programmable inference gateway, 6 models | fleet-llm-d namespace |

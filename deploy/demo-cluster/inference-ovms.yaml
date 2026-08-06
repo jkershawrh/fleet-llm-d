@@ -8,7 +8,7 @@ metadata:
     fleet.llm-d.ai/runtime: ovms
 spec:
   type: ExternalName
-  externalName: ovms-sovereign-granite.sovereign-ai-lab.svc.cluster.local
+  externalName: ovms-sovereign-granite.immutable-ledger.svc.cluster.local
   ports:
   - port: 8080
     targetPort: 8080

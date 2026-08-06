@@ -16,11 +16,9 @@ spec:
       labels:
         app: modelplane-mock
     spec:
-      imagePullSecrets:
-        - name: quay-pull-secret
       containers:
         - name: modelplane-mock
-          image: quay.io/rh-ee-jkershaw/modelplane-mock:latest
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/modelplane-mock:latest
           args: ["--port=8090"]
           ports:
             - containerPort: 8090

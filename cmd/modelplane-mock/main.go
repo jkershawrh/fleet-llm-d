@@ -233,7 +233,7 @@ func seedEndpoints(ns string) []modelEndpoint {
 			Namespace: ns,
 			Model:     "granite-3.2-sovereign",
 			Cluster:   "dev-cluster-1-cpu",
-			URL:       "http://ovms-sovereign-granite.sovereign-ai-lab.svc:8080",
+			URL:       "http://ovms-sovereign-granite.immutable-ledger.svc:8080",
 			Ready:     true,
 		},
 	}

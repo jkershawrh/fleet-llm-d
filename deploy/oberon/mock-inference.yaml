@@ -16,29 +16,17 @@ spec:
       labels:
         app: mock-inference
     spec:
-      imagePullSecrets:
-        - name: quay-pull-secret
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: mock-inference
-          image: quay.io/rh-ee-jkershaw/mock-inference:latest
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/mock-inference:latest
           securityContext:
             runAsNonRoot: true
-            runAsUser: 65534
-            runAsGroup: 65534
-            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
           ports:
             - containerPort: 8080
               name: http
