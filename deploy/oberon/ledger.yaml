@@ -12,6 +12,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: nfs-storage
   resources:
     requests:
       storage: 1Gi
@@ -97,17 +98,21 @@ spec:
           image: image-registry.openshift-image-registry.svc:5000/immutable-ledger/are-ledger-gateway:latest
           env:
             - name: LEDGER_GRPC_ENDPOINT
-              value: "ledger-core.immutable-ledger.svc:19292"
+              value: "localhost:9092"
+            - name: LEDGER_ENDPOINT
+              value: "localhost:9092"
             - name: GATEWAY_PORT
               value: "28099"
+            - name: GATEWAY_HOST
+              value: "0.0.0.0"
           ports:
             - containerPort: 28099
               name: http
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/summary
               port: 28099
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
           resources:
             requests:
@@ -124,14 +129,19 @@ spec:
                 secretKeyRef:
                   name: ledger-postgres-credentials
                   key: database-url
-            - name: GRPC_PORT
-              value: "19292"
-            - name: HEALTH_PORT
-              value: "18080"
+            - name: ARE_LEDGER_DB_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-postgres-credentials
+                  key: database-url
+            - name: ARE_LEDGER_GRPC_PORT
+              value: "9092"
+            - name: ARE_LEDGER_HEALTH_PORT
+              value: "8080"
           ports:
-            - containerPort: 19292
+            - containerPort: 9092
               name: grpc
-            - containerPort: 18080
+            - containerPort: 8080
               name: health
           resources:
             requests:
@@ -163,6 +173,6 @@ spec:
   selector:
     app: ledger-gateway
   ports:
-    - port: 19292
-      targetPort: 19292
+    - port: 9092
+      targetPort: 9092
       name: grpc

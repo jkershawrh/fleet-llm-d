@@ -26,7 +26,6 @@ spec:
           image: vllm/vllm-openai:latest
           args:
             - "--model=ibm-granite/granite-3.1-8b-instruct"
-            - "--device=cuda"
             - "--dtype=bfloat16"
             - "--max-model-len=8192"
             - "--port=8000"
@@ -36,6 +35,10 @@ spec:
             - containerPort: 8000
               name: http
           env:
+            - name: HOME
+              value: /tmp
+            - name: USER
+              value: vllm
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:
                 secretKeyRef:

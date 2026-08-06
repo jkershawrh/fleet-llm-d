@@ -128,21 +128,33 @@ def _build_signed_cloudevent(action_class: str, parameters: dict,
 # ── Profiles ──
 
 PROFILES = {
-    "quick":     {"sustained_duration": 0,      "cycle_interval": 30},
-    "standard":  {"sustained_duration": 7200,   "cycle_interval": 30},
-    "overnight": {"sustained_duration": 28800,  "cycle_interval": 30},
-    "24hr":      {"sustained_duration": 86400,  "cycle_interval": 30},
-    "72hr":      {"sustained_duration": 259200, "cycle_interval": 30},
+    "smoke":     {"sustained_duration": 0,      "cycle_interval": 30,  "concurrency": 1},
+    "quick":     {"sustained_duration": 0,      "cycle_interval": 30,  "concurrency": 1},
+    "short":     {"sustained_duration": 300,    "cycle_interval": 15,  "concurrency": 2},
+    "pressure":  {"sustained_duration": 600,    "cycle_interval": 5,   "concurrency": 5},
+    "stress":    {"sustained_duration": 900,    "cycle_interval": 3,   "concurrency": 10},
+    "standard":  {"sustained_duration": 7200,   "cycle_interval": 30,  "concurrency": 2},
+    "overnight": {"sustained_duration": 28800,  "cycle_interval": 30,  "concurrency": 2},
+    "24hr":      {"sustained_duration": 86400,  "cycle_interval": 30,  "concurrency": 2},
+    "72hr":      {"sustained_duration": 259200, "cycle_interval": 30,  "concurrency": 2},
 }
 
 # ── Cluster definitions ──
 
 CLUSTERS = [
-    {"id": "arena-xeon6", "name": "Arena Dell Xeon6", "region": "us-east-1",
-     "labels": {"gpu": "cpu", "runtime": "vllm+ovms", "hardware": "xeon6-amx"}},
     {"id": "oberon-sno", "name": "Oberon SNO", "region": "us-east-1",
-     "labels": {"gpu": "cpu", "runtime": "ovms", "hardware": "xeon"}},
+     "labels": {"gpu": "cpu", "runtime": "ovms", "hardware": "xeon-sgx"}},
+    {"id": "arena-xeon6", "name": "Arena Dell Xeon6", "region": "us-east-1",
+     "labels": {"gpu": "cpu", "runtime": "ovms", "hardware": "xeon6-amx"}},
+    {"id": "brutus-h100", "name": "Brutus H100 NVL", "region": "us-east-1",
+     "labels": {"gpu": "nvidia-h100", "runtime": "vllm", "hardware": "granite-rapids"}},
 ]
+
+EXTERNAL_INFERENCE_URLS = {
+    "oberon-sno": "https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com",
+    "arena-xeon6": "https://ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com",
+    "brutus-h100": "https://vllm-granite-8b-fleet-llm-d.apps.brutus.fm2aihpcsed.com",
+}
 
 TENANTS = [
     {"id": "tenant-prod", "name": "Production", "priority": 1,
@@ -177,9 +189,13 @@ PHASE_NAMES = {
     11: "KV Cache Transfer",
     12: "Ledger Integrity",
     13: "Ecosystem Pipeline",
+    14: "Live Inference (CPU)",
+    15: "Live Inference (GPU)",
+    16: "Fleet Orchestrated Infer",
 }
 
-SUSTAINED_PHASES = list(range(3, 13))  # phases 3-12 repeat in sustained mode
+SUSTAINED_PHASES = list(range(3, 17))  # phases 3-16 repeat in sustained mode
+STATEFUL_PHASES = {4, 5, 6}  # failover, drain/activate, session affinity — serialize these
 
 
 # ── Data structures ──
@@ -242,7 +258,8 @@ class MultiClusterTest:
                  oberon_cluster_id: str = "oberon-sno",
                  timeout: float = 30.0,
                  gcl_signing_key: str = "",
-                 gcl_key_id: str = ""):
+                 gcl_key_id: str = "",
+                 token: str = ""):
         self.fleet = fleet_url.rstrip("/")
         self.ledger = ledger_url.rstrip("/") if ledger_url else ""
         self.arena_id = arena_cluster_id
@@ -252,11 +269,16 @@ class MultiClusterTest:
         self._inference_counter = 0
         self.gcl_signing_key = gcl_signing_key or os.environ.get("GCL_DECISION_SIGNING_KEY", "")
         self.gcl_key_id = gcl_key_id or os.environ.get("GCL_DECISION_SIGNING_KEY_ID", "")
+        self.token = token or os.environ.get("FLEET_AUTH_TOKEN", "")
+        default_headers = {}
+        if self.token:
+            default_headers["Authorization"] = f"Bearer {self.token}"
         self._http = httpx.AsyncClient(
             verify=False,
             timeout=timeout,
             http2=True,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            headers=default_headers,
         )
 
     async def _req(self, method: str, url: str, data=None,
@@ -1035,6 +1057,127 @@ class MultiClusterTest:
             cap.errors += 1
             cap.last_error = str(e)[:120]
 
+    # ── Phase 14: Live Inference (CPU) ──
+
+    async def phase_live_inference_cpu(self, state: SoakState):
+        cap = state.phase(14)
+        try:
+            cpu_ids = [self.oberon_id, self.arena_id]
+            target_id = cpu_ids[self._inference_counter % len(cpu_ids)]
+            inference_url = EXTERNAL_INFERENCE_URLS.get(target_id, "")
+            if not inference_url:
+                cap.errors += 1
+                cap.last_error = f"no external URL for {target_id}"
+                return
+
+            prompt = INFERENCE_PROMPTS[self._inference_counter % len(INFERENCE_PROMPTS)]
+            self._inference_counter += 1
+
+            req_body = {"model": "granite-2b-cpu",
+                        "prompt": prompt,
+                        "max_tokens": 32,
+                        "temperature": 0.1}
+            infer_resp, ms = await self._req(
+                "POST", f"{inference_url}/v1/completions", req_body)
+
+            if infer_resp.status_code == 200:
+                cap.successes += 1
+                cap.latencies.append(ms)
+            else:
+                cap.errors += 1
+                cap.last_error = f"cpu/{target_id} {infer_resp.status_code}: {infer_resp.text[:80]}"
+
+        except Exception as e:
+            cap.errors += 1
+            cap.last_error = str(e)[:120]
+
+    # ── Phase 15: Live Inference (GPU) ──
+
+    async def phase_live_inference_gpu(self, state: SoakState):
+        cap = state.phase(15)
+        try:
+            inference_url = EXTERNAL_INFERENCE_URLS.get("brutus-h100", "")
+            if not inference_url:
+                cap.errors += 1
+                cap.last_error = "no external URL for brutus-h100"
+                return
+
+            prompt = INFERENCE_PROMPTS[self._inference_counter % len(INFERENCE_PROMPTS)]
+            self._inference_counter += 1
+
+            req_body = {"model": "ibm-granite/granite-3.1-8b-instruct",
+                        "prompt": prompt,
+                        "max_tokens": 64,
+                        "temperature": 0.1}
+            infer_resp, ms = await self._req(
+                "POST", f"{inference_url}/v1/completions", req_body)
+
+            if infer_resp.status_code == 200:
+                cap.successes += 1
+                cap.latencies.append(ms)
+                body = infer_resp.json()
+                tokens = body.get("usage", {}).get("completion_tokens", 0)
+                state.__dict__.setdefault("gpu_tokens", 0)
+                state.__dict__["gpu_tokens"] += tokens
+            else:
+                cap.errors += 1
+                cap.last_error = f"gpu inference {infer_resp.status_code}: {infer_resp.text[:80]}"
+
+        except Exception as e:
+            cap.errors += 1
+            cap.last_error = str(e)[:120]
+
+    # ── Phase 16: Fleet Orchestrated Inference (CPU+GPU routing) ──
+
+    async def phase_fleet_orchestrated_inference(self, state: SoakState):
+        cap = state.phase(16)
+        try:
+            all_ids = list(EXTERNAL_INFERENCE_URLS.keys())
+            target_id = all_ids[self._inference_counter % len(all_ids)]
+            inference_url = EXTERNAL_INFERENCE_URLS[target_id]
+            is_gpu = target_id == "brutus-h100"
+
+            prompt = INFERENCE_PROMPTS[self._inference_counter % len(INFERENCE_PROMPTS)]
+            self._inference_counter += 1
+
+            route_resp, route_ms = await self._req(
+                "POST", f"{self.fleet}/api/v1/route",
+                {"model": "granite", "cluster_id": target_id,
+                 "prompt_tokens": len(prompt.split())})
+            if route_resp.status_code == 200:
+                route_data = route_resp.json()
+                routed_id = route_data.get("cluster_id", target_id)
+                if routed_id in EXTERNAL_INFERENCE_URLS:
+                    target_id = routed_id
+                    inference_url = EXTERNAL_INFERENCE_URLS[routed_id]
+                    is_gpu = routed_id == "brutus-h100"
+
+            if is_gpu:
+                req_body = {"model": "ibm-granite/granite-3.1-8b-instruct",
+                            "prompt": prompt, "max_tokens": 64, "temperature": 0.1}
+            else:
+                req_body = {"model": "granite-2b-cpu",
+                            "prompt": prompt, "max_tokens": 32, "temperature": 0.1}
+            infer_resp, ms = await self._req(
+                "POST", f"{inference_url}/v1/completions", req_body)
+
+            total_ms = route_ms + ms
+
+            if infer_resp.status_code == 200:
+                cap.successes += 1
+                cap.latencies.append(total_ms)
+                state.__dict__.setdefault("fleet_routed", {})
+                state.__dict__["fleet_routed"].setdefault(target_id, 0)
+                state.__dict__["fleet_routed"][target_id] += 1
+            else:
+                cap.errors += 1
+                cap.last_error = (f"fleet/{target_id}: "
+                                  f"{infer_resp.status_code} {infer_resp.text[:60]}")
+
+        except Exception as e:
+            cap.errors += 1
+            cap.last_error = str(e)[:120]
+
     # ── Phase Dispatcher ──
 
     async def run_phase(self, phase_num: int, state: SoakState):
@@ -1053,6 +1196,9 @@ class MultiClusterTest:
             11: self.phase_kv_cache_transfer,
             12: self.phase_ledger_integrity,
             13: self.phase_ecosystem_pipeline,
+            14: self.phase_live_inference_cpu,
+            15: self.phase_live_inference_gpu,
+            16: self.phase_fleet_orchestrated_inference,
         }
         fn = dispatch.get(phase_num)
         if fn:
@@ -1096,7 +1242,7 @@ class MultiClusterTest:
         print(f"{'='*78}", file=sys.stderr)
         print(f"\n  Duration: {elapsed/60:.1f} minutes "
               f"({state.cycle_count} sustained cycles)", file=sys.stderr)
-        print(f"  Clusters: {self.arena_id}, {self.oberon_id}", file=sys.stderr)
+        print(f"  Clusters: {', '.join(c['id'] for c in CLUSTERS)}", file=sys.stderr)
 
         print(f"\n  {'Phase':<26s}  {'OK':>6}  {'Err':>5}  {'Rate':>6}  "
               f"{'p50ms':>7}  {'p99ms':>7}", file=sys.stderr)
@@ -1259,7 +1405,7 @@ class MultiClusterTest:
             print(f"  Mode: single pass through all phases", file=sys.stderr)
         print(f"  Fleet:   {self.fleet}", file=sys.stderr)
         print(f"  Ledger:  {self.ledger or '(none)'}", file=sys.stderr)
-        print(f"  Clusters: {self.arena_id}, {self.oberon_id}", file=sys.stderr)
+        print(f"  Clusters: {', '.join(c['id'] for c in CLUSTERS)}", file=sys.stderr)
         print(f"  Timeout: {self.timeout}s", file=sys.stderr)
         print(f"{'='*78}", file=sys.stderr)
 
@@ -1268,7 +1414,7 @@ class MultiClusterTest:
         print(f"\n  --- Initial Phase Sequence ---\n", file=sys.stderr)
         self._print_header()
 
-        for phase_num in range(14):
+        for phase_num in range(len(PHASE_NAMES)):
             await self.run_phase(phase_num, state)
             elapsed = time.monotonic() - state.start_time
             self._print_phase_line(phase_num, state, elapsed)
@@ -1276,7 +1422,9 @@ class MultiClusterTest:
         # ── Sustained cycle (phases 3-12) ──
 
         if sustained_duration > 0:
-            print(f"\n  --- Sustained Cycling (phases 3-12) ---\n",
+            concurrency = profile.get("concurrency", 1)
+            print(f"\n  --- Sustained Cycling (phases 3-12, "
+                  f"concurrency={concurrency}) ---\n",
                   file=sys.stderr)
             self._print_header()
 
@@ -1285,8 +1433,17 @@ class MultiClusterTest:
                 self._cycle += 1
                 state.cycle_count = self._cycle
 
-                for phase_num in SUSTAINED_PHASES:
-                    await self.run_phase(phase_num, state)
+                if concurrency <= 1:
+                    for phase_num in SUSTAINED_PHASES:
+                        await self.run_phase(phase_num, state)
+                else:
+                    for phase_num in SUSTAINED_PHASES:
+                        if phase_num in STATEFUL_PHASES:
+                            await self.run_phase(phase_num, state)
+                        else:
+                            tasks = [self.run_phase(phase_num, state)
+                                     for _ in range(concurrency)]
+                            await asyncio.gather(*tasks, return_exceptions=True)
 
                 elapsed = time.monotonic() - state.start_time
 
@@ -1348,6 +1505,8 @@ async def main():
                         help="HTTP timeout in seconds")
     parser.add_argument("--json", action="store_true", dest="output_json",
                         help="Emit JSON results to stdout")
+    parser.add_argument("--token", default="",
+                        help="Bearer token for fleet controller auth (or FLEET_AUTH_TOKEN env)")
     parser.add_argument("--gcl-signing-key", default="",
                         help="Base64-encoded HMAC-SHA256 key for GCL CloudEvent signing (or GCL_DECISION_SIGNING_KEY env)")
     parser.add_argument("--gcl-key-id", default="",
@@ -1362,6 +1521,7 @@ async def main():
         timeout=args.timeout,
         gcl_signing_key=args.gcl_signing_key,
         gcl_key_id=args.gcl_key_id,
+        token=args.token,
     )
     _, slo_pass = await test.run(args.profile, output_json=args.output_json)
     sys.exit(0 if slo_pass else 1)
