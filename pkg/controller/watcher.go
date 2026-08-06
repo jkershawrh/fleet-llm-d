@@ -126,6 +126,37 @@ func (w *CRDWatcher) getPlacementPolicy(ctx context.Context, ref string) (v1alph
 	return resource.Spec, nil
 }
 
+// GetScalingPolicy fetches a FleetScalingPolicy CRD by name from the K8s API.
+func (w *CRDWatcher) GetScalingPolicy(ref string) (*v1alpha1.FleetScalingPolicySpec, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("scaling policy reference is required")
+	}
+	url := fmt.Sprintf("%s/apis/fleet.llm-d.ai/v1alpha1/namespaces/%s/fleetscalingpolicies/%s",
+		w.apiServer, w.namespace, ref)
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating scaling policy request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+w.token)
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching scaling policy: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("scaling policy %q returned %d: %s", ref, resp.StatusCode, string(body))
+	}
+	var resource struct {
+		Spec v1alpha1.FleetScalingPolicySpec `json:"spec"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&resource); err != nil {
+		return nil, fmt.Errorf("decoding scaling policy %q: %w", ref, err)
+	}
+	return &resource.Spec, nil
+}
+
 // Start begins polling the Kubernetes API for CRD changes in the background.
 // The goroutine exits when ctx is cancelled. Start returns nil immediately.
 func (w *CRDWatcher) Start(ctx context.Context) error {

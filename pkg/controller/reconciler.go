@@ -15,13 +15,14 @@ import (
 
 // FleetPoolState tracks the reconciled state of a single fleet inference pool.
 type FleetPoolState struct {
-	Name            string
-	Model           string
-	Source          string
-	DesiredClusters []string
-	ActualClusters  []string
-	Phase           v1alpha1.FleetPhase
-	LastReconciled  time.Time
+	Name             string
+	Model            string
+	Source           string
+	DesiredClusters  []string
+	ActualClusters   []string
+	Phase            v1alpha1.FleetPhase
+	LastReconciled   time.Time
+	ScalingPolicyRef string
 }
 
 // Reconciler drives the reconciliation loop for fleet inference pools.
@@ -81,6 +82,16 @@ func (r *Reconciler) SetNamespace(ns string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.namespace = ns
+}
+
+// Namespace returns the configured namespace.
+func (r *Reconciler) Namespace() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.namespace == "" {
+		return "default"
+	}
+	return r.namespace
 }
 
 // SetOnChange registers a callback that is invoked whenever a pool's state
@@ -155,6 +166,7 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	state.DesiredClusters = desired
 	state.ActualClusters = append([]string(nil), actual...)
 	state.LastReconciled = time.Now()
+	state.ScalingPolicyRef = pool.Scaling.PolicyRef
 
 	// Copy state and onChange ref for use outside the lock.
 	stateCopy := *state

@@ -177,12 +177,15 @@ func (fc *FleetController) leaderGate(next http.Handler) http.Handler {
 }
 
 func (fc *FleetController) runControlPlaneWatchers(ctx context.Context) {
-	workers := make([]func(context.Context), 0, 2)
+	workers := make([]func(context.Context), 0, 3)
 	if fc.CRDWatcher != nil {
 		workers = append(workers, fc.CRDWatcher.Run)
 	}
 	if fc.ModelPlaneWatcher != nil {
 		workers = append(workers, fc.ModelPlaneWatcher.Run)
+	}
+	if fc.Actuator != nil {
+		workers = append(workers, fc.runAutoscalingLoop)
 	}
 
 	if fc.LeaderElector == nil {

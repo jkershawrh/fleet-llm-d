@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/actuator"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
@@ -89,6 +90,9 @@ type FleetController struct {
 	ModelPlaneWatcher *modelplane.ModelPlaneWatcher
 	ModelPlaneBridge  *modelplane.ComplianceBridge
 
+	// Autoscaling actuation
+	Actuator *actuator.ModelPlaneActuator
+
 	// Session affinity table for multi-turn conversation routing
 	SessionTable *routing.SessionAffinityTable
 
@@ -168,8 +172,9 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 	})
 
-	// Create CRDWatcher if Kubernetes API is configured.
+	// Create CRDWatcher and autoscaling actuator if Kubernetes API is configured.
 	var crdWatcher *controller.CRDWatcher
+	var autoscalingActuator *actuator.ModelPlaneActuator
 	var intentRepository intents.Repository = intents.NewMemoryRepository()
 	if kubeAPI != "" {
 		if namespace == "" {
@@ -182,6 +187,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 		crdWatcher = controller.NewCRDWatcher(kubeAPI, namespace, token, reconciler)
 		intentRepository = intents.NewKubernetesRepository(kubeAPI, namespace, token, nil)
+		autoscalingActuator = actuator.NewModelPlaneActuator(kubeAPI, token)
 	}
 
 	return &FleetController{
@@ -206,6 +212,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		PricingTable:         cost.DefaultPricingTable(),
 		Reconciler:           reconciler,
 		CRDWatcher:           crdWatcher,
+		Actuator:             autoscalingActuator,
 		FleetRecorder:        fleetRecorder,
 		LedgerGatewayURL: func() string {
 			if ledgerCfg.Mode == ledger.ModeHTTP {
