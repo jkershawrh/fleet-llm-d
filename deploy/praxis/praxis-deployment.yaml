@@ -65,13 +65,7 @@ data:
                   x-ai-model: "granite-3.3-2b"
                 cluster: vllm-granite
 
-              # --- Cross-cluster backends (via OpenShift Routes) ---
-
-              # Arena: Granite 2B CPU (cross-cluster OVMS)
-              - path_prefix: "/"
-                headers:
-                  x-ai-model: "granite-2b-arena"
-                cluster: arena-granite-2b
+              # --- Cross-cluster backends ---
 
               # Brutus: Granite 8B GPU (cross-cluster vLLM on H100)
               - path_prefix: "/"
@@ -111,12 +105,6 @@ data:
               - name: vllm-granite
                 endpoints:
                   - "granite-real.fleet-llm-d.svc:8000"
-              # Arena cross-cluster (via OpenShift Route)
-              - name: arena-granite-2b
-                endpoints:
-                  - "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com:443"
-                tls:
-                  verify: false
               # Brutus cross-cluster (via K8s external service → Brutus NodePort 32712)
               - name: brutus-granite-8b-gpu
                 endpoints:
