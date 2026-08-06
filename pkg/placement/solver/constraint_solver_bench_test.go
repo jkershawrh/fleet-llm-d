@@ -44,7 +44,7 @@ func benchmarkSolve(b *testing.B, clusterCount int) {
 			Source: "hf://meta-llama/Llama-3-70B",
 		},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "default",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "default"},
 			MaxClusters: 10,
 		},
 	}

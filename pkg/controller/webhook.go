@@ -50,7 +50,7 @@ func ValidateFleetInferencePool(spec v1alpha1.FleetInferencePoolSpec) Validation
 		}
 	}
 
-	if spec.Placement.PolicyRef != "" && spec.Placement.MinClusters < 1 {
+	if spec.Placement.PolicyRef.Name != "" && spec.Placement.MinClusters < 1 {
 		details = append(details, "when placement policyRef is set, minClusters must be >= 1")
 	}
 

@@ -15,7 +15,7 @@ func poolSpec(model, source string) v1alpha1.FleetInferencePoolSpec {
 			Source: source,
 		},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "test-policy",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "test-policy"},
 			MinClusters: 1,
 			MaxClusters: 3,
 		},

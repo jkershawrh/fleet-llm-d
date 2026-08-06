@@ -60,7 +60,7 @@ func TestCRDWatcher_PollsForResources(t *testing.T) {
 						Source: "registry.example.com/llama-3-70b",
 					},
 					Placement: v1alpha1.PlacementRef{
-						PolicyRef: "default-policy",
+						PolicyRef: v1alpha1.PolicyReference{Name: "default-policy"},
 					},
 					Serving: v1alpha1.ServingSpec{
 						InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
@@ -225,7 +225,7 @@ func TestCRDWatcher_DetectsDeletion(t *testing.T) {
 			Name:   "old-model",
 			Source: "registry.example.com/old-model",
 		},
-		Placement: v1alpha1.PlacementRef{PolicyRef: "default"},
+		Placement: v1alpha1.PlacementRef{PolicyRef: v1alpha1.PolicyReference{Name: "default"}},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
 				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8080}},
@@ -272,7 +272,7 @@ func TestCRDWatcher_RetriesFailedAddition(t *testing.T) {
 		Metadata: k8sMetadata{Name: "retry-pool", Namespace: "default", ResourceVersion: "1"},
 		Spec: v1alpha1.FleetInferencePoolSpec{
 			Model:     v1alpha1.ModelSpec{Name: "retry-model", Source: "registry.example.com/retry"},
-			Placement: v1alpha1.PlacementRef{PolicyRef: "missing-policy"},
+			Placement: v1alpha1.PlacementRef{PolicyRef: v1alpha1.PolicyReference{Name: "missing-policy"}},
 		},
 	}}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

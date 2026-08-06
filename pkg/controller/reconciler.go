@@ -130,9 +130,9 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	}
 
 	// 2. Run solver (CPU-only, no I/O).
-	policy, err := policyResolver(ctx, pool.Placement.PolicyRef)
+	policy, err := policyResolver(ctx, pool.Placement.PolicyRef.Name)
 	if err != nil {
-		return fmt.Errorf("resolving placement policy %q: %w", pool.Placement.PolicyRef, err)
+		return fmt.Errorf("resolving placement policy %q: %w", pool.Placement.PolicyRef.Name, err)
 	}
 	decisions, err := r.solver.Solve(ctx, pool, clusters, policy)
 	if err != nil {
@@ -166,7 +166,7 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	state.DesiredClusters = desired
 	state.ActualClusters = append([]string(nil), actual...)
 	state.LastReconciled = time.Now()
-	state.ScalingPolicyRef = pool.Scaling.PolicyRef
+	state.ScalingPolicyRef = pool.Scaling.PolicyRef.Name
 
 	// Copy state and onChange ref for use outside the lock.
 	stateCopy := *state

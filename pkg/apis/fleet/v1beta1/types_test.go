@@ -33,7 +33,7 @@ func TestProviderDefaults(t *testing.T) {
 func TestAlphaConversionPreservesLegacyProviderOwnership(t *testing.T) {
 	alphaPool := v1alpha1.FleetInferencePoolSpec{
 		Model:     v1alpha1.ModelSpec{Name: "model-a"},
-		Placement: v1alpha1.PlacementRef{PolicyRef: "placement-a"},
+		Placement: v1alpha1.PlacementRef{PolicyRef: v1alpha1.PolicyReference{Name: "placement-a"}},
 	}
 	betaPool, err := ConvertFleetInferencePoolFromV1Alpha1(alphaPool, "fleet-a")
 	if err != nil {

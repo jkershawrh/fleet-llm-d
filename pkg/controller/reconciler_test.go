@@ -22,7 +22,7 @@ func testPool(name string) v1alpha1.FleetInferencePoolSpec {
 			Source: "hf://test/" + name,
 		},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "default",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "default"},
 			MaxClusters: 3,
 		},
 		Serving: v1alpha1.ServingSpec{
@@ -307,7 +307,7 @@ func TestReconcilePool_DoesNotBlockReads(t *testing.T) {
 	fastReconciler := NewReconciler(solver.NewConstraintSolver(), fastLister)
 	pool := v1alpha1.FleetInferencePoolSpec{
 		Model:     v1alpha1.ModelSpec{Name: "seed-model", Source: "test"},
-		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
+		Placement: v1alpha1.PlacementRef{PolicyRef: v1alpha1.PolicyReference{Name: "default"}, MaxClusters: 1},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
 				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8000}},
@@ -322,7 +322,7 @@ func TestReconcilePool_DoesNotBlockReads(t *testing.T) {
 	// Start a slow reconcile in background
 	go r.ReconcilePool(context.Background(), v1alpha1.FleetInferencePoolSpec{
 		Model:     v1alpha1.ModelSpec{Name: "slow-model", Source: "test"},
-		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
+		Placement: v1alpha1.PlacementRef{PolicyRef: v1alpha1.PolicyReference{Name: "default"}, MaxClusters: 1},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
 				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8000}},
@@ -365,7 +365,7 @@ func TestReconcilePool_OnChangeCalledOutsideLock(t *testing.T) {
 
 	pool := v1alpha1.FleetInferencePoolSpec{
 		Model:     v1alpha1.ModelSpec{Name: "test-model", Source: "test"},
-		Placement: v1alpha1.PlacementRef{PolicyRef: "default", MaxClusters: 1},
+		Placement: v1alpha1.PlacementRef{PolicyRef: v1alpha1.PolicyReference{Name: "default"}, MaxClusters: 1},
 		Serving: v1alpha1.ServingSpec{
 			InferencePoolTemplate: v1alpha1.InferencePoolTemplate{
 				Spec: v1alpha1.InferencePoolTemplateSpec{TargetPorts: []int{8000}},

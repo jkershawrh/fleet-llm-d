@@ -16,7 +16,7 @@ func TestValidateFleetInferencePool_Valid(t *testing.T) {
 	spec := v1alpha1.FleetInferencePoolSpec{
 		Model: v1alpha1.ModelSpec{Name: "granite-3.3-2b", Source: "huggingface"},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "default",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "default"},
 			MinClusters: 1,
 			MaxClusters: 3,
 		},

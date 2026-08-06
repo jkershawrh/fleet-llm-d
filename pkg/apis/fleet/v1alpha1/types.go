@@ -21,18 +21,23 @@ type ModelSpec struct {
 	OciRef  string `json:"ociRef,omitempty"` // ModelPack OCI reference for model metadata resolution
 }
 
+type PolicyReference struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
 type PlacementRef struct {
-	PolicyRef   string `json:"policyRef"`
-	MinClusters int    `json:"minClusters,omitempty"`
-	MaxClusters int    `json:"maxClusters,omitempty"`
+	PolicyRef   PolicyReference `json:"policyRef"`
+	MinClusters int             `json:"minClusters,omitempty"`
+	MaxClusters int             `json:"maxClusters,omitempty"`
 }
 
 type RoutingRef struct {
-	PolicyRef string `json:"policyRef,omitempty"`
+	PolicyRef PolicyReference `json:"policyRef,omitempty"`
 }
 
 type ScalingRef struct {
-	PolicyRef string `json:"policyRef,omitempty"`
+	PolicyRef PolicyReference `json:"policyRef,omitempty"`
 }
 
 type ServingSpec struct {

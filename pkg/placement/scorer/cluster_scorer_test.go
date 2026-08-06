@@ -36,7 +36,7 @@ func testPool() v1alpha1.FleetInferencePoolSpec {
 			Version: "v1",
 		},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "cost-aware",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "cost-aware"},
 			MinClusters: 1,
 			MaxClusters: 3,
 		},
