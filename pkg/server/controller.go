@@ -101,6 +101,9 @@ type FleetController struct {
 	// Session affinity table for multi-turn conversation routing
 	SessionTable *routing.SessionAffinityTable
 
+	// Routing state — tracks which clusters were healthy to avoid redundant Praxis updates.
+	lastHealthySet map[string]bool
+
 	// Auth secret for token refresh
 	AuthSecret string
 

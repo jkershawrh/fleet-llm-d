@@ -157,13 +157,22 @@ PROFILES = {
 # Each band runs for the specified duration, then transitions to the next.
 # After the last band, it loops back to the first.
 VARIABLE_INTENSITY_BANDS = [
-    {"name": "calm",     "duration": 3600,  "interval": 30, "concurrency": 1},   # 1hr calm
-    {"name": "ramp",     "duration": 1800,  "interval": 15, "concurrency": 3},   # 30min ramp
-    {"name": "pressure", "duration": 3600,  "interval": 5,  "concurrency": 5},   # 1hr pressure
-    {"name": "stress",   "duration": 1800,  "interval": 3,  "concurrency": 10},  # 30min stress
-    {"name": "cool",     "duration": 1800,  "interval": 30, "concurrency": 1},   # 30min cooldown
-    {"name": "burst",    "duration": 900,   "interval": 2,  "concurrency": 15},  # 15min burst
-    {"name": "recover",  "duration": 3600,  "interval": 30, "concurrency": 2},   # 1hr recovery
+    # Each band simulates different cluster conditions via agent metrics.
+    # The controller uses these to make routing decisions across clusters.
+    {"name": "calm",     "duration": 3600,  "interval": 30, "concurrency": 1,
+     "metrics": {"gpu_utilization": 0.3, "queue_depth": 1, "throughput_tps": 5.0, "ttft_p50_ms": 20.0}},
+    {"name": "ramp",     "duration": 1800,  "interval": 15, "concurrency": 3,
+     "metrics": {"gpu_utilization": 0.5, "queue_depth": 3, "throughput_tps": 15.0, "ttft_p50_ms": 40.0}},
+    {"name": "pressure", "duration": 3600,  "interval": 5,  "concurrency": 5,
+     "metrics": {"gpu_utilization": 0.75, "queue_depth": 8, "throughput_tps": 30.0, "ttft_p50_ms": 80.0}},
+    {"name": "stress",   "duration": 1800,  "interval": 3,  "concurrency": 10,
+     "metrics": {"gpu_utilization": 0.9, "queue_depth": 15, "throughput_tps": 50.0, "ttft_p50_ms": 150.0}},
+    {"name": "cool",     "duration": 1800,  "interval": 30, "concurrency": 1,
+     "metrics": {"gpu_utilization": 0.2, "queue_depth": 0, "throughput_tps": 2.0, "ttft_p50_ms": 15.0}},
+    {"name": "burst",    "duration": 900,   "interval": 2,  "concurrency": 15,
+     "metrics": {"gpu_utilization": 0.95, "queue_depth": 25, "throughput_tps": 60.0, "ttft_p50_ms": 200.0}},
+    {"name": "recover",  "duration": 3600,  "interval": 30, "concurrency": 2,
+     "metrics": {"gpu_utilization": 0.4, "queue_depth": 2, "throughput_tps": 8.0, "ttft_p50_ms": 25.0}},
 ]
 
 # ── Cluster definitions ──
@@ -491,13 +500,16 @@ class MultiClusterTest:
                 cap.errors += 1
                 cap.last_error = f"list clusters: {resp.status_code}"
 
-            # Simulate agent metrics from both clusters to exercise routing paths
+            # Report agent metrics — use band-specific values in variable mode.
+            band_metrics = getattr(state, '_current_band_metrics', None) or {}
             for cid in [self.arena_id, self.oberon_id]:
                 metrics = {
                     "cluster_id": cid,
-                    "throughput_tps": 10.0,
-                    "ttft_p50_ms": 25.0, "ttft_p99_ms": 90.0,
-                    "queue_depth": 2, "gpu_utilization": 0.5,
+                    "throughput_tps": band_metrics.get("throughput_tps", 10.0),
+                    "ttft_p50_ms": band_metrics.get("ttft_p50_ms", 25.0),
+                    "ttft_p99_ms": band_metrics.get("ttft_p50_ms", 25.0) * 3,
+                    "queue_depth": band_metrics.get("queue_depth", 2),
+                    "gpu_utilization": band_metrics.get("gpu_utilization", 0.5),
                     "kv_cache_hit_rate": 0.8,
                 }
                 resp, ms = await self._req(
@@ -1495,13 +1507,18 @@ class MultiClusterTest:
                     band = VARIABLE_INTENSITY_BANDS[band_idx % len(VARIABLE_INTENSITY_BANDS)]
                     concurrency = band["concurrency"]
                     current_interval = band["interval"]
+                    state._current_band_metrics = band.get("metrics", {})
                     if time.monotonic() - band_start >= band["duration"]:
                         band_idx += 1
                         band_start = time.monotonic()
                         new_band = VARIABLE_INTENSITY_BANDS[band_idx % len(VARIABLE_INTENSITY_BANDS)]
+                        state._current_band_metrics = new_band.get("metrics", {})
+                        m = new_band.get("metrics", {})
                         print(f"\n  >>> Band: {new_band['name']} "
                               f"(interval={new_band['interval']}s, "
-                              f"concurrency={new_band['concurrency']})\n",
+                              f"concurrency={new_band['concurrency']}, "
+                              f"gpu={m.get('gpu_utilization','?')}, "
+                              f"queue={m.get('queue_depth','?')})\n",
                               file=sys.stderr)
 
                 if concurrency <= 1:
