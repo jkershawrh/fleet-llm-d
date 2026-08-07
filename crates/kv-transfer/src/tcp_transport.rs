@@ -122,7 +122,11 @@ impl TransferProtocol for TcpTransferProtocol {
             total_bytes += block.data.len() as u64;
         }
         writer.flush().await?;
-        tracing::debug!(blocks = blocks.len(), bytes = total_bytes, "sent KV blocks via TCP");
+        tracing::debug!(
+            blocks = blocks.len(),
+            bytes = total_bytes,
+            "sent KV blocks via TCP"
+        );
         Ok(total_bytes)
     }
 
@@ -212,8 +216,16 @@ mod tests {
         let addr = listener.local_addr().unwrap();
 
         let send_blocks = vec![
-            KvBlock { sequence: 0, data: vec![10, 20, 30], is_final: false },
-            KvBlock { sequence: 1, data: vec![40, 50], is_final: true },
+            KvBlock {
+                sequence: 0,
+                data: vec![10, 20, 30],
+                is_final: false,
+            },
+            KvBlock {
+                sequence: 1,
+                data: vec![40, 50],
+                is_final: true,
+            },
         ];
 
         let sender = tokio::spawn(async move {
@@ -246,7 +258,11 @@ mod tests {
             let client = TcpTransferProtocol::new();
             client.connect(&addr.to_string()).await.unwrap();
             let bytes = client
-                .send_blocks(vec![KvBlock { sequence: 0, data: vec![], is_final: true }])
+                .send_blocks(vec![KvBlock {
+                    sequence: 0,
+                    data: vec![],
+                    is_final: true,
+                }])
                 .await
                 .unwrap();
             assert_eq!(bytes, 0);
@@ -273,7 +289,11 @@ mod tests {
             let client = TcpTransferProtocol::new();
             client.connect(&addr.to_string()).await.unwrap();
             let bytes = client
-                .send_blocks(vec![KvBlock { sequence: 0, data: large_data, is_final: true }])
+                .send_blocks(vec![KvBlock {
+                    sequence: 0,
+                    data: large_data,
+                    is_final: true,
+                }])
                 .await
                 .unwrap();
             assert_eq!(bytes, 1_000_000);

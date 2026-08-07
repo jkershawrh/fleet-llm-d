@@ -37,9 +37,15 @@ struct PlacementEntry {
     denied_models: Vec<String>,
 }
 
-fn default_rps() -> f64 { 100.0 }
-fn default_concurrent() -> u64 { 100 }
-fn default_tokens() -> u64 { 1_000_000 }
+fn default_rps() -> f64 {
+    100.0
+}
+fn default_concurrent() -> u64 {
+    100
+}
+fn default_tokens() -> u64 {
+    1_000_000
+}
 
 /// Tenant-level quota configuration.
 #[derive(Debug, Clone)]
@@ -121,7 +127,13 @@ impl PolicyEnforcerImpl {
     /// from the control plane. Runs until cancelled. When `tls_ca_cert` is
     /// provided, proper certificate verification is used; `tls_insecure`
     /// only takes effect when no CA cert is configured.
-    pub async fn run(&self, control_plane_url: &str, token: &str, tls_insecure: bool, tls_ca_cert: Option<&str>) -> anyhow::Result<()> {
+    pub async fn run(
+        &self,
+        control_plane_url: &str,
+        token: &str,
+        tls_insecure: bool,
+        tls_ca_cert: Option<&str>,
+    ) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting policy enforcer sync");
 
         let mut builder = reqwest::Client::builder();
@@ -136,7 +148,11 @@ impl PolicyEnforcerImpl {
             builder = builder.danger_accept_invalid_certs(true);
         }
         let client = builder.build().unwrap_or_default();
-        let url = format!("{}/api/v1/agent/policies/{}", control_plane_url.trim_end_matches('/'), self.cluster_id);
+        let url = format!(
+            "{}/api/v1/agent/policies/{}",
+            control_plane_url.trim_end_matches('/'),
+            self.cluster_id
+        );
         let mut interval = time::interval(Duration::from_secs(30));
 
         loop {
@@ -159,13 +175,23 @@ impl PolicyEnforcerImpl {
                                         max_concurrent: q.max_concurrent,
                                         max_tokens_per_minute: q.max_tokens_per_minute,
                                     },
-                                ).await;
+                                )
+                                .await;
                             }
                             if let Some(p) = policy.placement {
                                 self.set_placement(PlacementConstraint {
-                                    allowed_models: p.allowed_models.into_iter().map(ModelId).collect(),
-                                    denied_models: p.denied_models.into_iter().map(ModelId).collect(),
-                                }).await;
+                                    allowed_models: p
+                                        .allowed_models
+                                        .into_iter()
+                                        .map(ModelId)
+                                        .collect(),
+                                    denied_models: p
+                                        .denied_models
+                                        .into_iter()
+                                        .map(ModelId)
+                                        .collect(),
+                                })
+                                .await;
                             }
                             tracing::debug!(cluster_id = %self.cluster_id, "policy sync completed");
                         }
@@ -173,7 +199,10 @@ impl PolicyEnforcerImpl {
                     }
                 }
                 Ok(resp) => {
-                    tracing::debug!(status = resp.status().as_u16(), "policy endpoint returned non-success");
+                    tracing::debug!(
+                        status = resp.status().as_u16(),
+                        "policy endpoint returned non-success"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "policy sync request failed");

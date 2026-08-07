@@ -6,8 +6,8 @@
 //!
 //! See: <https://github.com/ai-dynamo/nixl>
 
-use async_trait::async_trait;
 use crate::protocol::{KvBlock, TransferProtocol};
+use async_trait::async_trait;
 
 /// Bridge to the NIXL GPU-to-GPU transport layer.
 ///

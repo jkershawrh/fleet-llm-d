@@ -3,8 +3,8 @@
 //! Implements [`TransferProtocol`] using tonic gRPC bidirectional streaming.
 //! Each block is sent as a `KvBlockMessage` over a tonic channel.
 
-use async_trait::async_trait;
 use crate::protocol::{KvBlock, TransferProtocol};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -34,7 +34,10 @@ impl TransferProtocol for GrpcTransferProtocol {
             Ok(endpoint) => match endpoint.connect().await {
                 Ok(_channel) => {
                     *self.connected.write().await = true;
-                    tracing::info!(endpoint = remote_endpoint, "gRPC KV transfer channel connected");
+                    tracing::info!(
+                        endpoint = remote_endpoint,
+                        "gRPC KV transfer channel connected"
+                    );
                     Ok(())
                 }
                 Err(e) => {
@@ -56,7 +59,11 @@ impl TransferProtocol for GrpcTransferProtocol {
         let connected = *self.connected.read().await;
 
         if connected {
-            tracing::debug!(blocks = blocks.len(), bytes = total_bytes, "sending KV blocks via gRPC");
+            tracing::debug!(
+                blocks = blocks.len(),
+                bytes = total_bytes,
+                "sending KV blocks via gRPC"
+            );
         }
 
         self.buffer.write().await.extend(blocks);
@@ -86,8 +93,16 @@ mod tests {
         transport.connect("http://127.0.0.1:1").await.unwrap();
 
         let blocks = vec![
-            KvBlock { sequence: 0, data: vec![1, 2, 3], is_final: false },
-            KvBlock { sequence: 1, data: vec![4, 5], is_final: true },
+            KvBlock {
+                sequence: 0,
+                data: vec![1, 2, 3],
+                is_final: false,
+            },
+            KvBlock {
+                sequence: 1,
+                data: vec![4, 5],
+                is_final: true,
+            },
         ];
         let bytes = transport.send_blocks(blocks).await.unwrap();
         assert_eq!(bytes, 5);
@@ -101,7 +116,14 @@ mod tests {
     async fn grpc_transport_close_clears_state() {
         let transport = GrpcTransferProtocol::new();
         transport.connect("http://127.0.0.1:1").await.unwrap();
-        transport.send_blocks(vec![KvBlock { sequence: 0, data: vec![1], is_final: true }]).await.unwrap();
+        transport
+            .send_blocks(vec![KvBlock {
+                sequence: 0,
+                data: vec![1],
+                is_final: true,
+            }])
+            .await
+            .unwrap();
         transport.close().await.unwrap();
 
         let received = transport.receive_blocks().await.unwrap();

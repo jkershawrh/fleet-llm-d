@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -325,9 +326,9 @@ func TestCRDWatcher_RetriesFailedDeletion(t *testing.T) {
 func TestCRDWatcher_StartAndStop(t *testing.T) {
 	reconciler := newTestReconciler()
 
-	callCount := 0
+	var callCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		callCount.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(k8sPoolList{Items: []k8sPoolItem{}})
 	}))
@@ -350,15 +351,15 @@ func TestCRDWatcher_StartAndStop(t *testing.T) {
 	}
 
 	// Wait enough time for the initial poll plus at least one ticker poll.
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	cancel()
 
 	// Give the goroutine time to exit.
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	// Should have been called at least twice (initial + ticker).
-	if callCount < 2 {
-		t.Errorf("expected at least 2 polls, got %d", callCount)
+	if c := callCount.Load(); c < 2 {
+		t.Errorf("expected at least 2 polls, got %d", c)
 	}
 }
 

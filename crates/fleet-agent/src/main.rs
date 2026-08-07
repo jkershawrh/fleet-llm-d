@@ -179,7 +179,14 @@ async fn main() -> anyhow::Result<()> {
     let enforcer_tls_ca_cert = config.tls_ca_cert.clone();
     let enforcer_handle = tokio::spawn(async move {
         info!("policy enforcer task started");
-        enforcer.run(&enforcer_cp_url, &enforcer_token, enforcer_tls_insecure, enforcer_tls_ca_cert.as_deref()).await
+        enforcer
+            .run(
+                &enforcer_cp_url,
+                &enforcer_token,
+                enforcer_tls_insecure,
+                enforcer_tls_ca_cert.as_deref(),
+            )
+            .await
     });
 
     let proxy_handle = tokio::spawn(async move {

@@ -91,7 +91,10 @@ impl ResourceWatcher {
 
         let pod_seen_c = pod_seen.clone();
         let pod_stream = async {
-            let stream = watcher::watcher(pods, watcher::Config::default().labels("app.kubernetes.io/part-of=llm-d"));
+            let stream = watcher::watcher(
+                pods,
+                watcher::Config::default().labels("app.kubernetes.io/part-of=llm-d"),
+            );
             futures::pin_mut!(stream);
             while let Some(event) = stream.try_next().await? {
                 handle_event(&handler, &pod_seen_c, "Pod", &self.namespace, event).await?;
@@ -118,7 +121,10 @@ impl ResourceWatcher {
         Ok(())
     }
 
-    async fn run_heartbeat_fallback(&self, handler: &impl ResourceEventHandler) -> anyhow::Result<()> {
+    async fn run_heartbeat_fallback(
+        &self,
+        handler: &impl ResourceEventHandler,
+    ) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "using heartbeat fallback (no kube API access)");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         loop {
@@ -148,7 +154,11 @@ where
         Event::Apply(obj) | Event::InitApply(obj) => {
             let name = obj.meta().name.clone().unwrap_or_default();
             let rv = obj.meta().resource_version.clone().unwrap_or_default();
-            let ns = obj.meta().namespace.clone().unwrap_or_else(|| namespace.to_string());
+            let ns = obj
+                .meta()
+                .namespace
+                .clone()
+                .unwrap_or_else(|| namespace.to_string());
             let meta = ResourceMeta {
                 namespace: ns,
                 name: name.clone(),
@@ -170,7 +180,11 @@ where
         Event::Delete(obj) => {
             let name = obj.meta().name.clone().unwrap_or_default();
             let rv = obj.meta().resource_version.clone().unwrap_or_default();
-            let ns = obj.meta().namespace.clone().unwrap_or_else(|| namespace.to_string());
+            let ns = obj
+                .meta()
+                .namespace
+                .clone()
+                .unwrap_or_else(|| namespace.to_string());
             let meta = ResourceMeta {
                 namespace: ns,
                 name: name.clone(),
@@ -197,7 +211,10 @@ mod tests {
 
     #[test]
     fn watched_resource_equality() {
-        assert_eq!(WatchedResource::InferencePool, WatchedResource::InferencePool);
+        assert_eq!(
+            WatchedResource::InferencePool,
+            WatchedResource::InferencePool
+        );
         assert_ne!(WatchedResource::Pod, WatchedResource::Node);
     }
 
