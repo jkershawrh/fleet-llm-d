@@ -132,7 +132,7 @@ func makePool(name, source string, maxClusters int) v1alpha1.FleetInferencePoolS
 			Source: source,
 		},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "default",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "default"},
 			MaxClusters: maxClusters,
 		},
 		Serving: v1alpha1.ServingSpec{
@@ -1199,7 +1199,7 @@ func TestA39_MultiCluster_ReconcilerPlacesAcrossClusters(t *testing.T) {
 			Source: "huggingface",
 		},
 		Placement: v1alpha1.PlacementRef{
-			PolicyRef:   "spread-policy",
+			PolicyRef:   v1alpha1.PolicyReference{Name: "spread-policy"},
 			MinClusters: 2,
 			MaxClusters: 3,
 		},
