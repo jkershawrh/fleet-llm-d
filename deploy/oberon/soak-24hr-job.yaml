@@ -12,25 +12,13 @@ spec:
         app: soak-24hr
     spec:
       restartPolicy: Never
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: soak
           image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/soak-driver:latest
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 65534
-            runAsGroup: 65534
-            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
           command: ["python3", "-u", "multi_cluster_test.py"]
           args:
             - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
