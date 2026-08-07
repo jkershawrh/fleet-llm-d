@@ -3,14 +3,14 @@
 ## Architecture, Benchmarks, and Production Validation with llm-d
 
 **Authors:** Jonathan Kershaw
-**Date:** July 2026
-**Version:** Draft 0.3, updated with Praxis AI integration, unified state layer, and production soak evidence
+**Date:** August 2026
+**Version:** Draft 0.4, updated with 3-cluster production validation (Oberon+Arena+Brutus), Praxis AI gateway deployment, GCL signed CloudEvents, ARE ledger wiring, and cascade soak evidence (9,778 ops, 0 errors, 9/9 SLO gates)
 
 ---
 
 ## 1. Executive Summary
 
-Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane, Praxis AI as the inference data plane, and PostgreSQL-backed persistence, governed by ten Kubernetes CRDs (FleetCluster, FleetInferencePool, FleetIntent, FleetOperation, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, ModelLifecycle, KVCacheTransferPolicy). The platform integrates with Praxis AI for programmable model routing and token counting, ModelPack (CNCF model-spec) for OCI-based model metadata resolution, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. The target architecture comprises three layers: fleet-llm-d (operations control plane), Praxis AI + Grid (programmable data plane with SWIM mesh and mTLS), and ConnectLink + NIXL (GPU/accelerator fabric for KV cache transfer). A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
+Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane, Praxis AI as the inference data plane, and PostgreSQL-backed persistence, governed by ten Kubernetes CRDs (FleetCluster, FleetInferencePool, FleetIntent, FleetOperation, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, ModelLifecycle, KVCacheTransferPolicy). The platform integrates with Praxis AI for programmable model routing and token counting, ModelPack (CNCF model-spec) for OCI-based model metadata resolution, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. The deployed architecture comprises three layers: fleet-llm-d (operations control plane), Praxis AI (programmable inference data plane with dynamic config overlay from placement decisions), and ConnectLink (KV cache transfer with production TCP transport and planned NIXL GPU-direct path). A future Praxis Grid layer with SWIM mesh discovery and mTLS is planned for multi-site deployments beyond the current NodePort bridge topology. A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
 
 ## 2. Problem Statement
 
@@ -64,7 +64,7 @@ The control plane is implemented in Go 1.26.5 using standard library HTTP for th
 - `pkg/modelplane/` -- ModelPlane integration layer: types (`types.go`), adapter (`adapter.go`), watcher (`watcher.go`), policy injector (`policy_injector.go`), and compliance bridge (`compliance_bridge.go`). Consumes ModelDeployment and ModelCluster CRDs, injects fleet policy, and bridges events to the ARE ledger.
 - `pkg/cost/` -- GPU inference cost model: pricing table (`pricing.go`), tokenomics calculator (`tokenomics.go`), chargeback report generator (`chargeback.go`), and budget alert engine (`alerts.go`). Covers 6 GPU types across 3 pricing tiers with per-tenant cost attribution.
 
-**Fleet Controller API.** The fleet-controller exposes 24 REST endpoints organized across eight resource groups: health (liveness, readiness), clusters (list, register, deregister), pools (list), tenants (list, usage), metrics (fleet-wide, per-model), rollouts (list, create, promote, rollback), compliance (chain verification), modelplane (clusters, deployments, per-deployment cost), and cost (pricing, tokenomics, chargeback, projection, savings, alerts). Authentication uses HMAC-SHA256 signed bearer tokens (custom format: base64(claims).base64(hmac), not RFC 7519 JWT). The OpenAPI 3.1 specification is maintained in `api/openapi/fleet-api.yaml`.
+**Fleet Controller API.** The fleet-controller exposes 42 REST endpoints organized across 13 resource groups: health (liveness, readiness), clusters (list, register, deregister, drain, activate), pools (list, webhook, state), tenants (list, create, usage), metrics (fleet-wide, per-model, platform), rollouts (list, create, promote, rollback), compliance (chain verification), modelplane (clusters, deployments, per-deployment cost), cost (pricing, tokenomics, chargeback, projection, savings, alerts), agent (status, metrics, events, policies), intents (v1 submit, v2 submit/get, approve, cancel), auth (token refresh), and webhooks (validation). Authentication uses HMAC-SHA256 signed bearer tokens (custom format: base64(claims).base64(hmac), not RFC 7519 JWT). The OpenAPI 3.1 specification is maintained in `api/openapi/fleet-api.yaml`.
 
 **State Management.** PostgreSQL 16+ stores fleet state: cluster registrations, pool configurations, tenant profiles, rollout state, and placement decisions. The repository layer (`pkg/store/postgres/`) provides transactional access with an in-memory implementation for testing. Events are published to an in-memory publisher plus an optional HTTP sink (`pkg/store/events/http_publisher.go`) that can target any CloudEvents-compatible endpoint, including a Kafka REST proxy. There is no native Kafka client -- this is a deliberate supply-chain-minimal design choice (the entire Go module depends only on `lib/pq`).
 
@@ -79,7 +79,7 @@ The data plane uses a combination of Rust components for per-cluster operations 
 - *Enforcer* (`enforcer.rs`) -- Receives placement and scaling directives from the fleet controller and applies them to the local cluster by creating, updating, or deleting InferencePool resources and adjusting replica counts.
 - *Proxy* (`proxy.rs`) -- Provides a local gRPC endpoint for health checks and routing decisions, abstracting the cluster's internal topology.
 
-**Praxis AI Gateway.** Praxis AI is the programmable inference data plane for fleet-llm-d. It handles cross-cluster inference routing at the fleet network boundary, providing model-based request dispatch, token counting, access logging, and protocol translation. Praxis Grid extends this to multi-site with SWIM membership discovery, CRDT state propagation, and mTLS between sites. See [`docs/architecture/praxis-integration.md`](../architecture/praxis-integration.md) for the full integration architecture.
+**Praxis AI Gateway.** Praxis AI is the programmable inference data plane for fleet-llm-d, deployed on the hub cluster (Oberon). It handles cross-cluster inference routing, providing model-based request dispatch via header-matching filter pipeline, token counting, access logging, and load balancing across endpoints. Cross-cluster backends (Arena CPU, Brutus GPU) are reached via NodePort bridges with Kubernetes ExternalName Services. The fleet-controller dynamically updates Praxis config from placement decisions via ConfigMap overlay (`pkg/routing/praxis_overlay.go`); Praxis's file watcher reloads the config atomically at runtime. A future Praxis Grid layer with SWIM membership discovery and mTLS is planned but not yet available upstream. See [`docs/architecture/praxis-integration.md`](../architecture/praxis-integration.md) for the integration architecture.
 
 **KV Cache Transfer Coordinator (`crates/kv-transfer/`).** Manages cross-cluster KV cache state transfer for hot failover, warm migration, and prefix tree synchronization.
 
@@ -97,9 +97,9 @@ fleet-llm-d is governed by ten Custom Resource Definitions (CRDs) that define th
 
 2. **FleetInferencePool** (`fleetinferencepool.yaml`) -- The primary resource declaring a model's fleet-wide deployment intent. Specifies the model source (OCI reference), placement policy reference, routing policy reference, scaling policy reference, serving configuration (InferencePool template for llm-d), and lifecycle strategy. This is the top-level resource that ties all other CRDs together for a given model.
 
-3. **FleetIntent** (`fleetintent.yaml`) -- Represents an admitted intent from an external governance system. FleetIntent and FleetOperation implement the governed intent admission pipeline. External governance systems (e.g., GCL) submit signed DecisionPackage CloudEvents to `POST /api/v2/intents`. The 957-line adapter (`pkg/intents/gcl_adapter.go`) performs cryptographic signature verification, expiry checking, scope binding, and fleet-owned authorization. Admitted intents create FleetOperations that track through a 17-phase lifecycle from RECEIVED through SUCCEEDED or FAILED.
+3. **FleetIntent** (`fleetintent.yaml`) -- Represents an admitted intent from an external governance system. FleetIntent and FleetOperation implement the governed intent admission pipeline. External governance systems (e.g., GCL) submit signed DecisionPackage CloudEvents to `POST /api/v2/intents`. The 956-line adapter (`pkg/intents/gcl_adapter.go`) performs cryptographic signature verification, expiry checking, scope binding, and fleet-owned authorization. Admitted intents create FleetOperations that track through a 17-phase lifecycle from RECEIVED through SUCCEEDED or FAILED.
 
-4. **FleetOperation** (`fleetoperation.yaml`) -- Tracks the execution of an admitted intent through a 17-phase lifecycle (RECEIVED, VALIDATED, AUTHORIZED, PLANNED, APPROVED, SCHEDULING, SCHEDULED, EXECUTING, MONITORING, VERIFYING, COMPLETING, SUCCEEDED, FAILED, CANCELLED, ROLLING_BACK, ROLLED_BACK, EXPIRED). Each phase transition is recorded with timestamp and rationale for audit trail purposes.
+4. **FleetOperation** (`fleetoperation.yaml`) -- Tracks the execution of an admitted intent through a 17-phase lifecycle (RECEIVED, ACCEPTED, PLANNED, GOVERNANCE_PENDING, AUTHORIZED, ACTUATING, OBSERVING, VERIFIED, EVIDENCE_PENDING, SUCCEEDED, REJECTED, DEFERRED, EXPIRED, FAILED, ROLLING_BACK, ROLLED_BACK, QUARANTINED). Each phase transition is recorded with timestamp and rationale for audit trail purposes.
 
 5. **PlacementPolicy** (`placementpolicy.yaml`) -- Defines constraints and affinities for model placement across clusters. Constraints use label-selector constraints (key=value matching) evaluated against cluster labels and state (e.g., regulatory zone, GPU type, certification status). Affinities assign weighted preferences (GPU utilization, cost efficiency, data locality). Supports spreading strategies for high availability.
 
@@ -117,19 +117,24 @@ fleet-llm-d is governed by ten Custom Resource Definitions (CRDs) that define th
 
 Every state mutation in fleet-llm-d publishes an event through the in-memory event publisher with an optional HTTP sink for external subscribers. The event publisher (`pkg/store/events/publisher.go`) defines a `FleetEvent` with type, payload, timestamp, and source. A `LedgerAwarePublisher` wraps the base publisher to dual-write events to both the in-memory event bus and the ARE Immutable Ledger, ensuring the compliance trail is populated as a side effect of normal operation rather than requiring separate instrumentation. The HTTP sink (`pkg/store/events/http_publisher.go`) can target any CloudEvents-compatible endpoint, including a Kafka REST proxy, without requiring a native Kafka client dependency.
 
-The system publishes eleven event types:
+The system defines eleven event types. Five are actively published in the current codebase; the remaining six are defined in the event schema for downstream consumers to implement as additional capabilities are wired:
 
-1. `cluster.registered` -- A new cluster joins the fleet.
-2. `cluster.deregistered` -- A cluster is removed from the fleet.
-3. `model.placed` -- The placement engine assigns a model to one or more clusters.
+**Active (published by fleet-controller and ledger recorder):**
+
+1. `fleet.cluster.registered` -- A new cluster joins the fleet.
+2. `fleet.cluster.deregistered` -- A cluster is removed from the fleet.
+3. `fleet.placement.assigned` -- The placement engine assigns a model to one or more clusters.
 4. `model.deployed` -- A model deployment completes on a target cluster.
-5. `model.scaled` -- The fleet autoscaler adjusts replica count or migrates replicas across clusters.
-6. `routing.updated` -- A FleetRoutingPolicy change takes effect.
-7. `tenant.onboarded` -- A new TenantProfile is created.
-8. `tenant.quota.exceeded` -- A tenant exceeds a quota threshold.
-9. `rollout.promoted` -- A canary rollout is promoted to full traffic.
-10. `rollout.rolledback` -- A rollout is rolled back due to SLO violation.
-11. `kvcache.transferred` -- A cross-cluster KV cache transfer completes.
+5. `fleet.kvcache.transferred` -- A cross-cluster KV cache transfer completes.
+
+**Defined (schema established, publishing wired as capabilities mature):**
+
+6. `model.scaled` -- The fleet autoscaler adjusts replica count or migrates replicas across clusters.
+7. `routing.updated` -- A FleetRoutingPolicy change takes effect.
+8. `tenant.onboarded` -- A new TenantProfile is created.
+9. `tenant.quota.exceeded` -- A tenant exceeds a quota threshold.
+10. `rollout.promoted` -- A canary rollout is promoted to full traffic.
+11. `rollout.rolledback` -- A rollout is rolled back due to SLO violation.
 
 Subscribers register interest in specific event types and receive synchronous callbacks. This enables loose coupling: the placement engine publishes `model.placed` without knowing which downstream systems (metrics aggregation, ledger recording, dashboard updates, alerting) consume the event.
 
@@ -628,7 +633,27 @@ A 2-hour production-emulation soak ran on-cluster on Oberon (pod-to-pod, no exte
 
 All 7 degradation injections passed: burst-50 concurrent events (0 errors), invalid intents (correctly rejected with 401), and full GCL state resets (recovered in ~1 second). Latency remained flat at 135-155ms across the full 2 hours with no drift.
 
-#### 5.5.6 Control Plane Scale Microbenchmarks
+#### 5.5.6 3-Cluster Cascade Soak (August 2026)
+
+A cascading soak test validated the full fleet across three physical clusters: Oberon (hub, Intel Xeon CPU, OVMS), Arena (CPU spoke, Intel Xeon6, OVMS), and Brutus (GPU spoke, NVIDIA H100 NVL 94GB, vLLM). Inference routed through Praxis AI on Oberon with cross-cluster NodePort bridges to Arena and Brutus. All 17 lifecycle phases exercised per cycle, including GCL signed DecisionPackage CloudEvents (HMAC-SHA256 verified) and ARE ledger hash-chain verification.
+
+| Level | Duration | Concurrency | Interval | Operations | Errors | Rate | SLO Gates |
+|-------|----------|-------------|----------|-----------|--------|------|-----------|
+| smoke | 0.2 min | 1x | single pass | 54 | 0 | 100% | 9/9 |
+| short | 5.5 min | 2x | 15s | 684 | 0 | 100% | 9/9 |
+| pressure | 10.5 min | 5x | 5s | 2,518 | 0 | 100% | 9/9 |
+| stress | 16.0 min | 10x | 3s | 6,522 | 0 | 100% | 9/9 |
+| **Total** | **32.2 min** | | | **9,778** | **0** | **100%** | **ALL PASS** |
+
+SLO gates validated: cluster registration 100%, cross-cluster placement 100%, failover zero-error, drain/activate zero-error, session affinity 100%, rollout lifecycle 100%, observability federation 100%, ledger integrity 100%, overall success > 95%. Ledger chain integrity verified across 240+ hash-chained entries spanning 8 chain types.
+
+Key latencies through Praxis AI gateway:
+- CPU inference (Oberon OVMS, local): 2,900-3,500ms p50
+- GPU inference (Brutus vLLM H100, cross-cluster): 550-650ms p50
+- Fleet orchestrated inference (round-robin CPU+GPU): 700-850ms p50
+- Control plane operations (placement, routing, tenant): 120-200ms p50
+
+#### 5.5.7 Control Plane Scale Microbenchmarks
 
 Go microbenchmarks measured the hot-path functions at cluster counts from 10 to 1,000 (Apple M2, `-benchmem`):
 
