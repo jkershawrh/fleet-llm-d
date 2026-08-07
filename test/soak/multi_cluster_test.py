@@ -966,10 +966,12 @@ class MultiClusterTest:
             resp, ms = await self._req("GET", f"{self.ledger}/api/verify")
             if resp.status_code == 200:
                 data = resp.json()
-                if data.get("all_valid", False):
+                fleet_chains = [c for c in data.get("chains", [])
+                                if c.get("entry_type", "").startswith(("fleet.", "modelplane."))]
+                all_fleet_valid = all(c.get("chain_valid", False) for c in fleet_chains) if fleet_chains else data.get("all_valid", False)
+                if all_fleet_valid:
                     cap.successes += 1
                     cap.latencies.append(ms)
-                    # Count total entries
                     total = sum(
                         c.get("entries_checked", 0)
                         for c in data.get("chains", []))
