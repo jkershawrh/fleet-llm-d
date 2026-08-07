@@ -45,7 +45,7 @@ metadata:
 type: Opaque
 stringData:
   hmac-secret: "${HMAC_SECRET}"
-  gcl-signing-key: "${GCL_SIGNING_KEY}"
+  gcl-signing-key: "base64:${GCL_SIGNING_KEY}"
 ---
 apiVersion: v1
 kind: Secret
