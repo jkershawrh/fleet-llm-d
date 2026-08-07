@@ -35,18 +35,18 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 ```
   Layer 3: fleet-llm-d (Operations Control Plane)
                          ┌─────────────────────────────────┐
-                         │        fleet-controller          │
-                         │  (Go control plane, CRD-driven)  │
-                         │  placement | routing | scaling   │
-                         │  lifecycle | tenant | kvcache    │
-                         │  PostgreSQL persistence          │
+                         │        fleet-controller         │
+                         │  (Go control plane, CRD-driven) │
+                         │  placement | routing | scaling  │
+                         │  lifecycle | tenant | kvcache   │
+                         │  PostgreSQL persistence         │
                          └──────────┬──────────┬───────────┘
                                     │          │
   Layer 2: Praxis AI (Data Plane)   │          │
                          ┌──────────▼──────────▼───────────┐
-                         │     Praxis AI Gateway            │
-                         │  model routing | token counting  │
-                         │  access logging | protocol xlat  │
+                         │     Praxis AI Gateway           │
+                         │  model routing | token counting │
+                         │  access logging | protocol xlat │
                          └──┬──────────┬──────────┬────────┘
                             │          │          │
   Layer 1: Inference        │          │          │
@@ -132,8 +132,8 @@ fleet-llm-d sits on top of [ModelPlane](https://github.com/modelplane) as the op
   │  placement | routing | scaling | cost    │  (this project)
   │  tenant | lifecycle | observability      │
   ├──────────────────────────────────────────┤
-  │            ModelPlane                     │  Infrastructure layer
-  │  ModelDeployment | ModelCluster           │  (Crossplane-based)
+  │            ModelPlane                    │  Infrastructure layer
+  │  ModelDeployment | ModelCluster          │  (Crossplane-based)
   │  cluster lifecycle | resource mgmt       │
   ├──────────────────────────────────────────┤
   │            llm-d                         │  Inference layer
