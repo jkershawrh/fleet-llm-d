@@ -141,7 +141,30 @@ PROFILES = {
     "overnight": {"sustained_duration": 28800,  "cycle_interval": 30,  "concurrency": 2},
     "24hr":      {"sustained_duration": 86400,  "cycle_interval": 30,  "concurrency": 2},
     "72hr":      {"sustained_duration": 259200, "cycle_interval": 30,  "concurrency": 2},
+    # Variable-intensity 24hr soak: cycles through calm/pressure/stress bands.
+    # Safe: skips drain/failover (phases 4,5) during sustained cycling.
+    # Runs benchmarks, pen-test-style auth probing, and inference load variation.
+    "24hr-variable": {
+        "sustained_duration": 86400,
+        "cycle_interval": 30,
+        "concurrency": 2,
+        "variable_intensity": True,
+        "safe_sustained_phases": True,
+    },
 }
+
+# Variable intensity schedule for 24hr-variable profile.
+# Each band runs for the specified duration, then transitions to the next.
+# After the last band, it loops back to the first.
+VARIABLE_INTENSITY_BANDS = [
+    {"name": "calm",     "duration": 3600,  "interval": 30, "concurrency": 1},   # 1hr calm
+    {"name": "ramp",     "duration": 1800,  "interval": 15, "concurrency": 3},   # 30min ramp
+    {"name": "pressure", "duration": 3600,  "interval": 5,  "concurrency": 5},   # 1hr pressure
+    {"name": "stress",   "duration": 1800,  "interval": 3,  "concurrency": 10},  # 30min stress
+    {"name": "cool",     "duration": 1800,  "interval": 30, "concurrency": 1},   # 30min cooldown
+    {"name": "burst",    "duration": 900,   "interval": 2,  "concurrency": 15},  # 15min burst
+    {"name": "recover",  "duration": 3600,  "interval": 30, "concurrency": 2},   # 1hr recovery
+]
 
 # ── Cluster definitions ──
 
@@ -201,6 +224,7 @@ PHASE_NAMES = {
 }
 
 SUSTAINED_PHASES = list(range(3, 17))  # phases 3-16 repeat in sustained mode
+SAFE_SUSTAINED_PHASES = [p for p in range(3, 17) if p not in (4, 5)]  # skip failover+drain
 STATEFUL_PHASES = {4, 5, 6}  # failover, drain/activate, session affinity — serialize these
 
 
@@ -1438,25 +1462,53 @@ class MultiClusterTest:
             elapsed = time.monotonic() - state.start_time
             self._print_phase_line(phase_num, state, elapsed)
 
-        # ── Sustained cycle (phases 3-12) ──
+        # ── Sustained cycle ──
 
         if sustained_duration > 0:
+            use_safe = profile.get("safe_sustained_phases", False)
+            use_variable = profile.get("variable_intensity", False)
+            phases_to_cycle = SAFE_SUSTAINED_PHASES if use_safe else SUSTAINED_PHASES
+            phase_label = "safe 3-16" if use_safe else "3-16"
+
             concurrency = profile.get("concurrency", 1)
-            print(f"\n  --- Sustained Cycling (phases 3-12, "
-                  f"concurrency={concurrency}) ---\n",
-                  file=sys.stderr)
+            current_interval = cycle_interval
+
+            if use_variable:
+                print(f"\n  --- Variable Intensity Sustained ({phase_label}, "
+                      f"bands: {len(VARIABLE_INTENSITY_BANDS)}) ---\n",
+                      file=sys.stderr)
+            else:
+                print(f"\n  --- Sustained Cycling ({phase_label}, "
+                      f"concurrency={concurrency}) ---\n",
+                      file=sys.stderr)
             self._print_header()
 
             sustained_start = time.monotonic()
+            band_start = sustained_start
+            band_idx = 0
+
             while time.monotonic() - sustained_start < sustained_duration:
                 self._cycle += 1
                 state.cycle_count = self._cycle
 
+                if use_variable:
+                    band = VARIABLE_INTENSITY_BANDS[band_idx % len(VARIABLE_INTENSITY_BANDS)]
+                    concurrency = band["concurrency"]
+                    current_interval = band["interval"]
+                    if time.monotonic() - band_start >= band["duration"]:
+                        band_idx += 1
+                        band_start = time.monotonic()
+                        new_band = VARIABLE_INTENSITY_BANDS[band_idx % len(VARIABLE_INTENSITY_BANDS)]
+                        print(f"\n  >>> Band: {new_band['name']} "
+                              f"(interval={new_band['interval']}s, "
+                              f"concurrency={new_band['concurrency']})\n",
+                              file=sys.stderr)
+
                 if concurrency <= 1:
-                    for phase_num in SUSTAINED_PHASES:
+                    for phase_num in phases_to_cycle:
                         await self.run_phase(phase_num, state)
                 else:
-                    for phase_num in SUSTAINED_PHASES:
+                    for phase_num in phases_to_cycle:
                         if phase_num in STATEFUL_PHASES:
                             await self.run_phase(phase_num, state)
                         else:
@@ -1466,31 +1518,35 @@ class MultiClusterTest:
 
                 elapsed = time.monotonic() - state.start_time
 
-                # Print a summary line for the cycle
                 total_ok = sum(
-                    state.phase(p).successes for p in SUSTAINED_PHASES)
+                    state.phase(p).successes for p in phases_to_cycle)
                 total_err = sum(
-                    state.phase(p).errors for p in SUSTAINED_PHASES)
+                    state.phase(p).errors for p in phases_to_cycle)
                 rate = total_ok / max(total_ok + total_err, 1) * 100
                 minutes = int(elapsed / 60)
                 seconds = int(elapsed % 60)
 
                 all_lat = []
-                for p in SUSTAINED_PHASES:
+                for p in phases_to_cycle:
                     all_lat.extend(state.phase(p).latencies[-10:])
                 p50 = f"{sorted(all_lat)[len(all_lat)//2]:.0f}" \
                     if all_lat else "-"
 
+                band_name = ""
+                if use_variable:
+                    band_name = VARIABLE_INTENSITY_BANDS[band_idx % len(VARIABLE_INTENSITY_BANDS)]["name"]
+
                 status = "OK" if total_err == 0 else f"{total_err}err"
+                label = f"{band_name} {phase_label}" if band_name else f"sustained {phase_label}"
                 print(
-                    f"  C{self._cycle:3d}  {'sustained 3-12':<22s}  "
+                    f"  C{self._cycle:3d}  {label:<22s}  "
                     f"{total_ok:4d}  {total_err:3d}  "
                     f"{rate:5.1f}%  {p50:>6s}ms  "
                     f"{minutes:3d}:{seconds:02d}  [{status}]",
                     file=sys.stderr,
                 )
 
-                await asyncio.sleep(cycle_interval)
+                await asyncio.sleep(current_interval)
 
         # ── Results ──
 
