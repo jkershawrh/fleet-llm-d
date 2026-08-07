@@ -40,7 +40,7 @@ spec:
             - "--ledger-mode=http"
             - "--ledger-endpoint=http://ledger-gateway.immutable-ledger.svc:28099"
             - "--backend-vllm=http://granite-real.fleet-llm-d.svc:8000"
-            - "--backend-ovms=http://ovms-granite-2b.triforce.svc:8080"
+            - "--backend-ovms=http://ovms-granite-2b.fleet-llm-d.svc:8080"
             - "--modelplane-api=http://modelplane-mock.fleet-llm-d.svc:8090"
             - "--modelplane-namespace=default"
             - "--rate-limit=0"

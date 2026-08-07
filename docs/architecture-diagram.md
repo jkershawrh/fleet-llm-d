@@ -303,15 +303,13 @@ Client Request (model="auto")
 
 ```
 ┌─────────────────────────────────────────┐
-│  Oberon SNO (Intel Xeon, 256 CPU)       │
+│  Oberon SNO -- Hub (Intel Xeon, 256 CPU)│
 │                                         │
 │  fleet-llm-d namespace:                 │
 │    fleet-controller (Go + PostgreSQL)   │
-│    praxis-ai (6 model routing)          │
+│    praxis-ai (gateway, 6 model routing) │
 │    deepfield-fleet                      │
 │    fleet-grafana                        │
-│    mock-inference                       │
-│    modelplane-mock                      │
 │                                         │
 │  triforce namespace:                    │
 │    ovms-granite-2b (real inference)     │
@@ -323,13 +321,26 @@ Client Request (model="auto")
 │    postgres (ledger DB)                 │
 │                                         │
 │  governed-cognitive-loop namespace:     │
-│    gcl-app (governance)                 │
-└─────────────────────────────────────────┘
-
-┌─────────────────────────────────────────┐
-│  Arena Multi-Node (Xeon 6 + AMX, 2TB)   │
+│    gcl-app (signed DecisionPackages)    │
 │                                         │
-│  Status: Online, empty                  │
-│  Ready for redeployment                 │
-└─────────────────────────────────────────┘
+│  Network policies:                      │
+│    default-deny ingress                 │
+│    open egress (OVN-K limitation)       │
+└──────────┬──────────────────┬───────────┘
+           │ NodePort bridge  │ NodePort bridge
+           ▼                  ▼
+┌──────────────────────┐ ┌─────────────────────────────┐
+│  Arena -- CPU Spoke  │ │  Brutus -- GPU Spoke        │
+│  (Xeon 6 + AMX, 2TB)│ │  (H100 NVL 94GB, SNO)      │
+│                      │ │                             │
+│  triforce namespace: │ │  inference namespace:       │
+│    ovms-granite-2b   │ │    vllm (GPU inference)     │
+│    (CPU inference)   │ │    H100 NVL 94GB            │
+│                      │ │                             │
+│  Role: CPU inference │ │  Role: GPU inference spoke  │
+│  spoke, OVMS         │ │  OCP 4.22.8, 192.168.1.75  │
+└──────────────────────┘ └─────────────────────────────┘
+
+Cross-cluster routing: Praxis AI on Oberon routes to
+Arena and Brutus via NodePort bridges (pre-Grid).
 ```

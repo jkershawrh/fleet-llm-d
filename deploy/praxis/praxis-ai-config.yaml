@@ -67,13 +67,13 @@ filter_chains:
         clusters:
           - name: ovms-granite-2b
             endpoints:
-              - "ovms-granite-2b.triforce.svc:8080"
+              - "ovms-granite-2b.fleet-llm-d.svc:8080"
           - name: ovms-granite-8b
             endpoints:
-              - "ovms-granite-8b.triforce.svc:8080"
+              - "ovms-granite-8b.fleet-llm-d.svc:8080"
           - name: ovms-granite41-3b
             endpoints:
-              - "ovms-granite41-3b.triforce.svc:8080"
+              - "ovms-granite41-3b.fleet-llm-d.svc:8080"
           - name: vllm-granite
             endpoints:
               - "granite-real.fleet-llm-d.svc:8000"

@@ -1,5 +1,5 @@
 # Cross-cluster routing latency benchmark scenario.
-# Measures the overhead introduced by the fleet gateway when routing
+# Measures the overhead introduced by the Praxis AI gateway when routing
 # inference requests across multiple clusters.
 apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
 kind: BenchmarkScenario
@@ -10,7 +10,7 @@ metadata:
     severity: performance
 spec:
   description: >-
-    Measures fleet gateway routing overhead by comparing direct
+    Measures Praxis AI gateway routing overhead by comparing direct
     single-cluster inference latency against routed multi-cluster
     inference. Exercises weighted, geographic, and KV-cache-affinity
     routing strategies. The key metric is the incremental TTFT and
@@ -24,19 +24,19 @@ spec:
         region: us-east
         gpu_type: nvidia-h100
         replicas: 4
-        latency_from_gateway_ms: 2
+        latency_from_praxis_ms: 2
       - name: us-west-2
         region: us-west
         gpu_type: nvidia-h100
         replicas: 4
-        latency_from_gateway_ms: 35
+        latency_from_praxis_ms: 35
       - name: eu-west-1
         region: eu-west
         gpu_type: nvidia-h100
         replicas: 4
-        latency_from_gateway_ms: 85
+        latency_from_praxis_ms: 85
 
-    gateway:
+    praxis:
       location: us-east
       health_check_interval: 10s
       unhealthy_threshold: 3
@@ -71,7 +71,7 @@ spec:
   phases:
     - name: baseline-direct
       description: >-
-        Direct requests to a single cluster without the fleet gateway
+        Direct requests to a single cluster without the Praxis AI gateway
         to establish baseline latency.
       duration: 300s
       routing_bypass: true
@@ -86,7 +86,7 @@ spec:
 
     - name: routed-weighted
       description: >-
-        Route through fleet gateway using weighted distribution.
+        Route through Praxis AI gateway using weighted distribution.
       duration: 300s
       routing_policy: weighted-even
       traffic:
@@ -101,7 +101,7 @@ spec:
 
     - name: routed-geographic
       description: >-
-        Route through fleet gateway using geographic locality.
+        Route through Praxis AI gateway using geographic locality.
       duration: 300s
       routing_policy: geographic-local
       traffic:
@@ -134,9 +134,9 @@ spec:
         - routing_decision_latency_ms
 
   success_criteria:
-    # Fleet gateway routing overhead should not exceed 5ms at p50.
+    # Praxis AI gateway routing overhead should not exceed 5ms at p50.
     max_routing_overhead_p50_ms: 5
-    # Fleet gateway routing overhead should not exceed 15ms at p99.
+    # Praxis AI gateway routing overhead should not exceed 15ms at p99.
     max_routing_overhead_p99_ms: 15
     # KV cache affinity routing should improve cache hit rate by > 20%.
     min_kv_cache_hit_rate_improvement: 0.20

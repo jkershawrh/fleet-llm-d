@@ -17,11 +17,13 @@ fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet o
 
 ---
 
-> **Maturity notice (July 2026):** Staging-promotable. Unified state layer
-> with PostgreSQL persistence. Real Granite inference proven on Oberon SNO
-> with OVMS (OpenVINO). Praxis AI gateway integrated for multi-model routing.
-> Full ecosystem soak (fleet-llm-d + GCL + DeepField + ARE Ledger + real
-> inference) running on Oberon. Test matrix: 50 green / 10 red (E2E remaining).
+> **Maturity notice (August 2026):** Staging-promotable. 3-cluster fleet
+> operational: Oberon (hub), Arena (CPU), Brutus (GPU H100). Praxis AI
+> replaced fleet-gateway as inference routing layer. Cross-cluster routing
+> proven via NodePort bridges. Cascade soak: 9,778 ops, 0 errors, 9/9 SLO
+> gates (smoke+short+pressure+stress). GCL signed CloudEvents end-to-end.
+> ARE ledger wired with 240+ hash-chained entries verified.
+> Test matrix: 50 green / 10 red (E2E remaining).
 > Rubric scores: Correctness ~90, Performance ~75, Reliability ~80,
 > Operability ~75, Security ~80.
 > See [docs/status-report.md](docs/status-report.md) for full evidence.
@@ -350,6 +352,10 @@ See [`docs/whitepaper/fleet-llm-d-whitepaper.md`](docs/whitepaper/fleet-llm-d-wh
 
 An 8-hour soak ran on-cluster on Oberon (pod-to-pod, production deepfield CloudEvent pipeline). 5,534 governance cycles, zero errors, all 5 SLO gates passed. E2E latency p50=154ms, p95=485ms. 15 degradation injections passed. Chain integrity 95/95 verified.
 
+### Cascade Soak (3-Cluster, August 2026)
+
+A cascade soak exercised the full 3-cluster fleet (Oberon hub, Arena CPU, Brutus GPU H100) with cross-cluster routing via NodePort bridges and Praxis AI. **9,778 ops, 0 errors, 9/9 SLO gates passed** (smoke+short+pressure+stress). GCL signed CloudEvents verified end-to-end. ARE ledger: 240+ hash-chained entries verified.
+
 ### Resilience (On-Cluster)
 
 6 resilience tests passed: fleet controller pod kill (9ms recovery), GCL pod kill (8ms), simultaneous kill (12ms/10ms), rapid restart 5x (avg 7ms), post-disruption soak (0% error rate).
@@ -357,7 +363,7 @@ An 8-hour soak ran on-cluster on Oberon (pod-to-pod, production deepfield CloudE
 ### Observability and Security
 
 - Prometheus text format metrics at `:9091/metrics` (8 metrics: counters, gauges, memory, goroutines)
-- NetworkPolicies: default-deny with per-component allowlists deployed on Oberon
+- NetworkPolicies: default-deny with per-component allowlists deployed on all 3 clusters (Oberon, Arena, Brutus)
 - Ecosystem test matrix: `test/matrix/ecosystem-matrix.yaml` (CDD/TDD/BDD/EDD/CBT/Soak rubric)
 
 ### Production Gate Model

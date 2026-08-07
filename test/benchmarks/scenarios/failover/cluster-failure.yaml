@@ -11,7 +11,7 @@ metadata:
 spec:
   description: >-
     Simulates complete cluster failure while serving production traffic.
-    Measures how quickly the fleet gateway detects the failure, drains
+    Measures how quickly the Praxis AI gateway detects the failure, drains
     in-flight requests, reroutes traffic to surviving clusters, and
     returns to full SLO compliance. Validates that the failover routing
     policy, health checks, and request retry logic work correctly under
@@ -37,7 +37,7 @@ spec:
         replicas: 2
         role: failover-2
 
-    gateway:
+    praxis:
       location: us-east
       health_check_interval: 5s
       unhealthy_threshold: 3

@@ -306,7 +306,7 @@ The NUMA result is noteworthy: conventional guidance recommends NUMA affinity fo
 | **Speculative decoding** | Granite 350M deployed as draft model | 2-4× token generation speedup by pairing small draft model with larger verifier |
 | **Intel TDX confidential inference** | BIOS enablement pending | Hardware-encrypted inference — model weights and user data invisible to cloud admin |
 | **OVMS for all models** | 3 of 5 models on OVMS | Remaining 2 Python models can be migrated for uniform concurrent performance |
-| **Multi-cluster routing** | Architecture proven, networks separate | fleet-llm-d routes across clusters — testable when two clusters share a network |
+| **Multi-cluster routing** | Proven (3-cluster cascade soak) | fleet-llm-d routes across Oberon (hub), Arena (CPU), and Brutus (GPU H100) via NodePort bridges. Cascade soak: 9,778 ops, 0 errors, 9/9 SLO gates passed. |
 | **Predictive scaling** | Designed | Pre-scale based on event schedule, not reactive CPU metrics — eliminates cold-start during peak |
 | **24-hour soak test** | 2-minute soak completed (100% success) | Extended soak proves stability for multi-day events |
 | **Governed autoscaling decisions** | Verified on Oberon (6 scenarios, 24 edge cases) | The governed-cognitive-loop (GCL) governs CPU inference scaling decisions (scale, pre-warm, shed-load) based on evidence from deepfield-fleet classifications. The falsification gate prevents bad scaling actions from reaching fleet-llm-d. |

@@ -1,8 +1,8 @@
 # fleet-llm-d Status Report
 
-**Date:** July 29, 2026
-**Clusters:** Oberon (SNO, active), Dell Arena (multi-node, available for redeployment)
-**Stage:** Staging-promotable, ecosystem soak running
+**Date:** August 7, 2026
+**Clusters:** Oberon (hub, CPU/OVMS), Arena (CPU spoke, OVMS), Brutus (GPU spoke, H100/vLLM)
+**Stage:** Staging-promotable, cascade soak complete (9,778 ops, 0 errors, 9/9 SLO gates)
 
 ---
 
@@ -19,13 +19,15 @@ Fleet-level inference orchestration for llm-d. Extends single-cluster LLM infere
 ## Architecture
 
 ```
-Client → Praxis AI Gateway → Fleet Controller → Inference Backend (OVMS/vLLM)
-                                    │
-                          ┌─────────┼─────────┐
-                          │         │         │
-                    Oberon SNO  Arena Dell  (future spokes)
-                    OVMS CPU    (available)
-                    6 models
+Client → Praxis AI Gateway (Oberon) → Fleet Controller → Inference Backends
+                    │                        │
+                    │ NodePort bridges        │ cluster coordination
+                    │                        │
+          ┌─────────┼────────────────────────┼─────────┐
+          │         │                        │         │
+    Oberon (hub)  Arena (CPU spoke)    Brutus (GPU spoke)
+    OVMS CPU      OVMS CPU             vLLM GPU
+    6 models      Granite 2B           H100 NVL 94GB
 ```
 
 **Three-layer target architecture:**
@@ -131,41 +133,53 @@ Client → Praxis AI Gateway → Fleet Controller → Inference Backend (OVMS/vL
 
 ## Infrastructure Evidence
 
-### Oberon (SNO) -- Active
+### Oberon (SNO) -- Hub
 - **Hardware:** 256 CPUs (Intel Xeon), 512GB RAM, single node OpenShift
+- **Role:** Hub cluster running control plane, Praxis AI gateway, and full ecosystem
 - **Deployed:** Fleet controller (with PostgreSQL persistence), Praxis AI gateway, DeepField, GCL, ARE ledger, Grafana, 6 OVMS models
-- **Ecosystem soak:** Running since July 29, exercising all 12 capabilities + real OVMS inference + ledger via NodePort
 - **Proven:**
   - Unified state layer with PostgreSQL persistence (state survives controller restarts)
-  - 10.5-hour ecosystem soak (1,201 cycles, all capabilities green)
-  - Real Granite 2B inference via OVMS (<1s responses)
+  - Praxis AI gateway routes to all 3 clusters via NodePort bridges
+  - GCL signed DecisionPackage CloudEvents working end-to-end
+  - ARE immutable ledger fully wired with hash-chained verification
   - 6 models routed through Praxis AI gateway
-  - Ledger integrity maintained across all soak cycles
+- **Network policies:** Default-deny ingress, open egress for control plane (OVN-K limitation)
 - **Known issue:** OVN cross-namespace networking intermittent (worked around via NodePort for ledger)
 
-### Dell Arena (Multi-node) -- Available
+### Arena (Multi-node) -- Active CPU Spoke
 - **Hardware:** 256 CPUs (Intel Xeon 6 with AMX), 2TB RAM, OCP 4.22, RHOAI installed
-- **Status:** Cleaned for another group's benchmarks (July 2026), now available for redeployment
-- **Previously proven:**
-  - Real Granite inference through fleet proxy (131 tokens)
-  - Cross-cluster gateway federation (Arena + Oberon round-robin)
+- **Role:** CPU inference spoke, OVMS Granite 2B
+- **Routing:** Cross-cluster via NodePort bridge from Praxis on Oberon
+- **Proven:**
+  - Real Granite inference through fleet proxy
+  - Cross-cluster routing from Praxis on Oberon
   - Token metering with real model output
-  - Zero errors after 231 requests
-- **Known issue:** OVN-Kubernetes networking degraded (479-590 container restarts over 13 days)
+
+### Brutus (SNO) -- Active GPU Spoke
+- **Hardware:** H100 NVL 94GB GPU, single node OpenShift 4.22.8 at 192.168.1.75
+- **Role:** GPU inference spoke, vLLM serving
+- **Routing:** Cross-cluster via NodePort bridge from Praxis on Oberon
+- **Proven:**
+  - Live GPU inference with vLLM on H100
+  - Cross-cluster routing from Praxis on Oberon
+  - GPU + CPU inference unified under single Praxis gateway
+
+### Cascade Soak Results
+- **Total operations:** 9,778 (smoke + short + pressure + stress phases)
+- **Errors:** 0
+- **SLO gates passed:** 9/9
+- **Stress soak:** 6,522 ops at 10x concurrency, 0 errors
+- **Coverage:** All 3 clusters, GCL signed events, ARE ledger verification, cross-cluster routing
 
 ---
 
 ## Remaining Work
 
 ### Immediate (no hardware dependency)
-- Complete ecosystem soak on Oberon (72-hour target)
-- Chain fleet-controller → Praxis → OVMS (blocked by OVN; works via port-forward)
+- Praxis Grid Phase 2: SWIM mesh between clusters with mTLS (replace NodePort bridges)
+- NIXL integration for GPU-to-GPU KV cache transfer
+- ARE ledger auto-migration (schema versioning for ledger database)
 - E2E tests (last 10 red cells in test matrix; needs Kind clusters)
-
-### After OVN fix
-- Redeploy fleet-llm-d on Arena
-- Multi-cluster soak (Oberon + Arena)
-- Praxis Grid Phase 2: SWIM mesh between clusters with mTLS
 
 ### Hardware-dependent
 - ConnectLink KV cache TCP mode (can code without hardware, test needs multi-node)
@@ -174,5 +188,5 @@ Client → Praxis AI Gateway → Fleet Controller → Inference Backend (OVMS/vL
 
 ### For production
 - Full e2e test coverage
-- Multi-cluster soak with real inference on both clusters
+- Extended 72-hour soak across all 3 clusters
 - Present Praxis architecture to stakeholders

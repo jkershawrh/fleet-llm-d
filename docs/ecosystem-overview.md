@@ -117,7 +117,7 @@ This platform is built on and integrates with open-source projects across the Re
 - **Layer 2: Praxis AI + Grid** -- Programmable AI data plane (routing, protocol translation, SWIM mesh, mTLS)
 - **Layer 1: ConnectLink + NIXL** -- GPU/accelerator fabric (KV cache transfer, prefix sharing, RDMA/TCP)
 
-**Tech**: Go (control plane), Rust (data plane: gateway, agent, KV transfer), Praxis AI (inference routing), Next.js (dashboard), Helm charts. Full CI (Go, Rust, CRD validation, Docker build).
+**Tech**: Go (control plane), Rust (data plane: agent, KV transfer), Praxis AI (inference routing, replacing the former fleet-gateway crate), Next.js (dashboard), Helm charts. Full CI (Go, Rust, CRD validation, Docker build).
 
 ### 4. are-immutable-ledger: Prove
 
@@ -210,6 +210,19 @@ An 8-phase stress test exercised all 4 systems on the Oberon cluster. GCL ran as
 | 8. Chaos | 1/3 | 200 simultaneous cycles with 0 errors; single-pod ceiling reached at saturation |
 
 See [ecosystem stress test benchmarks](docs/benchmarks/ecosystem-stress-benchmarks.md) for the full breakdown.
+
+### Cascade Soak (3-Cluster, August 2026)
+
+A cascade soak test exercised the full ecosystem across all 3 active clusters (Oberon, Arena, Brutus H100 GPU).
+
+| Metric | Value |
+|---|---|
+| Total operations | 9,778 |
+| Errors | **0** |
+| SLO gates passed | **9/9** |
+| Clusters exercised | 3 (Oberon, Arena, Brutus) |
+
+All SLO gates passed with zero errors across the full operation set.
 
 ### Production-Emulation Soak (On-Cluster, 8 Hours)
 

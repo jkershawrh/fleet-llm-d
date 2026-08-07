@@ -27,7 +27,7 @@ make lint           # Lint all code
 - `api/` - API definitions (protobuf, OpenAPI, CRDs)
 - `cmd/` - Binary entry points (fleet-controller, fleet-agent, fleetctl)
 - `pkg/` - Go packages (control plane logic)
-- `crates/` - Rust crates (data plane: agent, KV transfer, ledger)
+- `crates/` - Rust crates (data plane: agent, KV transfer, ledger; fleet-gateway crate removed -- Praxis AI is now the inference data plane)
 - `web/` - TypeScript dashboard (Next.js)
 - `python/` - Python analytics
 - `deploy/` - Kubernetes deployment manifests (Kustomize + Helm)

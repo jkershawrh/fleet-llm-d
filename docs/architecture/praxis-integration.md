@@ -41,6 +41,8 @@ mixed-fabric deployments without architectural change.
 
 ## 1. Current Architecture
 
+> **Note:** fleet-gateway has been replaced by Praxis AI. The diagram below shows the pre-Praxis architecture for reference.
+
 ```
                           Ecosystem Pipeline
     +-----------+    +-----+    +-----------+    +--------+
@@ -80,8 +82,8 @@ mixed-fabric deployments without architectural change.
 - Go control plane: placement solver/scorer, routing policies, autoscaling,
   tenant metering/quota, model lifecycle (canary/blue-green), intent
   evaluation with GCL governance, ledger integration
-- Rust data plane: fleet-gateway (axum reverse proxy with weighted/latency/cost
-  balancing, health probing, cluster discovery), fleet-agent per cluster
+- Rust data plane: fleet-gateway was an axum reverse proxy with weighted/latency/cost
+  balancing, health probing, and cluster discovery (now replaced by Praxis AI); fleet-agent per cluster
 - KV transfer coordinator with TransferProtocol trait, gRPC transport, and
   NIXL bridge (stubbed)
 - Full ecosystem pipeline: DeepField observations feed GCL decisions feed
@@ -409,10 +411,10 @@ incrementally. The architecture must never require GPU hardware to function.
 
 ## 7. Phased Roadmap
 
-### Phase 1: Praxis AI Gateway (Weeks 1-6)
+### Phase 1: Praxis AI Gateway (Weeks 1-6) -- COMPLETE
 
 **Objective:** Replace fleet-gateway with Praxis AI for single-site inference
-routing, proving compatibility with OVMS CPU backends.
+routing, proving compatibility with OVMS CPU backends. **Status: Complete.** fleet-gateway Rust crate has been removed; Praxis AI is the production inference data plane.
 
 | Deliverable                                   | Owner          | Dependencies        |
 |-----------------------------------------------|----------------|---------------------|
@@ -665,6 +667,11 @@ path is clear:
   TCP transport can be added to fleet-gateway's kv-transfer crate directly.
 - **Phase 4 blocked:** MCP/A2A routing can be added as fleet-gateway middleware.
   Protocol translation can be a standalone sidecar.
+
+**Update (August 2026):** Phase 1 is complete. fleet-gateway has been removed
+and Praxis AI is the production data plane. The Phase 1 fallback to
+fleet-gateway is no longer applicable. Phases 2-4 fallback strategies remain
+valid for their respective scopes.
 
 No phase creates an irreversible dependency. Each phase delivers standalone
 value and can be paused or rolled back independently.
