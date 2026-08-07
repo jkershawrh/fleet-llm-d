@@ -61,7 +61,7 @@ func TestLeaderElector_DetectsExpiredLease(t *testing.T) {
 }
 
 func TestLeaderElector_DetectsActiveLease(t *testing.T) {
-	recent := time.Now().UTC().Format(time.RFC3339Nano)
+	recent := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 	lease := &k8sLease{
 		Spec: k8sLeaseSpec{
 			HolderIdentity:       "other-instance",
