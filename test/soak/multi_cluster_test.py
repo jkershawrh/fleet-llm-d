@@ -1081,7 +1081,7 @@ class MultiClusterTest:
     async def phase_live_inference_cpu(self, state: SoakState):
         cap = state.phase(14)
         try:
-            cpu_ids = [self.oberon_id]
+            cpu_ids = [self.oberon_id, self.arena_id]
             target_id = cpu_ids[self._inference_counter % len(cpu_ids)]
             inference_url = EXTERNAL_INFERENCE_URLS.get(target_id, "")
             if not inference_url:

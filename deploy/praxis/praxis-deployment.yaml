@@ -67,6 +67,12 @@ data:
 
               # --- Cross-cluster backends ---
 
+              # Arena: Granite 2B CPU (cross-cluster OVMS)
+              - path_prefix: "/"
+                headers:
+                  x-ai-model: "granite-2b-arena"
+                cluster: arena-granite-2b
+
               # Brutus: Granite 8B GPU (cross-cluster vLLM on H100)
               - path_prefix: "/"
                 headers:
@@ -92,10 +98,11 @@ data:
 
           - filter: load_balancer
             clusters:
-              # Oberon-local (cluster DNS)
+              # Granite 2B CPU — load-balanced across Oberon + Arena
               - name: ovms-granite-2b
                 endpoints:
                   - "ovms-granite-2b.fleet-llm-d.svc:8080"
+                  - "arena-ovms-external.fleet-llm-d.svc:8080"
               - name: ovms-granite-8b
                 endpoints:
                   - "ovms-granite-8b.fleet-llm-d.svc:8080"
@@ -105,6 +112,10 @@ data:
               - name: vllm-granite
                 endpoints:
                   - "granite-real.fleet-llm-d.svc:8000"
+              # Arena cross-cluster (via K8s external service → Arena NodePort 30106)
+              - name: arena-granite-2b
+                endpoints:
+                  - "arena-ovms-external.fleet-llm-d.svc:8080"
               # Brutus cross-cluster (via K8s external service → Brutus NodePort 32712)
               - name: brutus-granite-8b-gpu
                 endpoints:
