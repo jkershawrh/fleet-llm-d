@@ -2,7 +2,7 @@
 
 ## Architecture, Benchmarks, and Production Validation with llm-d
 
-**Authors:** Jonathan Kershaw
+**Authors:** Jonathan Kershaw, Naina Singh
 **Date:** August 2026
 **Version:** Draft 0.4, updated with 3-cluster production validation (Oberon+Arena+Brutus), Praxis AI gateway deployment, GCL signed CloudEvents, ARE ledger wiring, and cascade soak evidence (9,778 ops, 0 errors, 9/9 SLO gates)
 
