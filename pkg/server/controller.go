@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -93,6 +95,9 @@ type FleetController struct {
 	// Autoscaling actuation
 	Actuator *actuator.ModelPlaneActuator
 
+	// Praxis overlay renders dynamic routing config from placement decisions.
+	PraxisOverlay *routing.PraxisOverlay
+
 	// Session affinity table for multi-turn conversation routing
 	SessionTable *routing.SessionAffinityTable
 
@@ -140,6 +145,25 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		reconciler.SetNamespace(namespace)
 	}
 
+	// Build Praxis overlay from environment config (before onChange which captures it).
+	var praxisOverlay *routing.PraxisOverlay
+	if praxisEndpoints := os.Getenv("PRAXIS_CLUSTER_ENDPOINTS"); praxisEndpoints != "" {
+		var endpoints []routing.PraxisClusterEndpoint
+		for _, entry := range strings.Split(praxisEndpoints, ",") {
+			parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
+			if len(parts) == 2 {
+				endpoints = append(endpoints, routing.PraxisClusterEndpoint{
+					ClusterID: parts[0],
+					Endpoint:  parts[1],
+				})
+			}
+		}
+		if len(endpoints) > 0 {
+			praxisOverlay = routing.NewPraxisOverlay(endpoints)
+			slog.Info("Praxis overlay enabled", "endpoints", len(endpoints))
+		}
+	}
+
 	// Wire the onChange callback so every placement decision is recorded
 	// to the standalone immutable ledger.
 	reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
@@ -160,6 +184,26 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 			Status:    string(pool.Phase),
 			UpdatedAt: pool.LastReconciled,
 		}
+		if praxisOverlay != nil {
+			allPools := reconciler.ListPools()
+			var placements []routing.PoolPlacement
+			for _, p := range allPools {
+				if len(p.DesiredClusters) > 0 {
+					placements = append(placements, routing.PoolPlacement{
+						ModelName: p.Model,
+						Clusters:  p.DesiredClusters,
+					})
+				}
+			}
+			if cfg, err := praxisOverlay.RenderConfig(placements); err == nil {
+				if writeErr := writePraxisConfigMap(kubeAPI, namespace, cfg); writeErr != nil {
+					slog.Warn("failed to update Praxis config", "error", writeErr)
+				} else {
+					slog.Info("Praxis config updated", "placements", len(placements))
+				}
+			}
+		}
+
 		if _, err := poolRepo.Get(ctx, pool.Name); err != nil {
 			poolRecord.CreatedAt = pool.LastReconciled
 			if createErr := poolRepo.Create(ctx, poolRecord); createErr != nil {
@@ -222,6 +266,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}(),
 		LedgerGatewayToken: ledgerCfg.APIToken,
 		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
+		PraxisOverlay:      praxisOverlay,
 		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,
@@ -271,4 +316,43 @@ func (fc *FleetController) BuildClusterHealth(ctx context.Context) []policy.Clus
 		result = append(result, ch)
 	}
 	return result
+}
+
+// writePraxisConfigMap updates the praxis-ai-config ConfigMap with the
+// rendered Praxis config. Uses the in-cluster K8s API.
+func writePraxisConfigMap(kubeAPI, namespace, configYAML string) error {
+	if kubeAPI == "" {
+		return nil
+	}
+	token := ""
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+		token = strings.TrimSpace(string(data))
+	}
+
+	payload := fmt.Sprintf(`{"data":{"praxis-ai-config.yaml":%q}}`, configYAML)
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/configmaps/praxis-ai-config",
+		strings.TrimRight(kubeAPI, "/"), namespace)
+
+	req, err := http.NewRequest(http.MethodPatch, url, strings.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("patch configmap: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("patch configmap: %d", resp.StatusCode)
+	}
+	return nil
 }
