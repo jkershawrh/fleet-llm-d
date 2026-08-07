@@ -1,17 +1,15 @@
 # fleet-llm-d
 
-<!-- TODO: Add project logo -->
-<!-- ![fleet-llm-d](docs/assets/logo.png) -->
 
-**Fleet-level inference orchestration for [llm-d](https://github.com/llm-d), extending single-cluster inference to multi-cluster fleet operations.**
+**Fleet-level inference orchestration for [llm-d](https://github.com/llm-d) — coordinating model placement, routing, autoscaling, tenant governance, and compliance across multi-cluster GPU infrastructure.**
 
-fleet-llm-d extends llm-d from single-cluster inference to multi-cluster fleet operations. It provides a Go control plane, Rust per-cluster agents, and a Next.js dashboard that together deliver model placement, cross-cluster routing, fleet autoscaling, observability, tenant governance, lifecycle management, and KV cache state transfer across heterogeneous GPU infrastructure. Praxis AI serves as the programmable inference data plane for model routing and token counting.
+fleet-llm-d is the operations control plane for enterprise AI inference fleets. It extends llm-d from single-cluster inference to multi-cluster fleet operations with seven composable capabilities: placement (constraint solver + GPU-aware scoring), cross-cluster routing (via Praxis AI gateway), fleet autoscaling (GPU/CPU-aware optimizer), tenant governance (quotas, metering, chargeback), model lifecycle (canary/blue-green rollouts), observability federation, and KV cache state transfer. The platform integrates with the governed cognitive loop (GCL) for signed decision governance and the ARE Immutable Ledger for tamper-evident compliance records. Ten Kubernetes CRDs define the complete fleet state declaratively.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
 [![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/Tests-340%2B_passing-brightgreen.svg)](#testing)
-[![Architecture](https://img.shields.io/badge/Arch_Proofs-65%2F65-blue.svg)](#architectural-proof)
+[![Architecture](https://img.shields.io/badge/Architecture-10_CRDs%2C_42_APIs-blue.svg)](#architecture)
 [![BDD](https://img.shields.io/badge/BDD-63_scenarios-blue.svg)](#testing)
 [![Rust](https://img.shields.io/badge/Rust_Tests-73_passing-blue.svg)](#testing)
 
