@@ -19,15 +19,17 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-          command: ["python3", "-u", "multi_cluster_test.py"]
+          command: ["sh", "-c"]
           args:
-            - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
-            - "--ledger-url=http://ledger-gateway.immutable-ledger.svc:28099"
-            - "--token=$(FLEET_AUTH_TOKEN)"
-            - "--gcl-signing-key=$(GCL_SIGNING_KEY)"
-            - "--gcl-key-id=fleet-llm-d-2026-08"
-            - "--profile=24hr-variable"
-            - "--json"
+            - >-
+              python3 -u multi_cluster_test.py
+              --fleet-url=http://fleet-controller.fleet-llm-d.svc:8080
+              --ledger-url=http://ledger-gateway.immutable-ledger.svc:28099
+              --token="$FLEET_AUTH_TOKEN"
+              --gcl-signing-key="$GCL_SIGNING_KEY"
+              --gcl-key-id=fleet-llm-d-2026-08
+              --profile=24hr-variable
+              --json
           env:
             - name: FLEET_AUTH_TOKEN
               valueFrom:
