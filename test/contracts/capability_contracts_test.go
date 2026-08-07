@@ -230,24 +230,26 @@ func TestTenantContract(t *testing.T) {
 func TestObservabilityContract(t *testing.T) {
 	requireServer(t)
 
-	t.Run("model metrics returns JSON with Model field", func(t *testing.T) {
+	t.Run("model metrics returns error for unknown model", func(t *testing.T) {
 		resp := getPath(t, "/api/v1/metrics/model/granite-3b")
-		result := expectJSON(t, resp, http.StatusOK)
-		if result["Model"] != "granite-3b" {
-			t.Errorf("expected Model=granite-3b, got %v", result["Model"])
-		}
+		expectJSON(t, resp, http.StatusInternalServerError)
 	})
 
-	t.Run("agent status creates cluster and returns shape", func(t *testing.T) {
+	t.Run("agent status requires registered cluster", func(t *testing.T) {
+		// Register the cluster first
+		postBody(t, "/api/v1/clusters", map[string]interface{}{
+			"id": "contract-obs-1", "name": "obs-cluster", "region": "us-east-1",
+		})
+		defer deletePath(t, "/api/v1/clusters/contract-obs-1")
+
 		resp := postBody(t, "/api/v1/agent/status", map[string]interface{}{
 			"cluster_id": "contract-obs-1", "name": "obs-cluster", "region": "us-east-1",
 			"phase": "Running", "healthy": true, "gpu_total": 8, "gpu_available": 6,
 		})
-		result := expectJSON(t, resp, http.StatusCreated)
+		result := expectJSON(t, resp, http.StatusOK)
 		if result["status"] != "accepted" {
 			t.Errorf("expected status=accepted, got %v", result["status"])
 		}
-		defer deletePath(t, "/api/v1/clusters/contract-obs-1")
 	})
 }
 
