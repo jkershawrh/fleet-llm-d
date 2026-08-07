@@ -164,6 +164,9 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 	}
 
+	// Create event publisher early so it can be captured by the onChange closure.
+	eventPublisher := events.NewLedgerAwarePublisher(events.NewEventPublisher(), fleetRecorder)
+
 	// Wire the onChange callback so every placement decision is recorded
 	// to the standalone immutable ledger.
 	reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
@@ -200,6 +203,11 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 					slog.Warn("failed to update Praxis config", "error", writeErr)
 				} else {
 					slog.Info("Praxis config updated", "placements", len(placements))
+					_ = eventPublisher.Publish(ctx, events.FleetEvent{
+						Type: events.EventRoutingUpdated, Source: "urn:fleet-llm-d:controller",
+						Subject: pool.Model, Timestamp: time.Now().UTC(),
+						Payload: map[string]interface{}{"placements": len(placements)},
+					})
 				}
 			}
 		}
@@ -252,7 +260,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		MetricsFederator:     metrics.NewMetricsFederator(metricsCollector),
 		TransferOrchestrator: transfer.NewTransferOrchestrator(),
 		ClusterClient:        clusterClient,
-		EventPublisher:       events.NewLedgerAwarePublisher(events.NewEventPublisher(), fleetRecorder),
+		EventPublisher:       eventPublisher,
 		PricingTable:         cost.DefaultPricingTable(),
 		Reconciler:           reconciler,
 		CRDWatcher:           crdWatcher,

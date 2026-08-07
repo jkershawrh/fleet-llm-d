@@ -117,24 +117,19 @@ fleet-llm-d is governed by ten Custom Resource Definitions (CRDs) that define th
 
 Every state mutation in fleet-llm-d publishes an event through the in-memory event publisher with an optional HTTP sink for external subscribers. The event publisher (`pkg/store/events/publisher.go`) defines a `FleetEvent` with type, payload, timestamp, and source. A `LedgerAwarePublisher` wraps the base publisher to dual-write events to both the in-memory event bus and the ARE Immutable Ledger, ensuring the compliance trail is populated as a side effect of normal operation rather than requiring separate instrumentation. The HTTP sink (`pkg/store/events/http_publisher.go`) can target any CloudEvents-compatible endpoint, including a Kafka REST proxy, without requiring a native Kafka client dependency.
 
-The system defines eleven event types. Five are actively published in the current codebase; the remaining six are defined in the event schema for downstream consumers to implement as additional capabilities are wired:
-
-**Active (published by fleet-controller and ledger recorder):**
+The system publishes eleven event types, defined as constants in `pkg/store/events/publisher.go`. Ten are actively wired into the controller and ledger recorder; one (`tenant.quota.exceeded`) fires when quota enforcement is integrated into the request admission path:
 
 1. `fleet.cluster.registered` -- A new cluster joins the fleet.
 2. `fleet.cluster.deregistered` -- A cluster is removed from the fleet.
 3. `fleet.placement.assigned` -- The placement engine assigns a model to one or more clusters.
 4. `model.deployed` -- A model deployment completes on a target cluster.
-5. `fleet.kvcache.transferred` -- A cross-cluster KV cache transfer completes.
-
-**Defined (schema established, publishing wired as capabilities mature):**
-
-6. `model.scaled` -- The fleet autoscaler adjusts replica count or migrates replicas across clusters.
-7. `routing.updated` -- A FleetRoutingPolicy change takes effect.
-8. `tenant.onboarded` -- A new TenantProfile is created.
-9. `tenant.quota.exceeded` -- A tenant exceeds a quota threshold.
-10. `rollout.promoted` -- A canary rollout is promoted to full traffic.
-11. `rollout.rolledback` -- A rollout is rolled back due to SLO violation.
+5. `model.scaled` -- The fleet autoscaler adjusts replica count or migrates replicas across clusters.
+6. `routing.updated` -- Praxis config overlay updated from placement decisions.
+7. `tenant.onboarded` -- A new TenantProfile is created.
+8. `tenant.quota.exceeded` -- A tenant exceeds a quota threshold (wired when quota enforcement is in request path).
+9. `rollout.promoted` -- A canary rollout is promoted to full traffic.
+10. `rollout.rolledback` -- A rollout is rolled back due to SLO violation.
+11. `fleet.kvcache.transferred` -- A cross-cluster KV cache transfer completes.
 
 Subscribers register interest in specific event types and receive synchronous callbacks. This enables loose coupling: the placement engine publishes `model.placed` without knowing which downstream systems (metrics aggregation, ledger recording, dashboard updates, alerting) consume the event.
 

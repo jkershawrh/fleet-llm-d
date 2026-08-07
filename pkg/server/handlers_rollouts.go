@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
@@ -74,6 +76,10 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
+		Type: events.EventRolloutPromoted, Source: "urn:fleet-llm-d:controller",
+		Subject: id, Timestamp: time.Now().UTC(), Payload: state,
+	})
 	writeJSON(w, http.StatusOK, state)
 }
 
@@ -91,5 +97,9 @@ func (fc *FleetController) handleRollbackRollout(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
+		Type: events.EventRolloutRolledBack, Source: "urn:fleet-llm-d:controller",
+		Subject: id, Timestamp: time.Now().UTC(), Payload: state,
+	})
 	writeJSON(w, http.StatusOK, state)
 }

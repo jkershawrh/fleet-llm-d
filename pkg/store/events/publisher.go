@@ -11,6 +11,20 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 )
 
+const (
+	EventClusterRegistered   = "fleet.cluster.registered"
+	EventClusterDeregistered = "fleet.cluster.deregistered"
+	EventModelPlaced         = "fleet.placement.assigned"
+	EventModelDeployed       = "model.deployed"
+	EventModelScaled         = "model.scaled"
+	EventRoutingUpdated      = "routing.updated"
+	EventTenantOnboarded     = "tenant.onboarded"
+	EventTenantQuotaExceeded = "tenant.quota.exceeded"
+	EventRolloutPromoted     = "rollout.promoted"
+	EventRolloutRolledBack   = "rollout.rolledback"
+	EventKVCacheTransferred  = "fleet.kvcache.transferred"
+)
+
 // FleetEvent represents an event in the fleet system.
 type FleetEvent struct {
 	ID            string

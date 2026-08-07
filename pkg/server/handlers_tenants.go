@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/metering"
 )
@@ -74,6 +75,10 @@ func (fc *FleetController) handleCreateTenant(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
+		Type: events.EventTenantOnboarded, Source: "urn:fleet-llm-d:controller",
+		Subject: req.ID, Timestamp: time.Now().UTC(), Payload: map[string]interface{}{"id": req.ID, "name": req.Name, "priority": req.Priority},
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID, "status": "created"})
 }
 

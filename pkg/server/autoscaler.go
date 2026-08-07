@@ -7,6 +7,7 @@ import (
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/actuator"
+	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 )
 
 func (fc *FleetController) runAutoscalingLoop(ctx context.Context) {
@@ -94,6 +95,14 @@ func (fc *FleetController) runAutoscalingCycle(ctx context.Context) {
 			}
 
 			RecordAutoscalerAction(direction)
+			_ = fc.EventPublisher.Publish(ctx, events.FleetEvent{
+				Type: events.EventModelScaled, Source: "urn:fleet-llm-d:autoscaler",
+				Subject: action.PoolName, Timestamp: time.Now().UTC(),
+				Payload: map[string]interface{}{
+					"cluster": action.ClusterID, "from": action.CurrentReplicas,
+					"to": action.DesiredReplicas, "direction": direction, "reason": action.Reason,
+				},
+			})
 
 			if fc.FleetRecorder != nil {
 				if _, recordErr := fc.FleetRecorder.RecordScalingEvent(
