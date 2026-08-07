@@ -175,18 +175,21 @@ Client → Praxis AI Gateway (Oberon) → Fleet Controller → Inference Backend
 
 ## Remaining Work
 
-### Immediate (no hardware dependency)
-- Praxis Grid Phase 2: SWIM mesh between clusters with mTLS (replace NodePort bridges)
-- NIXL integration for GPU-to-GPU KV cache transfer
-- ARE ledger auto-migration (schema versioning for ledger database)
+### Immediate (no blockers)
+- ARE ledger auto-migration (schema versioning at startup in are-immutable-ledger repo)
 - E2E tests (last 10 red cells in test matrix; needs Kind clusters)
-
-### Hardware-dependent
-- ConnectLink KV cache TCP mode (can code without hardware, test needs multi-node)
-- Per-device Gaudi tracking (needs Gaudi hardware)
-- OFI/RDMA bridge for KV transfer (needs RoCE networking)
-
-### For production
-- Full e2e test coverage
+- Wire `tenant.quota.exceeded` event into request admission path
 - Extended 72-hour soak across all 3 clusters
-- Present Praxis architecture to stakeholders
+
+### Blocked on upstream / external
+- **Praxis Grid Phase 2** — SWIM mesh + mTLS to replace NodePort bridges. Blocked: Grid does not exist in upstream Praxis yet. Current ConfigMap overlay + file watcher is the working alternative.
+- **NIXL GPU-to-GPU KV cache** — GPU-direct RDMA transfer. Blocked: requires RDMA/RoCE/InfiniBand networking between nodes + NIXL SDK installed. TCP transport is production-ready for CPU-to-CPU transfers.
+- **OFI/libfabric bridge** — Gaudi3 accelerator KV transfer. Blocked: requires Gaudi hardware + OFI library.
+
+### Done (previously listed as remaining)
+- ~~Praxis AI deployment~~ — deployed, soak-validated
+- ~~Cross-cluster routing~~ — 3-cluster routing via NodePort bridges
+- ~~GCL signed CloudEvents~~ — HMAC-SHA256 verified end-to-end
+- ~~ARE ledger wiring~~ — 240+ entries, chain integrity verified
+- ~~Network policies~~ — default-deny ingress enforced
+- ~~ConnectLink TCP mode~~ — fully implemented and tested in crates/kv-transfer

@@ -252,7 +252,6 @@ and production-safe external dependency configuration.
 
 ## Dashboard
 
-<!-- TODO: Add screenshot -->
 <!-- ![Dashboard](docs/assets/dashboard-screenshot.png) -->
 
 The fleet-llm-d dashboard is a Next.js (TypeScript) application providing fleet-wide visibility and management.
@@ -457,7 +456,6 @@ The fleet controller exposes 27 REST endpoints. See [`api/openapi/fleet-api.yaml
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and contribution guidelines.
 
-<!-- TODO: CONTRIBUTING.md is not yet written. -->
 
 ## License
 
