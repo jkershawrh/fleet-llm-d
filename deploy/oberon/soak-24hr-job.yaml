@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: soak-24hr-variable
+  namespace: fleet-llm-d
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app: soak-24hr
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: soak
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/soak-driver:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          command: ["python3", "-u", "multi_cluster_test.py"]
+          args:
+            - "--fleet-url=http://fleet-controller.fleet-llm-d.svc:8080"
+            - "--ledger-url=http://ledger-gateway.immutable-ledger.svc:28099"
+            - "--token=$(FLEET_AUTH_TOKEN)"
+            - "--gcl-signing-key=$(GCL_SIGNING_KEY)"
+            - "--gcl-key-id=fleet-llm-d-2026-08"
+            - "--profile=24hr-variable"
+            - "--json"
+          env:
+            - name: FLEET_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: soak-credentials
+                  key: auth-token
+            - name: GCL_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: soak-credentials
+                  key: gcl-signing-key
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

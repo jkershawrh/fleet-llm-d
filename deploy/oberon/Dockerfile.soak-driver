@@ -1,9 +1,10 @@
 FROM python:3.11-slim
 WORKDIR /app
 RUN pip install --no-cache-dir httpx
+COPY test/soak/multi_cluster_test.py .
 COPY test/soak/ecosystem_soak.py .
 COPY test/soak/capability_soak.py .
 COPY test/soak/resilience_test.py .
 COPY test/security/pen_test.py .
 ENTRYPOINT ["python3", "-u"]
-CMD ["capability_soak.py"]
+CMD ["multi_cluster_test.py"]
