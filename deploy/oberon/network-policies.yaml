@@ -1,3 +1,11 @@
+# Network policies for fleet-llm-d namespace on OpenShift OVN-Kubernetes.
+#
+# OVN-K requires explicit `to` selectors on egress rules:
+#   - DNS: target openshift-dns by kubernetes.io/metadata.name label
+#   - External HTTPS: use ipBlock 0.0.0.0/0 (not to: [] which means deny)
+#   - Cross-namespace: use kubernetes.io/metadata.name label
+#   - K8s API: target default namespace on port 6443
+# Ingress from OpenShift Routes: use network.openshift.io/policy-group: ingress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -10,6 +18,7 @@ spec:
     - Ingress
     - Egress
 ---
+# Fleet Controller
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -23,13 +32,149 @@ spec:
     - Ingress
   ingress:
     - from:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - podSelector: {}
       ports:
         - port: 8080
           protocol: TCP
         - port: 9091
           protocol: TCP
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-controller-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fleet-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 8090
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - port: 6443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: immutable-ledger
+      ports:
+        - port: 28099
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: governed-cognitive-loop
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+# Praxis AI Gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-praxis-ai-ingress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: praxis-ai
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-praxis-ai-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: praxis-ai
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 32712
+          protocol: TCP
+---
+# Mock Inference
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -50,6 +195,7 @@ spec:
         - port: 8080
           protocol: TCP
 ---
+# ModelPlane Mock
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -70,6 +216,7 @@ spec:
         - port: 8090
           protocol: TCP
 ---
+# DeepField Fleet
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -83,51 +230,12 @@ spec:
     - Ingress
   ingress:
     - from:
-        - namespaceSelector: {}
+        - podSelector: {}
       ports:
         - port: 8000
           protocol: TCP
 ---
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-grafana-ingress
-  namespace: fleet-llm-d
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: fleet-grafana
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector: {}
-      ports:
-        - port: 3000
-          protocol: TCP
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-semantic-router-ingress
-  namespace: fleet-llm-d
-spec:
-  podSelector:
-    matchLabels:
-      app: semantic-router
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector: {}
-      ports:
-        - port: 8080
-          protocol: TCP
-        - port: 9090
-          protocol: TCP
-        - port: 9190
-          protocol: TCP
----
+# Fleet PostgreSQL
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -148,97 +256,99 @@ spec:
         - port: 5432
           protocol: TCP
 ---
+# OVMS Granite 2B
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-fleet-controller-egress
+  name: allow-ovms-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: fleet-controller
-  policyTypes:
-    - Egress
-  egress:
-    - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    - ports:
-        - port: 443
-          protocol: TCP
-    - ports:
-        - port: 5432
-          protocol: TCP
-    - ports:
-        - port: 8080
-          protocol: TCP
-    - ports:
-        - port: 8090
-          protocol: TCP
-    - ports:
-        - port: 6443
-          protocol: TCP
-    - ports:
-        - port: 28099
-          protocol: TCP
-    - ports:
-        - port: 8099
-          protocol: TCP
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-praxis-ai-ingress
-  namespace: fleet-llm-d
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: praxis-ai
+      app: ovms-granite-2b
   policyTypes:
     - Ingress
   ingress:
     - from:
-        - namespaceSelector: {}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: praxis-ai
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-controller
       ports:
         - port: 8080
           protocol: TCP
 ---
+# Grafana
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-praxis-ai-egress
+  name: allow-grafana-ingress
   namespace: fleet-llm-d
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: praxis-ai
+      app.kubernetes.io/name: fleet-grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 3000
+          protocol: TCP
+---
+# Fleet Agent
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-agent-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-agent
   policyTypes:
     - Egress
   egress:
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
       ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
     - to:
-        - namespaceSelector: {}
-      ports:
-        - port: 8080
-          protocol: TCP
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - port: 8000
-          protocol: TCP
-    - to: []
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
         - port: 443
           protocol: TCP
+    - to:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - port: 6443
+          protocol: TCP
 ---
+# Agent Simulator
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -251,11 +361,19 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - ports:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
-    - ports:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-controller
+      ports:
         - port: 8080
           protocol: TCP

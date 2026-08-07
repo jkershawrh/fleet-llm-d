@@ -1,3 +1,4 @@
+# Network policies for fleet-llm-d on Arena (CPU spoke, OVN-Kubernetes).
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -22,19 +23,32 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - ports:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
-    - ports:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
         - port: 443
           protocol: TCP
-    - ports:
-        - port: 6443
-          protocol: TCP
-    - ports:
+    - to:
+        - podSelector: {}
+      ports:
         - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - port: 6443
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
@@ -65,12 +79,19 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - ports:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
-    - ports:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
         - port: 443
           protocol: TCP
 ---

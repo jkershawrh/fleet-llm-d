@@ -1,3 +1,5 @@
+# Network policies for fleet-llm-d on Brutus (GPU spoke, OVN-Kubernetes).
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -22,30 +24,41 @@ spec:
     - Egress
   egress:
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
       ports:
-        - protocol: TCP
-          port: 53
-        - protocol: UDP
-          port: 53
-    - to: []
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
-        - protocol: TCP
-          port: 443
-        - protocol: TCP
-          port: 8080
+        - port: 443
+          protocol: TCP
     - to:
         - podSelector:
             matchLabels:
               app: vllm-granite-8b-gpu
       ports:
-        - protocol: TCP
-          port: 8000
+        - port: 8000
+          protocol: TCP
     - to:
-        - namespaceSelector: {}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-controller
       ports:
-        - protocol: TCP
-          port: 6443
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - port: 6443
+          protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -65,24 +78,28 @@ spec:
             matchLabels:
               app.kubernetes.io/name: fleet-agent
       ports:
-        - protocol: TCP
-          port: 8000
+        - port: 8000
+          protocol: TCP
     - from:
         - namespaceSelector:
             matchLabels:
               network.openshift.io/policy-group: ingress
       ports:
-        - protocol: TCP
-          port: 8000
+        - port: 8000
+          protocol: TCP
   egress:
     - to:
-        - namespaceSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
       ports:
-        - protocol: TCP
-          port: 53
-        - protocol: UDP
-          port: 53
-    - to: []
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
-        - protocol: TCP
-          port: 443
+        - port: 443
+          protocol: TCP
