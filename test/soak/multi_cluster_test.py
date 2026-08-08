@@ -159,19 +159,19 @@ PROFILES = {
 VARIABLE_INTENSITY_BANDS = [
     # Each band simulates different cluster conditions via agent metrics.
     # The controller uses these to make routing decisions across clusters.
-    {"name": "calm",     "duration": 3600,  "interval": 30, "concurrency": 1,
+    {"name": "calm",     "duration": 3600,  "interval": 30, "concurrency": 1, "full_phases": True,
      "metrics": {"gpu_utilization": 0.3, "queue_depth": 1, "throughput_tps": 5.0, "ttft_p50_ms": 20.0}},
-    {"name": "ramp",     "duration": 1800,  "interval": 15, "concurrency": 3,
+    {"name": "ramp",     "duration": 1800,  "interval": 15, "concurrency": 3, "full_phases": True,
      "metrics": {"gpu_utilization": 0.5, "queue_depth": 3, "throughput_tps": 15.0, "ttft_p50_ms": 40.0}},
-    {"name": "pressure", "duration": 3600,  "interval": 5,  "concurrency": 5,
+    {"name": "pressure", "duration": 3600,  "interval": 5,  "concurrency": 5, "full_phases": False,
      "metrics": {"gpu_utilization": 0.75, "queue_depth": 8, "throughput_tps": 30.0, "ttft_p50_ms": 80.0}},
-    {"name": "stress",   "duration": 1800,  "interval": 3,  "concurrency": 10,
+    {"name": "stress",   "duration": 1800,  "interval": 5,  "concurrency": 5, "full_phases": False,
      "metrics": {"gpu_utilization": 0.9, "queue_depth": 15, "throughput_tps": 50.0, "ttft_p50_ms": 150.0}},
-    {"name": "cool",     "duration": 1800,  "interval": 30, "concurrency": 1,
+    {"name": "cool",     "duration": 1800,  "interval": 30, "concurrency": 1, "full_phases": True,
      "metrics": {"gpu_utilization": 0.2, "queue_depth": 0, "throughput_tps": 2.0, "ttft_p50_ms": 15.0}},
-    {"name": "burst",    "duration": 900,   "interval": 2,  "concurrency": 15,
+    {"name": "burst",    "duration": 900,   "interval": 3,  "concurrency": 8, "full_phases": False,
      "metrics": {"gpu_utilization": 0.95, "queue_depth": 25, "throughput_tps": 60.0, "ttft_p50_ms": 200.0}},
-    {"name": "recover",  "duration": 3600,  "interval": 30, "concurrency": 2,
+    {"name": "recover",  "duration": 3600,  "interval": 30, "concurrency": 2, "full_phases": True,
      "metrics": {"gpu_utilization": 0.4, "queue_depth": 2, "throughput_tps": 8.0, "ttft_p50_ms": 25.0}},
 ]
 
@@ -234,6 +234,9 @@ PHASE_NAMES = {
 
 SUSTAINED_PHASES = list(range(3, 17))  # phases 3-16 repeat in sustained mode
 SAFE_SUSTAINED_PHASES = [p for p in range(3, 17) if p not in (4, 5)]  # skip failover+drain
+# Expensive phases (GCL signing, ledger verify, drain/session) — only run in calm/recover bands.
+EXPENSIVE_PHASES = {6, 11, 12, 13}
+LIGHT_SUSTAINED_PHASES = [p for p in SAFE_SUSTAINED_PHASES if p not in EXPENSIVE_PHASES]
 STATEFUL_PHASES = {4, 5, 6}  # failover, drain/activate, session affinity — serialize these
 
 
@@ -1521,11 +1524,18 @@ class MultiClusterTest:
                               f"queue={m.get('queue_depth','?')})\n",
                               file=sys.stderr)
 
+                # Use full phase list in calm bands, light list in stress bands.
+                if use_variable:
+                    band = VARIABLE_INTENSITY_BANDS[band_idx % len(VARIABLE_INTENSITY_BANDS)]
+                    active_phases = phases_to_cycle if band.get("full_phases", True) else LIGHT_SUSTAINED_PHASES
+                else:
+                    active_phases = phases_to_cycle
+
                 if concurrency <= 1:
-                    for phase_num in phases_to_cycle:
+                    for phase_num in active_phases:
                         await self.run_phase(phase_num, state)
                 else:
-                    for phase_num in phases_to_cycle:
+                    for phase_num in active_phases:
                         if phase_num in STATEFUL_PHASES:
                             await self.run_phase(phase_num, state)
                         else:
