@@ -32,7 +32,9 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/modelpack"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
+	"github.com/llm-d/fleet-llm-d/pkg/server"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/quota"
 )
 
@@ -1809,6 +1811,201 @@ func TestA62_Observability_ServiceMonitorResourcesExist(t *testing.T) {
 		if !strings.Contains(content, "name: "+name) {
 			t.Fatalf("ARCHITECTURE VIOLATION: ServiceMonitor for %s not found in servicemonitors.yaml", name)
 		}
+	}
+}
+
+// ===========================================================================
+// MULTI-CLUSTER GRID INTEGRATION (A65-A66)
+// ===========================================================================
+
+func TestA65_MultiCluster_GridCRDTranslatorWired(t *testing.T) {
+	claim(t, "A65", "multi-cluster", "CDD", "GridCRDTranslator is wired when GRID_NETWORK env var and kubeAPI are set")
+
+	t.Setenv("GRID_NETWORK", "test-grid-network")
+
+	mockKube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockKube.Close()
+
+	fc, err := server.NewFleetControllerWithLedgerConfig(
+		ledger.Config{Mode: ledger.ModeMemory},
+		"", "", mockKube.URL, "default",
+	)
+	if err != nil {
+		t.Fatalf("NewFleetControllerWithLedgerConfig: %v", err)
+	}
+
+	if fc.GridCRDTranslator == nil {
+		t.Fatal("ARCHITECTURE VIOLATION: GridCRDTranslator is nil when GRID_NETWORK is set and kubeAPI is configured")
+	}
+}
+
+func TestA66_MultiCluster_SWIMSyncAdapterWired(t *testing.T) {
+	claim(t, "A66", "multi-cluster", "CDD", "SWIMSyncAdapter is wired when GRID_NETWORK env var and kubeAPI are set")
+
+	t.Setenv("GRID_NETWORK", "test-grid-network")
+
+	mockKube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockKube.Close()
+
+	fc, err := server.NewFleetControllerWithLedgerConfig(
+		ledger.Config{Mode: ledger.ModeMemory},
+		"", "", mockKube.URL, "default",
+	)
+	if err != nil {
+		t.Fatalf("NewFleetControllerWithLedgerConfig: %v", err)
+	}
+
+	if fc.SWIMSyncAdapter == nil {
+		t.Fatal("ARCHITECTURE VIOLATION: SWIMSyncAdapter is nil when GRID_NETWORK is set and kubeAPI is configured")
+	}
+}
+
+// ===========================================================================
+// SECURITY HARDENING (A67)
+// ===========================================================================
+
+func TestA67_Security_AllPOSTHandlersUseMaxBytesReader(t *testing.T) {
+	claim(t, "A67", "security", "CDD", "All POST handlers wrap r.Body with http.MaxBytesReader")
+
+	handlerFiles := []string{
+		"../../pkg/server/handlers_clusters.go",
+		"../../pkg/server/handlers_rollouts.go",
+		"../../pkg/server/handlers_intents.go",
+	}
+	for _, path := range handlerFiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ARCHITECTURE VIOLATION: cannot read %s: %v", path, err)
+		}
+		if strings.Contains(string(data), "json.NewDecoder(r.Body)") {
+			t.Fatalf("ARCHITECTURE VIOLATION: %s contains raw json.NewDecoder(r.Body) without http.MaxBytesReader", path)
+		}
+	}
+}
+
+// ===========================================================================
+// EVENT FLOW — GRID (A68-A69)
+// ===========================================================================
+
+func TestA68_Events_GridSyncedPublished(t *testing.T) {
+	claim(t, "A68", "events", "EDD", "Grid sync cycle publishes fleet.grid.synced event with sites and providers")
+
+	// Mock K8s API that accepts PATCH requests from the CRD translator.
+	mockKube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockKube.Close()
+
+	t.Setenv("GRID_NETWORK", "test-grid-network")
+
+	fc, err := server.NewFleetControllerWithLedgerConfig(
+		ledger.Config{Mode: ledger.ModeMemory},
+		"", "", mockKube.URL, "default",
+	)
+	if err != nil {
+		t.Fatalf("NewFleetControllerWithLedgerConfig: %v", err)
+	}
+
+	// Subscribe to the grid synced event before triggering the cycle.
+	ctx := context.Background()
+	var received *events.FleetEvent
+	if err := fc.EventPublisher.Subscribe(ctx, []string{events.EventGridSynced}, func(_ context.Context, e events.FleetEvent) error {
+		cp := e
+		received = &cp
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Run a single grid sync cycle (repos are empty, so no K8s PATCH calls).
+	fc.RunGridSyncCycle(ctx)
+
+	if received == nil {
+		t.Fatal("ARCHITECTURE VIOLATION: fleet.grid.synced event was not published by RunGridSyncCycle")
+	}
+	payload, ok := received.Payload.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map payload, got %T", received.Payload)
+	}
+	if _, hasSites := payload["sites"]; !hasSites {
+		t.Fatal("ARCHITECTURE VIOLATION: fleet.grid.synced payload missing 'sites' key")
+	}
+	if _, hasProviders := payload["providers"]; !hasProviders {
+		t.Fatal("ARCHITECTURE VIOLATION: fleet.grid.synced payload missing 'providers' key")
+	}
+}
+
+func TestA69_Events_SWIMHealthUpdatedPublished(t *testing.T) {
+	claim(t, "A69", "events", "EDD", "SWIM health sync publishes fleet.swim.health.updated on GridSite phase change")
+
+	// Mock K8s API: return 200 for PATCH requests, return a GridSite list for GET.
+	mockKube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "gridsites") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"items": []map[string]interface{}{
+					{
+						"metadata": map[string]interface{}{
+							"name":   "cluster-swim-test",
+							"labels": map[string]string{},
+						},
+						"spec": map[string]interface{}{
+							"gridNetworkRef": "test-grid-network",
+							"region":         "us-east-1",
+						},
+						"status": map[string]interface{}{
+							"phase": "Active",
+						},
+					},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockKube.Close()
+
+	t.Setenv("GRID_NETWORK", "test-grid-network")
+
+	fc, err := server.NewFleetControllerWithLedgerConfig(
+		ledger.Config{Mode: ledger.ModeMemory},
+		"", "", mockKube.URL, "default",
+	)
+	if err != nil {
+		t.Fatalf("NewFleetControllerWithLedgerConfig: %v", err)
+	}
+
+	// Register a cluster in the repo with status "Pending" so the SWIM sync
+	// detects a phase change (Active -> Running != Pending) and updates it.
+	ctx := context.Background()
+	if err := fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{
+		ID:     "cluster-swim-test",
+		Name:   "swim-test",
+		Region: "us-east-1",
+		Status: "Pending",
+	}); err != nil {
+		t.Fatalf("register cluster: %v", err)
+	}
+
+	// Subscribe to the SWIM health updated event.
+	var received *events.FleetEvent
+	if err := fc.EventPublisher.Subscribe(ctx, []string{events.EventSWIMHealthUpdated}, func(_ context.Context, e events.FleetEvent) error {
+		cp := e
+		received = &cp
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Run the grid sync cycle which includes SWIM sync.
+	fc.RunGridSyncCycle(ctx)
+
+	if received == nil {
+		t.Fatal("ARCHITECTURE VIOLATION: fleet.swim.health.updated event was not published after GridSite phase change")
 	}
 }
 

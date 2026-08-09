@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -32,7 +31,7 @@ func (fc *FleetController) handleListRollouts(w http.ResponseWriter, r *http.Req
 func (fc *FleetController) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
 	var req rolloutCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return

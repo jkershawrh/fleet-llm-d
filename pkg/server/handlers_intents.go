@@ -22,7 +22,7 @@ import (
 func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
 	var intent intents.FleetIntent
-	if err := json.NewDecoder(r.Body).Decode(&intent); err != nil {
+	if err := decodeJSON(w, r, &intent); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
 		return
 	}

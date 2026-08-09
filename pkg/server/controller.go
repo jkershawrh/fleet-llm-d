@@ -98,6 +98,12 @@ type FleetController struct {
 	// Praxis overlay renders dynamic routing config from placement decisions.
 	PraxisOverlay *routing.PraxisOverlay
 
+	// GridCRDTranslator renders fleet cluster/pool state as Praxis Grid CRDs.
+	GridCRDTranslator *routing.GridCRDTranslator
+
+	// SWIMSyncAdapter reads GridSite health status back into FleetCluster records.
+	SWIMSyncAdapter *client.SWIMSyncAdapter
+
 	// Session affinity table for multi-turn conversation routing
 	SessionTable *routing.SessionAffinityTable
 
@@ -230,6 +236,8 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	// Create CRDWatcher and autoscaling actuator if Kubernetes API is configured.
 	var crdWatcher *controller.CRDWatcher
 	var autoscalingActuator *actuator.ModelPlaneActuator
+	var gridTranslator *routing.GridCRDTranslator
+	var swimSync *client.SWIMSyncAdapter
 	var intentRepository intents.Repository = intents.NewMemoryRepository()
 	if kubeAPI != "" {
 		if namespace == "" {
@@ -243,6 +251,12 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		crdWatcher = controller.NewCRDWatcher(kubeAPI, namespace, token, reconciler)
 		intentRepository = intents.NewKubernetesRepository(kubeAPI, namespace, token, nil)
 		autoscalingActuator = actuator.NewModelPlaneActuator(kubeAPI, token)
+
+		if gridNetwork := os.Getenv("GRID_NETWORK"); gridNetwork != "" {
+			gridTranslator = routing.NewGridCRDTranslator(kubeAPI, namespace, token, gridNetwork)
+			swimSync = client.NewSWIMSyncAdapter(kubeAPI, token, clusterRepo)
+			slog.Info("Grid CRD translator enabled", "network", gridNetwork)
+		}
 	}
 
 	return &FleetController{
@@ -278,6 +292,8 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		LedgerGatewayToken: ledgerCfg.APIToken,
 		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
 		PraxisOverlay:      praxisOverlay,
+		GridCRDTranslator:  gridTranslator,
+		SWIMSyncAdapter:    swimSync,
 		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,

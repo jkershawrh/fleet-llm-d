@@ -23,6 +23,8 @@ const (
 	EventRolloutPromoted     = "rollout.promoted"
 	EventRolloutRolledBack   = "rollout.rolledback"
 	EventKVCacheTransferred  = "fleet.kvcache.transferred"
+	EventGridSynced          = "fleet.grid.synced"
+	EventSWIMHealthUpdated   = "fleet.swim.health.updated"
 )
 
 // FleetEvent represents an event in the fleet system.

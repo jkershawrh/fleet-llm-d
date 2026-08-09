@@ -36,7 +36,7 @@ spec:
               drop: ["ALL"]
           env:
             - name: FLEET_CONTROL_PLANE_URL
-              value: FLEET_CONTROL_PLANE_URL_PLACEHOLDER
+              value: https://fleet-controller-fleet-llm-d.apps.oberon.fm2aihpcsed.com
             - name: FLEET_CLUSTER_ID
               value: arena-xeon6
             - name: FLEET_PROXY_PORT

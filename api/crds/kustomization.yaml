@@ -3,6 +3,8 @@ kind: Kustomization
 resources:
   - fleetcluster.yaml
   - fleetinferencepool.yaml
+  - gridsite.yaml
+  - inferenceprovider.yaml
   - fleetintent.yaml
   - fleetoperation.yaml
   - fleetroutingpolicy.yaml

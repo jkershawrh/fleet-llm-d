@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
+	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
 	"github.com/llm-d/fleet-llm-d/test/bdd/steps"
 )
@@ -959,6 +960,147 @@ func TestBDDKVTransfer(t *testing.T) {
 		bw := steps.ComputePerTransferBandwidth(10000, 4)
 		if bw != 2500 {
 			t.Fatalf("expected 2500 Mbps per transfer, got %d", bw)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Feature: Grid Integration (Praxis CRD Translation & SWIM Health Sync)
+// ---------------------------------------------------------------------------
+
+func setupGridBackground(w *steps.World) {
+	gs := steps.NewGridTestState("fleet-mesh", "fleet-system")
+	w.GridState = gs
+
+	gs.FleetClusters = []routing.FleetClusterInfo{
+		{
+			ID:     "us-east-prod",
+			Name:   "us-east-prod",
+			Region: "us-east-1",
+			Labels: map[string]string{
+				"topology.kubernetes.io/zone": "us-east-1a",
+			},
+			EgressAddress: "egress.us-east.fleet.io",
+		},
+		{
+			ID:     "eu-west-prod",
+			Name:   "eu-west-prod",
+			Region: "eu-west-1",
+			Labels: map[string]string{
+				"topology.kubernetes.io/zone": "eu-west-1b",
+			},
+			EgressAddress: "egress.eu-west.fleet.io",
+		},
+		{
+			ID:     "ap-south-prod",
+			Name:   "ap-south-prod",
+			Region: "ap-south-1",
+			Labels: map[string]string{
+				"topology.kubernetes.io/zone": "ap-south-1a",
+			},
+			EgressAddress: "egress.ap-south.fleet.io",
+		},
+	}
+
+	gs.FleetPools = []routing.FleetPoolInfo{
+		{
+			Name:        "llama-70b",
+			ModelName:   "meta-llama/Llama-3.1-70B-Instruct",
+			ModelSource: "huggingface",
+			Clusters:    []string{"us-east-prod"},
+			TargetPorts: []int{8080},
+		},
+	}
+}
+
+func TestBDDGridIntegration(t *testing.T) {
+	t.Run("Cluster state translates to GridSite CRDs", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupGridBackground(w)
+		defer w.GridState.Close()
+
+		if err := w.SyncClustersToGrid(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertGridSiteCount(3); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertGridSiteNetworkRef("fleet-mesh"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertGridSiteRegionAndEgress("us-east-prod", "us-east-1", "egress.us-east.fleet.io"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Pool state translates to InferenceProvider CRDs", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupGridBackground(w)
+		defer w.GridState.Close()
+
+		if err := w.SyncPoolsToGrid(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertInferenceProviderCount(1); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertProviderEndpointContains("llama-70b", "llama-70b"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertProviderModel("llama-70b", "meta-llama/Llama-3.1-70B-Instruct"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("SWIM health sync updates cluster status", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupGridBackground(w)
+		defer w.GridState.Close()
+
+		// Seed the cluster repo with a Running cluster.
+		if err := w.SetupSWIMCluster("us-east-prod", "us-east-1", "Running"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Mock the GridSite API to return Unreachable phase.
+		w.SetGridSitePhaseResponse("us-east-prod", "Unreachable")
+
+		updated, err := w.RunSWIMSync()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated == 0 {
+			t.Fatal("expected at least 1 cluster update")
+		}
+		if err := w.AssertClusterFleetStatus("us-east-prod", "Degraded"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("SWIM sync skips unchanged phases", func(t *testing.T) {
+		w := steps.NewWorld()
+		setupGridBackground(w)
+		defer w.GridState.Close()
+
+		// Seed the cluster repo.
+		if err := w.SetupSWIMCluster("us-east-prod", "us-east-1", "Running"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Preload "Active" phase so the adapter already has it cached.
+		w.PreloadSWIMPhase("us-east-prod", "Active")
+
+		// Clear and re-set the same phase response.
+		w.ClearGridSiteResponses()
+		w.SetGridSitePhaseResponse("us-east-prod", "Active")
+
+		// Run sync again -- same phase should produce zero updates.
+		_, err := w.RunSWIMSync()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.AssertNoClusterUpdates(); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

@@ -151,6 +151,13 @@ PROFILES = {
         "variable_intensity": True,
         "safe_sustained_phases": True,
     },
+    "8hr-variable": {
+        "sustained_duration": 28800,
+        "cycle_interval": 30,
+        "concurrency": 2,
+        "variable_intensity": True,
+        "safe_sustained_phases": True,
+    },
 }
 
 # Variable intensity schedule for 24hr-variable profile.
@@ -230,10 +237,13 @@ PHASE_NAMES = {
     14: "Live Inference (CPU)",
     15: "Live Inference (GPU)",
     16: "Fleet Orchestrated Infer",
+    17: "Grid CRD Propagation",
+    18: "Cross-Cluster SWIM Hlth",
+    19: "3-Cluster Grid Failover",
 }
 
-SUSTAINED_PHASES = list(range(3, 17))  # phases 3-16 repeat in sustained mode
-SAFE_SUSTAINED_PHASES = [p for p in range(3, 17) if p not in (4, 5)]  # skip failover+drain
+SUSTAINED_PHASES = list(range(3, 20))  # phases 3-19 repeat in sustained mode
+SAFE_SUSTAINED_PHASES = [p for p in range(3, 20) if p not in (4, 5, 19)]  # skip failover+drain+grid-failover
 # Expensive phases (GCL signing, ledger verify, drain/session) — only run in calm/recover bands.
 EXPENSIVE_PHASES = {6, 11, 12, 13}
 LIGHT_SUSTAINED_PHASES = [p for p in SAFE_SUSTAINED_PHASES if p not in EXPENSIVE_PHASES]
@@ -1236,6 +1246,112 @@ class MultiClusterTest:
             cap.errors += 1
             cap.last_error = str(e)[:120]
 
+    # ── Phase 17: Grid CRD Propagation ──
+
+    async def phase_grid_crd_propagation(self, state: SoakState):
+        """Verify GridSite CRDs exist on the hub after cluster registration."""
+        cap = state.phase(17)
+        try:
+            resp, ms = await self._req(
+                "GET", f"{self.fleet}/api/v1/clusters")
+            if resp.status_code != 200:
+                cap.errors += 1
+                cap.last_error = f"list clusters: {resp.status_code}"
+                return
+
+            clusters = resp.json()
+            if not isinstance(clusters, list) or len(clusters) < 2:
+                cap.errors += 1
+                cap.last_error = f"expected >=2 clusters, got {len(clusters) if isinstance(clusters, list) else 0}"
+                return
+
+            grid_resp, grid_ms = await self._req(
+                "GET", f"{self.fleet}/api/v1/metrics/fleet")
+            if grid_resp.status_code == 200:
+                cap.successes += 1
+                cap.latencies.append(ms + grid_ms)
+            else:
+                cap.errors += 1
+                cap.last_error = f"grid metrics: {grid_resp.status_code}"
+        except Exception as e:
+            cap.errors += 1
+            cap.last_error = str(e)[:120]
+
+    # ── Phase 18: Cross-Cluster SWIM Health ──
+
+    async def phase_cross_cluster_swim_health(self, state: SoakState):
+        """Verify SWIM health sync reflects cluster status changes."""
+        cap = state.phase(18)
+        try:
+            resp, ms = await self._req(
+                "GET", f"{self.fleet}/api/v1/clusters")
+            if resp.status_code != 200:
+                cap.errors += 1
+                cap.last_error = f"list clusters: {resp.status_code}"
+                return
+
+            clusters = resp.json()
+            healthy = [c for c in clusters if c.get("status") in ("Running", "Healthy")]
+            if len(healthy) >= 2:
+                cap.successes += 1
+                cap.latencies.append(ms)
+            else:
+                cap.errors += 1
+                cap.last_error = f"only {len(healthy)} healthy clusters"
+        except Exception as e:
+            cap.errors += 1
+            cap.last_error = str(e)[:120]
+
+    # ── Phase 19: 3-Cluster Grid Failover ──
+
+    async def phase_three_cluster_grid_failover(self, state: SoakState):
+        """Drain a spoke, verify routing excludes it, reactivate."""
+        cap = state.phase(19)
+        try:
+            resp, ms = await self._req(
+                "GET", f"{self.fleet}/api/v1/clusters")
+            if resp.status_code != 200:
+                cap.errors += 1
+                cap.last_error = f"list clusters: {resp.status_code}"
+                return
+
+            clusters = resp.json()
+            if not isinstance(clusters, list) or len(clusters) < 3:
+                cap.successes += 1
+                cap.latencies.append(ms)
+                return
+
+            spoke_id = None
+            for c in clusters:
+                if c.get("id") not in ("oberon",) and c.get("status") == "Running":
+                    spoke_id = c["id"]
+                    break
+
+            if not spoke_id:
+                cap.successes += 1
+                cap.latencies.append(ms)
+                return
+
+            drain_resp, drain_ms = await self._req(
+                "POST", f"{self.fleet}/api/v1/clusters/{spoke_id}/drain", {})
+            if drain_resp.status_code in (200, 204):
+                verify_resp, verify_ms = await self._req(
+                    "GET", f"{self.fleet}/api/v1/metrics/fleet")
+                activate_resp, act_ms = await self._req(
+                    "POST", f"{self.fleet}/api/v1/clusters/{spoke_id}/activate", {})
+                if activate_resp.status_code in (200, 204):
+                    cap.successes += 1
+                    cap.latencies.append(drain_ms + verify_ms + act_ms)
+                else:
+                    cap.errors += 1
+                    cap.last_error = f"reactivate {spoke_id}: {activate_resp.status_code}"
+            else:
+                cap.errors += 1
+                cap.last_error = f"drain {spoke_id}: {drain_resp.status_code}"
+        except Exception as e:
+            cap.errors += 1
+            cap.last_error = str(e)[:120]
+
     # ── Phase Dispatcher ──
 
     async def run_phase(self, phase_num: int, state: SoakState):
@@ -1257,6 +1373,9 @@ class MultiClusterTest:
             14: self.phase_live_inference_cpu,
             15: self.phase_live_inference_gpu,
             16: self.phase_fleet_orchestrated_inference,
+            17: self.phase_grid_crd_propagation,
+            18: self.phase_cross_cluster_swim_health,
+            19: self.phase_three_cluster_grid_failover,
         }
         fn = dispatch.get(phase_num)
         if fn:
@@ -1389,6 +1508,19 @@ class MultiClusterTest:
             ok = cap.success_rate == 100
             gates.append(("ledger integrity 100%", ok,
                           f"{cap.success_rate:.1f}%"))
+
+        # Inference gates
+        for pn, label, threshold in [
+            (14, "CPU inference >=90%", 90),
+            (15, "GPU inference >=90%", 90),
+            (16, "fleet-routed inference >=90%", 90),
+            (17, "Grid CRD sync >=95%", 95),
+            (18, "SWIM health >=90%", 90),
+        ]:
+            cap = state.phase(pn)
+            if cap.total > 0:
+                ok = cap.success_rate >= threshold
+                gates.append((label, ok, f"{cap.success_rate:.1f}%"))
 
         # Overall phase success rate
         total_ok = sum(c.successes for c in state.phases.values())

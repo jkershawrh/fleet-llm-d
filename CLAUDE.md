@@ -35,7 +35,7 @@ make lint           # Lint all code
 
 ## Architecture
 
-The Go fleet controller manages fleet CRDs and coordinates with per-cluster agents. Praxis AI handles cross-cluster traffic routing (replacing the former fleet-gateway). The core ecosystem path is:
+The Go fleet controller manages fleet CRDs and coordinates with per-cluster agents. Praxis AI handles cross-cluster traffic routing (replacing the former fleet-gateway). The controller's Grid CRD translator (`pkg/routing/praxis_crd_translator.go`) renders fleet state as Praxis Grid CRDs (GridSite, InferenceProvider), and the SWIM sync adapter (`pkg/cluster/client/swim_sync.go`) reads Grid health status back into fleet cluster records. Both are gated by the `GRID_NETWORK` env var. The core ecosystem path is:
 
 `deepfield-fleet -> governed-cognitive-loop -> fleet-llm-d -> are-immutable-ledger`
 

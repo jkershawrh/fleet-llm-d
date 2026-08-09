@@ -120,6 +120,9 @@ type World struct {
 
 	// Events collected during test
 	Events []string
+
+	// Grid integration test state
+	GridState *GridTestState
 }
 
 // NewWorld creates a new World with all capability instances initialized.

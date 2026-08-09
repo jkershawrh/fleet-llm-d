@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -32,13 +31,17 @@ func (fc *FleetController) handleListClusters(w http.ResponseWriter, r *http.Req
 func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
 	var req clusterRegistrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if len(req.Name) > 253 {
+		writeError(w, http.StatusBadRequest, "name exceeds maximum length (253)")
 		return
 	}
 

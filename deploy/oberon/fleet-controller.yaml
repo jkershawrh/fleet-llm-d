@@ -78,6 +78,8 @@ spec:
                 secretKeyRef:
                   name: fleet-postgres-credentials
                   key: pg-url
+            - name: GRID_NETWORK
+              value: fleet-llm-d-grid
           readinessProbe:
             httpGet:
               path: /readyz
