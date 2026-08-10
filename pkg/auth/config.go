@@ -22,6 +22,7 @@ func ConfigFromEnv() Config {
 
 	// FLEET_AUTH_SECRET_FILE takes precedence (for K8s Secret volume mounts)
 	if secretFile := os.Getenv("FLEET_AUTH_SECRET_FILE"); secretFile != "" {
+		// #nosec G703 -- the operator explicitly configures the mounted Secret path.
 		if data, err := os.ReadFile(secretFile); err == nil {
 			secret = strings.TrimSpace(string(data))
 		}

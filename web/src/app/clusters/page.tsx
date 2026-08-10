@@ -1,15 +1,40 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { DataTable, type Column } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { ProgressBar } from '@/components/progress-bar'
-import { MOCK_CLUSTERS, type Cluster } from '@/lib/api-client'
+import { fetchClusters, registerCluster, type Cluster } from '@/lib/api-client'
 
 export default function ClustersPage() {
-  const [clusters] = useState(MOCK_CLUSTERS)
+  const [clusters, setClusters] = useState<Cluster[]>([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
   const [showRegisterForm, setShowRegisterForm] = useState(false)
-  const [formData, setFormData] = useState({ name: '', region: '', gpuType: '', gpuCount: '' })
+  const [formData, setFormData] = useState({ name: '', region: '' })
+
+  const loadClusters = useCallback(async () => {
+    try {
+      setClusters(await fetchClusters())
+      setError('')
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Fleet API unavailable')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void fetchClusters().then((rows) => {
+      if (active) setClusters(rows)
+    }).catch((loadError: unknown) => {
+      if (active) setError(loadError instanceof Error ? loadError.message : 'Fleet API unavailable')
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [])
 
   const columns: Column<Cluster>[] = [
     {
@@ -99,12 +124,16 @@ export default function ClustersPage() {
     },
   ]
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    // TODO: POST /api/v1/clusters with formData
-    console.log('Register cluster:', formData)
-    setShowRegisterForm(false)
-    setFormData({ name: '', region: '', gpuType: '', gpuCount: '' })
+    try {
+      await registerCluster({ name: formData.name, region: formData.region })
+      await loadClusters()
+      setShowRegisterForm(false)
+      setFormData({ name: '', region: '' })
+    } catch (registerError) {
+      setError(registerError instanceof Error ? registerError.message : 'Registration failed')
+    }
   }
 
   return (
@@ -124,6 +153,9 @@ export default function ClustersPage() {
           Register Cluster
         </button>
       </div>
+
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">{error}</div>}
+      {loading && <p className="text-sm text-muted-foreground">Loading clusters…</p>}
 
       {/* Summary Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -194,39 +226,6 @@ export default function ClustersPage() {
                   <option value="eu-central-1">eu-central-1</option>
                   <option value="ap-southeast-1">ap-southeast-1</option>
                 </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-muted-foreground">
-                    GPU Type
-                  </label>
-                  <select
-                    value={formData.gpuType}
-                    onChange={(e) => setFormData({ ...formData, gpuType: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="">Select GPU</option>
-                    <option value="A100-80GB">A100-80GB</option>
-                    <option value="A100-40GB">A100-40GB</option>
-                    <option value="H100-80GB">H100-80GB</option>
-                    <option value="L40S">L40S</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted-foreground">
-                    GPU Count
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.gpuCount}
-                    onChange={(e) => setFormData({ ...formData, gpuCount: e.target.value })}
-                    placeholder="8"
-                    min="1"
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    required
-                  />
-                </div>
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button

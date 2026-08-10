@@ -58,17 +58,26 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 	if fc.FleetRecorder == nil {
 		return submission, nil
 	}
+	compensateConfiguredLedgerFailure := func(ledgerErr error) (intents.SubmissionResponse, error) {
+		if fc.LedgerGatewayURL == "" {
+			return submission, nil
+		}
+		if cleanupErr := fc.IntentService.DeleteSubmission(ctx, submission.IntentID, submission.OperationID); cleanupErr != nil {
+			return intents.SubmissionResponse{}, fmt.Errorf("ledger write failed and admission compensation failed: %v: %w", cleanupErr, ledgerErr)
+		}
+		return intents.SubmissionResponse{}, fmt.Errorf("ledger write failed (fail-closed): %w", ledgerErr)
+	}
 	persistedIntent, err := fc.IntentService.GetIntent(ctx, submission.IntentID)
 	if err != nil {
-		return submission, nil
+		return compensateConfiguredLedgerFailure(fmt.Errorf("reload persisted intent: %w", err))
 	}
 	operation, err := fc.IntentService.GetOperation(ctx, submission.OperationID)
 	if err != nil {
-		return submission, nil
+		return compensateConfiguredLedgerFailure(fmt.Errorf("reload persisted operation: %w", err))
 	}
 	intentBytes, err := json.Marshal(persistedIntent)
 	if err != nil {
-		return submission, nil
+		return compensateConfiguredLedgerFailure(fmt.Errorf("marshal persisted intent evidence: %w", err))
 	}
 	intentDigest := sha256.Sum256(intentBytes)
 	actor := "fleet-api"
@@ -108,7 +117,7 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 	}
 	content, err := json.Marshal(evidence)
 	if err != nil {
-		return submission, nil
+		return compensateConfiguredLedgerFailure(fmt.Errorf("marshal admission evidence: %w", err))
 	}
 	entryType := "fleet.intent." + string(persistedIntent.Type)
 	digest := sha256.Sum256(content)
@@ -122,19 +131,21 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 		InputHash:      payloadHash,
 	})
 	if err != nil || receipt == nil {
-		if fc.LedgerGatewayURL != "" {
-			// Fail closed: a configured ledger error must not be bypassed.
-			return intents.SubmissionResponse{}, fmt.Errorf("ledger write failed (fail-closed): %w", err)
+		ledgerErr := err
+		if ledgerErr == nil {
+			ledgerErr = fmt.Errorf("ledger returned no receipt")
 		}
-		// Memory/disabled mode: missing audit evidence is non-fatal.
-		return submission, nil
+		return compensateConfiguredLedgerFailure(ledgerErr)
 	}
 	if _, attachErr := fc.IntentService.AttachLedgerReceipt(ctx, submission.OperationID, intents.OperationLedgerReceipt{
 		EntryID: receipt.EntryID, EntryHash: receipt.EntryHash, EntryType: entryType,
 		ChainPosition: receipt.ChainPosition, WrittenTS: receipt.Timestamp.UnixMilli(), InputHash: payloadHash,
 		Purpose: intents.ReceiptPurposeAdmission,
 	}); attachErr != nil {
-		slog.Info("intent %s admitted without attached immutable-ledger proof: %v", submission.IntentID, attachErr)
+		if fc.LedgerGatewayURL != "" {
+			return compensateConfiguredLedgerFailure(fmt.Errorf("attach immutable-ledger proof: %w", attachErr))
+		}
+		slog.Info("intent admitted without attached immutable-ledger proof", "intent_id", submission.IntentID, "error", attachErr)
 	}
 	return submission, nil
 }

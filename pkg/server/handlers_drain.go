@@ -44,6 +44,7 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
+	original := cloneClusterRecord(record)
 
 	if record.Status == postgres.ClusterStatusDraining {
 		writeError(w, http.StatusConflict, "cluster is already draining")
@@ -70,14 +71,18 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if fc.SessionTable != nil {
-		fc.SessionTable.UnbindCluster(clusterID)
-	}
-
 	if err := fc.recordToLedger("fleet.cluster.drain_started", clusterID); err != nil {
 		errorsTotal.Inc()
+		if rollbackErr := fc.ClusterRepo.Update(r.Context(), original); rollbackErr != nil {
+			writeError(w, http.StatusInternalServerError, "ledger write failed and drain compensation failed: "+rollbackErr.Error()+": "+err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if fc.SessionTable != nil {
+		fc.SessionTable.UnbindCluster(clusterID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -100,6 +105,7 @@ func (fc *FleetController) handleActivateCluster(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
+	original := cloneClusterRecord(record)
 
 	if record.Status == postgres.ClusterStatusRunning || record.Status == postgres.ClusterStatusHealthy {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -124,6 +130,10 @@ func (fc *FleetController) handleActivateCluster(w http.ResponseWriter, r *http.
 
 	if err := fc.recordToLedger("fleet.cluster.activated", clusterID); err != nil {
 		errorsTotal.Inc()
+		if rollbackErr := fc.ClusterRepo.Update(r.Context(), original); rollbackErr != nil {
+			writeError(w, http.StatusInternalServerError, "ledger write failed and activation compensation failed: "+rollbackErr.Error()+": "+err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

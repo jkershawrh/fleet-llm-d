@@ -71,6 +71,11 @@ func (fc *FleetController) handleCreateTenant(w http.ResponseWriter, r *http.Req
 	if fc.FleetRecorder != nil {
 		if _, err := fc.FleetRecorder.RecordTenantCreated(r.Context(), req.ID, req.Name, req.Priority); err != nil && fc.LedgerGatewayURL != "" {
 			errorsTotal.Inc()
+			if rollbackErr := fc.TenantRepo.Delete(r.Context(), req.ID); rollbackErr != nil {
+				writeError(w, http.StatusInternalServerError, "ledger write failed and tenant compensation failed: "+rollbackErr.Error()+": "+err.Error())
+				return
+			}
+			tenantsGauge.Add(-1)
 			writeError(w, http.StatusInternalServerError, "ledger write failed (fail-closed): "+err.Error())
 			return
 		}

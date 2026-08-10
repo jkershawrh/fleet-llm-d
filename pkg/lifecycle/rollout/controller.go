@@ -2,6 +2,9 @@ package rollout
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -51,10 +54,14 @@ type rolloutRecord struct {
 	lifecycle v1alpha1.ModelLifecycleSpec
 }
 
+type persistedRolloutSnapshot struct {
+	Lifecycle     v1alpha1.ModelLifecycleSpec `json:"lifecycle"`
+	ClusterStates []ClusterRolloutState       `json:"clusterStates,omitempty"`
+}
+
 type defaultRolloutController struct {
 	mu       sync.Mutex
 	rollouts map[string]*rolloutRecord
-	counter  int
 	repo     postgres.RolloutRepository
 }
 
@@ -80,25 +87,41 @@ func (c *defaultRolloutController) loadFromRepo(ctx context.Context, rolloutID s
 	if err != nil || rec == nil {
 		return nil, false
 	}
-	strategyType := "Canary"
-	if s, ok := rec.Strategy["type"].(string); ok {
-		strategyType = s
+	lifecycle := v1alpha1.ModelLifecycleSpec{}
+	var clusterStates []ClusterRolloutState
+	if rawSnapshot, ok := rec.Strategy["snapshot"]; ok {
+		if encoded, marshalErr := json.Marshal(rawSnapshot); marshalErr == nil {
+			var snapshot persistedRolloutSnapshot
+			if unmarshalErr := json.Unmarshal(encoded, &snapshot); unmarshalErr == nil {
+				lifecycle = snapshot.Lifecycle
+				clusterStates = append([]ClusterRolloutState(nil), snapshot.ClusterStates...)
+			}
+		}
+	}
+	if lifecycle.Strategy.Type == "" {
+		strategyType := "Canary"
+		if configuredType, ok := rec.Strategy["type"].(string); ok && configuredType != "" {
+			strategyType = configuredType
+		}
+		lifecycle = v1alpha1.ModelLifecycleSpec{
+			FleetPoolRef: rec.PoolID,
+			Model:        v1alpha1.ModelRef{Version: rec.ModelVersion},
+			Strategy: v1alpha1.RolloutStrategy{
+				Type: strategyType,
+				Canary: &v1alpha1.CanaryConfig{
+					InitialWeight:   0,
+					WeightIncrement: 20,
+				},
+			},
+		}
 	}
 	state := &RolloutState{
 		ID:            rec.ID,
 		Phase:         rec.Status,
 		CurrentWeight: rec.CurrentWeight,
+		ClusterStates: clusterStates,
 		StartedAt:     rec.StartedAt,
 		UpdatedAt:     time.Now(),
-	}
-	lifecycle := v1alpha1.ModelLifecycleSpec{
-		Strategy: v1alpha1.RolloutStrategy{
-			Type: strategyType,
-			Canary: &v1alpha1.CanaryConfig{
-				InitialWeight:   0,
-				WeightIncrement: 20,
-			},
-		},
 	}
 	record := &rolloutRecord{state: state, lifecycle: lifecycle}
 	c.rollouts[rolloutID] = record
@@ -109,8 +132,11 @@ func (c *defaultRolloutController) CreateRollout(ctx context.Context, lifecycle 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.counter++
-	id := fmt.Sprintf("rollout-%s-%s-%d", lifecycle.Model.Name, lifecycle.Model.Version, c.counter)
+	randomSuffix := make([]byte, 8)
+	if _, err := rand.Read(randomSuffix); err != nil {
+		return nil, fmt.Errorf("generate rollout ID: %w", err)
+	}
+	id := fmt.Sprintf("rollout-%s-%s-%s", lifecycle.Model.Name, lifecycle.Model.Version, hex.EncodeToString(randomSuffix))
 
 	now := time.Now()
 
@@ -147,8 +173,64 @@ func (c *defaultRolloutController) CreateRollout(ctx context.Context, lifecycle 
 		state:     state,
 		lifecycle: lifecycle,
 	}
+	if c.repo != nil {
+		poolID := lifecycle.FleetPoolRef
+		if poolID == "" {
+			poolID = lifecycle.Model.Name
+		}
+		if err := c.repo.Create(ctx, postgres.RolloutRecord{
+			ID: id, PoolID: poolID, ModelVersion: lifecycle.Model.Version,
+			Strategy: map[string]interface{}{
+				"type": lifecycle.Strategy.Type,
+				"snapshot": persistedRolloutSnapshot{
+					Lifecycle: lifecycle, ClusterStates: append([]ClusterRolloutState(nil), clusterStates...),
+				},
+			},
+			Status: phase, CurrentWeight: weight, StartedAt: now,
+		}); err != nil {
+			delete(c.rollouts, id)
+			return nil, fmt.Errorf("persist rollout %q: %w", id, err)
+		}
+	}
 
-	return state, nil
+	return cloneRolloutState(state), nil
+}
+
+func cloneRolloutState(state *RolloutState) *RolloutState {
+	if state == nil {
+		return nil
+	}
+	copyState := *state
+	copyState.ClusterStates = append([]ClusterRolloutState(nil), state.ClusterStates...)
+	return &copyState
+}
+
+func (c *defaultRolloutController) persistState(ctx context.Context, state *RolloutState) error {
+	if c.repo == nil {
+		return nil
+	}
+	record, err := c.repo.Get(ctx, state.ID)
+	if err != nil {
+		return err
+	}
+	record.Status = state.Phase
+	record.CurrentWeight = state.CurrentWeight
+	if record.Strategy == nil {
+		record.Strategy = make(map[string]interface{})
+	}
+	snapshot := persistedRolloutSnapshot{}
+	if rawSnapshot, ok := record.Strategy["snapshot"]; ok {
+		if encoded, marshalErr := json.Marshal(rawSnapshot); marshalErr == nil {
+			_ = json.Unmarshal(encoded, &snapshot)
+		}
+	}
+	snapshot.ClusterStates = append([]ClusterRolloutState(nil), state.ClusterStates...)
+	record.Strategy["snapshot"] = snapshot
+	if strings.EqualFold(state.Phase, "Complete") || strings.EqualFold(state.Phase, "RolledBack") {
+		completedAt := state.UpdatedAt
+		record.CompletedAt = &completedAt
+	}
+	return c.repo.Update(ctx, *record)
 }
 
 // checkSLOGate returns true if the SLO gate passes (metrics within tolerance).
@@ -192,7 +274,7 @@ func (c *defaultRolloutController) AdvanceRollout(ctx context.Context, rolloutID
 		return nil, fmt.Errorf("rollout %q not found", rolloutID)
 	}
 
-	state := record.state
+	state := cloneRolloutState(record.state)
 	lifecycle := record.lifecycle
 
 	if !strings.EqualFold(lifecycle.Strategy.Type, "Canary") || lifecycle.Strategy.Canary == nil {
@@ -214,10 +296,14 @@ func (c *defaultRolloutController) AdvanceRollout(ctx context.Context, rolloutID
 				state.ClusterStates[i].Weight = 0
 				state.ClusterStates[i].SLOMet = false
 			}
-			return state, nil
+			if err := c.persistState(ctx, state); err != nil {
+				return nil, fmt.Errorf("persist rollout rollback %q: %w", rolloutID, err)
+			}
+			record.state = state
+			return cloneRolloutState(state), nil
 		}
 		// SLO failed but no rollback -- keep current state unchanged.
-		return state, nil
+		return cloneRolloutState(record.state), nil
 	}
 
 	// SLO passed -- advance the weight.
@@ -227,6 +313,10 @@ func (c *defaultRolloutController) AdvanceRollout(ctx context.Context, rolloutID
 	}
 
 	state.CurrentWeight = newWeight
+	state.Phase = "Canary"
+	if newWeight == 100 {
+		state.Phase = "Complete"
+	}
 	state.UpdatedAt = time.Now()
 
 	for i := range state.ClusterStates {
@@ -234,7 +324,11 @@ func (c *defaultRolloutController) AdvanceRollout(ctx context.Context, rolloutID
 		state.ClusterStates[i].SLOMet = true
 	}
 
-	return state, nil
+	if err := c.persistState(ctx, state); err != nil {
+		return nil, fmt.Errorf("persist rollout promotion %q: %w", rolloutID, err)
+	}
+	record.state = state
+	return cloneRolloutState(state), nil
 }
 
 func (c *defaultRolloutController) RollbackRollout(ctx context.Context, rolloutID string) (*RolloutState, error) {
@@ -249,7 +343,7 @@ func (c *defaultRolloutController) RollbackRollout(ctx context.Context, rolloutI
 		return nil, fmt.Errorf("rollout %q not found", rolloutID)
 	}
 
-	state := record.state
+	state := cloneRolloutState(record.state)
 	state.Phase = "RolledBack"
 	state.CurrentWeight = 0
 	state.UpdatedAt = time.Now()
@@ -259,7 +353,11 @@ func (c *defaultRolloutController) RollbackRollout(ctx context.Context, rolloutI
 		state.ClusterStates[i].Weight = 0
 	}
 
-	return state, nil
+	if err := c.persistState(ctx, state); err != nil {
+		return nil, fmt.Errorf("persist rollout rollback %q: %w", rolloutID, err)
+	}
+	record.state = state
+	return cloneRolloutState(state), nil
 }
 
 func (c *defaultRolloutController) GetRolloutState(ctx context.Context, rolloutID string) (*RolloutState, error) {
@@ -274,5 +372,5 @@ func (c *defaultRolloutController) GetRolloutState(ctx context.Context, rolloutI
 		return nil, fmt.Errorf("rollout %q not found", rolloutID)
 	}
 
-	return record.state, nil
+	return cloneRolloutState(record.state), nil
 }

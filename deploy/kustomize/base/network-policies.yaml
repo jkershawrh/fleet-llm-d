@@ -23,7 +23,9 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - ports:
+    - from:
+        - podSelector: {}
+      ports:
         - port: 8080
           protocol: TCP
         - port: 9091

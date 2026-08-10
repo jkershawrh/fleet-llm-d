@@ -35,7 +35,7 @@ type ModelPlaneWatcher struct {
 
 // NewModelPlaneWatcher creates a new watcher that polls the ModelPlane API.
 // An optional tlsutil.TLSOptions can be passed to configure TLS behavior.
-// Verification is enabled by default; insecure mode requires explicit opt-in.
+// Certificate verification is always enabled; opts may configure a custom CA.
 func NewModelPlaneWatcher(apiServer, namespace, token string, tlsOpts ...tlsutil.TLSOptions) *ModelPlaneWatcher {
 	opts := tlsutil.TLSOptions{}
 	if len(tlsOpts) > 0 {

@@ -45,6 +45,12 @@ auth:
   existingSecret: fleet-auth
   secretKey: FLEET_AUTH_SECRET
 
+tls:
+  enabled: false
+  existingSecret: fleet-tls
+  certKey: tls.crt
+  keyKey: tls.key
+
 controller:
   enabled: true
   replicaCount: 1

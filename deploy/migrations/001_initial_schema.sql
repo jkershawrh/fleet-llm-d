@@ -7,7 +7,7 @@ BEGIN;
 -- clusters
 -- ---------------------------------------------------------------------------
 CREATE TABLE clusters (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name            TEXT        NOT NULL UNIQUE,
     region          TEXT        NOT NULL,
     labels          JSONB       NOT NULL DEFAULT '{}',
@@ -28,10 +28,12 @@ COMMENT ON TABLE clusters IS 'Kubernetes clusters registered with the fleet cont
 -- fleet_pools
 -- ---------------------------------------------------------------------------
 CREATE TABLE fleet_pools (
-    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id               TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name             TEXT        NOT NULL UNIQUE,
     model_name       TEXT        NOT NULL,
     model_source     TEXT        NOT NULL,
+    desired_clusters JSONB       NOT NULL DEFAULT '[]',
+    target_ports     JSONB       NOT NULL DEFAULT '[]',
     placement_policy JSONB       NOT NULL DEFAULT '{}',
     routing_policy   JSONB       NOT NULL DEFAULT '{}',
     scaling_policy   JSONB       NOT NULL DEFAULT '{}',
@@ -49,9 +51,9 @@ COMMENT ON TABLE fleet_pools IS 'Logical pools that group model deployments acro
 -- pool_assignments
 -- ---------------------------------------------------------------------------
 CREATE TABLE pool_assignments (
-    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    pool_id     UUID        NOT NULL REFERENCES fleet_pools (id) ON DELETE CASCADE,
-    cluster_id  UUID        NOT NULL REFERENCES clusters (id) ON DELETE CASCADE,
+    id          TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    pool_id     TEXT        NOT NULL REFERENCES fleet_pools (id) ON DELETE CASCADE,
+    cluster_id  TEXT        NOT NULL REFERENCES clusters (id) ON DELETE CASCADE,
     replicas    INT         NOT NULL DEFAULT 1,
     gpu_type    TEXT        NOT NULL DEFAULT '',
     status      TEXT        NOT NULL DEFAULT 'pending',
@@ -68,7 +70,7 @@ COMMENT ON TABLE pool_assignments IS 'Maps fleet pools to clusters with replica 
 -- tenants
 -- ---------------------------------------------------------------------------
 CREATE TABLE tenants (
-    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id            TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name          TEXT        NOT NULL UNIQUE,
     priority      INT         NOT NULL DEFAULT 0,
     quotas        JSONB       NOT NULL DEFAULT '{}',
@@ -86,10 +88,10 @@ COMMENT ON TABLE tenants IS 'Tenants with quota, rate-limit, and cost-control po
 -- tenant_usage
 -- ---------------------------------------------------------------------------
 CREATE TABLE tenant_usage (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID        NOT NULL REFERENCES tenants (id) ON DELETE CASCADE,
+    id              TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    tenant_id       TEXT        NOT NULL REFERENCES tenants (id) ON DELETE CASCADE,
     model           TEXT        NOT NULL,
-    cluster_id      UUID,
+    cluster_id      TEXT,
     tokens_consumed BIGINT      NOT NULL DEFAULT 0,
     cost_usd        NUMERIC     NOT NULL DEFAULT 0,
     request_count   BIGINT      NOT NULL DEFAULT 0,
@@ -108,8 +110,8 @@ COMMENT ON TABLE tenant_usage IS 'Aggregated usage records per tenant, model, an
 -- rollouts
 -- ---------------------------------------------------------------------------
 CREATE TABLE rollouts (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    pool_id         UUID        NOT NULL REFERENCES fleet_pools (id) ON DELETE CASCADE,
+    id              TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    pool_id         TEXT        NOT NULL REFERENCES fleet_pools (id) ON DELETE CASCADE,
     model_version   TEXT        NOT NULL,
     strategy        JSONB       NOT NULL DEFAULT '{}',
     status          TEXT        NOT NULL DEFAULT 'pending',
@@ -127,9 +129,9 @@ COMMENT ON TABLE rollouts IS 'Progressive rollout records for model version upgr
 -- rollout_cluster_status
 -- ---------------------------------------------------------------------------
 CREATE TABLE rollout_cluster_status (
-    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    rollout_id  UUID        NOT NULL REFERENCES rollouts (id) ON DELETE CASCADE,
-    cluster_id  UUID        NOT NULL,
+    id          TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    rollout_id  TEXT        NOT NULL REFERENCES rollouts (id) ON DELETE CASCADE,
+    cluster_id  TEXT        NOT NULL,
     phase       TEXT        NOT NULL DEFAULT 'pending',
     weight      INT         NOT NULL DEFAULT 0,
     slo_met     BOOLEAN     NOT NULL DEFAULT TRUE,
@@ -146,7 +148,7 @@ COMMENT ON TABLE rollout_cluster_status IS 'Per-cluster status for an active rol
 -- fleet_events  (range-partitioned by created_at)
 -- ---------------------------------------------------------------------------
 CREATE TABLE fleet_events (
-    id          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id          TEXT        NOT NULL DEFAULT gen_random_uuid()::text,
     event_type  TEXT        NOT NULL,
     payload     JSONB       NOT NULL DEFAULT '{}',
     source      TEXT        NOT NULL DEFAULT '',
@@ -167,9 +169,9 @@ CREATE TABLE fleet_events_2026_07 PARTITION OF fleet_events
 -- kv_transfers
 -- ---------------------------------------------------------------------------
 CREATE TABLE kv_transfers (
-    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_cluster     UUID        NOT NULL,
-    target_cluster     UUID        NOT NULL,
+    id                 TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    source_cluster     TEXT        NOT NULL,
+    target_cluster     TEXT        NOT NULL,
     model              TEXT        NOT NULL,
     transfer_type      TEXT        NOT NULL,
     status             TEXT        NOT NULL DEFAULT 'pending',

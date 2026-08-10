@@ -591,9 +591,9 @@ func runVerifyExport(ctx context.Context, client *FleetClient, outFile string) {
 	fleetMetrics, _ := client.GetFleetMetrics(ctx)
 
 	export := map[string]interface{}{
-		"export_version": "1.0",
-		"exported_at":    time.Now().UTC().Format(time.RFC3339),
-		"project":        "fleet-llm-d",
+		"export_version":     "1.0",
+		"exported_at":        time.Now().UTC().Format(time.RFC3339),
+		"project":            "fleet-llm-d",
 		"chain_verification": chains,
 		"fleet_state": map[string]interface{}{
 			"clusters": clusters,
@@ -609,6 +609,7 @@ func runVerifyExport(ctx context.Context, client *FleetClient, outFile string) {
 		os.Exit(1)
 	}
 
+	// #nosec G703 G306 -- fleetctl writes the export path explicitly selected by its operator.
 	if err := os.WriteFile(outFile, data, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", outFile, err)
 		os.Exit(1)
@@ -633,6 +634,7 @@ type matrixEntry struct {
 // parseMatrixYAML reads matrix.yaml with a simple line-based parser.
 // This avoids pulling in a YAML dependency for a well-structured file.
 func parseMatrixYAML(path string) ([]matrixEntry, error) {
+	// #nosec G703 G304 -- fleetctl reads the matrix path explicitly selected by its operator.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

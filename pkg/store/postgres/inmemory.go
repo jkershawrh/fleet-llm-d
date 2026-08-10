@@ -117,6 +117,12 @@ func NewInMemoryFleetPoolRepository() *InMemoryFleetPoolRepository {
 	}
 }
 
+func cloneFleetPoolRecord(pool FleetPoolRecord) FleetPoolRecord {
+	pool.DesiredClusters = append([]string(nil), pool.DesiredClusters...)
+	pool.TargetPorts = append([]int(nil), pool.TargetPorts...)
+	return pool
+}
+
 func (r *InMemoryFleetPoolRepository) Create(_ context.Context, pool FleetPoolRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -134,7 +140,7 @@ func (r *InMemoryFleetPoolRepository) Create(_ context.Context, pool FleetPoolRe
 	if pool.UpdatedAt.IsZero() {
 		pool.UpdatedAt = now
 	}
-	r.pools[pool.ID] = pool
+	r.pools[pool.ID] = cloneFleetPoolRecord(pool)
 	return nil
 }
 
@@ -146,6 +152,7 @@ func (r *InMemoryFleetPoolRepository) Get(_ context.Context, id string) (*FleetP
 	if !ok {
 		return nil, fmt.Errorf("fleet pool %q not found", id)
 	}
+	p = cloneFleetPoolRecord(p)
 	return &p, nil
 }
 
@@ -155,7 +162,7 @@ func (r *InMemoryFleetPoolRepository) List(_ context.Context) ([]FleetPoolRecord
 
 	out := make([]FleetPoolRecord, 0, len(r.pools))
 	for _, p := range r.pools {
-		out = append(out, p)
+		out = append(out, cloneFleetPoolRecord(p))
 	}
 	return out, nil
 }
@@ -168,7 +175,7 @@ func (r *InMemoryFleetPoolRepository) Update(_ context.Context, pool FleetPoolRe
 		return fmt.Errorf("fleet pool %q not found", pool.ID)
 	}
 	pool.UpdatedAt = time.Now()
-	r.pools[pool.ID] = pool
+	r.pools[pool.ID] = cloneFleetPoolRecord(pool)
 	return nil
 }
 
@@ -310,6 +317,21 @@ func NewInMemoryRolloutRepository() *InMemoryRolloutRepository {
 	}
 }
 
+func cloneRolloutRecord(rollout RolloutRecord) RolloutRecord {
+	if rollout.Strategy != nil {
+		strategy := make(map[string]interface{}, len(rollout.Strategy))
+		for key, value := range rollout.Strategy {
+			strategy[key] = value
+		}
+		rollout.Strategy = strategy
+	}
+	if rollout.CompletedAt != nil {
+		completedAt := *rollout.CompletedAt
+		rollout.CompletedAt = &completedAt
+	}
+	return rollout
+}
+
 func (r *InMemoryRolloutRepository) Create(_ context.Context, rollout RolloutRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -323,7 +345,7 @@ func (r *InMemoryRolloutRepository) Create(_ context.Context, rollout RolloutRec
 	if rollout.StartedAt.IsZero() {
 		rollout.StartedAt = time.Now()
 	}
-	r.rollouts[rollout.ID] = rollout
+	r.rollouts[rollout.ID] = cloneRolloutRecord(rollout)
 	return nil
 }
 
@@ -335,6 +357,7 @@ func (r *InMemoryRolloutRepository) Get(_ context.Context, id string) (*RolloutR
 	if !ok {
 		return nil, fmt.Errorf("rollout %q not found", id)
 	}
+	ro = cloneRolloutRecord(ro)
 	return &ro, nil
 }
 
@@ -344,7 +367,7 @@ func (r *InMemoryRolloutRepository) List(_ context.Context) ([]RolloutRecord, er
 
 	out := make([]RolloutRecord, 0, len(r.rollouts))
 	for _, ro := range r.rollouts {
-		out = append(out, ro)
+		out = append(out, cloneRolloutRecord(ro))
 	}
 	return out, nil
 }
@@ -356,7 +379,7 @@ func (r *InMemoryRolloutRepository) Update(_ context.Context, rollout RolloutRec
 	if _, ok := r.rollouts[rollout.ID]; !ok {
 		return fmt.Errorf("rollout %q not found", rollout.ID)
 	}
-	r.rollouts[rollout.ID] = rollout
+	r.rollouts[rollout.ID] = cloneRolloutRecord(rollout)
 	return nil
 }
 

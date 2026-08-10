@@ -3,13 +3,12 @@ package client
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -38,9 +37,9 @@ type KubeconfigClusterClient struct {
 
 // NewKubeconfigClusterClient returns a new KubeconfigClusterClient with an
 // empty cluster map. An optional tlsutil.TLSOptions can be passed to configure
-// TLS behavior; when omitted, InsecureSkipVerify is used for backward compatibility.
+// TLS behavior; when omitted, certificate verification uses the system trust store.
 func NewKubeconfigClusterClient(tlsOpts ...tlsutil.TLSOptions) *KubeconfigClusterClient {
-	opts := tlsutil.TLSOptions{InsecureSkipVerify: true}
+	opts := tlsutil.TLSOptions{}
 	if len(tlsOpts) > 0 {
 		opts = tlsOpts[0]
 	}
@@ -71,27 +70,31 @@ type kubeconfigUser struct {
 
 // parseKubeconfig reads a JSON-format kubeconfig file and extracts the API
 // server URL and bearer token from the first cluster and user entries.
-func parseKubeconfig(path string) (server, token string, err error) {
+func parseKubeconfig(path string) (server, token, caCert string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("reading kubeconfig: %w", err)
+		return "", "", "", fmt.Errorf("reading kubeconfig: %w", err)
 	}
 
 	var kc kubeconfigFile
 	if err := json.Unmarshal(data, &kc); err != nil {
-		return "", "", fmt.Errorf("parsing kubeconfig (JSON format required): %w", err)
+		return "", "", "", fmt.Errorf("parsing kubeconfig (JSON format required): %w", err)
 	}
 
 	if len(kc.Clusters) == 0 {
-		return "", "", fmt.Errorf("kubeconfig contains no cluster entries")
+		return "", "", "", fmt.Errorf("kubeconfig contains no cluster entries")
 	}
 	if len(kc.Users) == 0 {
-		return "", "", fmt.Errorf("kubeconfig contains no user entries")
+		return "", "", "", fmt.Errorf("kubeconfig contains no user entries")
 	}
 
 	server = kc.Clusters[0].Cluster.Server
 	token = kc.Users[0].User.Token
-	return server, token, nil
+	caCert = kc.Clusters[0].Cluster.CertificateAuthority
+	if caCert != "" && !filepath.IsAbs(caCert) {
+		caCert = filepath.Join(filepath.Dir(path), caCert)
+	}
+	return server, token, caCert, nil
 }
 
 // RegisterCluster registers a cluster with the client. If the registration
@@ -107,16 +110,19 @@ func (c *KubeconfigClusterClient) RegisterCluster(ctx context.Context, reg Clust
 
 	if reg.KubeconfigPath != "" {
 		var err error
-		server, token, err = parseKubeconfig(reg.KubeconfigPath)
+		server, token, caCert, err = parseKubeconfig(reg.KubeconfigPath)
 		if err != nil {
 			return fmt.Errorf("loading kubeconfig for cluster %q: %w", reg.ID, err)
 		}
 	}
 
-	tlsCfg, tlsErr := tlsutil.NewTLSConfig(c.tlsOpts)
+	tlsOpts := c.tlsOpts
+	if caCert != "" {
+		tlsOpts.CAPath = caCert
+	}
+	tlsCfg, tlsErr := tlsutil.NewTLSConfig(tlsOpts)
 	if tlsErr != nil {
-		slog.Warn("failed to build TLS config, falling back to InsecureSkipVerify", "error", tlsErr)
-		tlsCfg = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // fallback
+		return fmt.Errorf("building TLS trust for cluster %q: %w", reg.ID, tlsErr)
 	}
 
 	httpClient := &http.Client{

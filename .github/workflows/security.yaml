@@ -41,7 +41,7 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Run gosec
-        run: gosec -fmt json -out gosec-results.json ./... || true
+        run: gosec -severity high -confidence high -fmt json -out gosec-results.json ./...
 
       - name: Upload gosec results
         uses: actions/upload-artifact@v4
@@ -135,7 +135,7 @@ jobs:
       - name: Install dependencies
         run: cd web && npm ci
       - name: Run npm audit
-        run: cd web && npm audit --audit-level=critical || echo "::warning::npm audit found high-severity issues in transitive dependencies — review and update when upstream fixes are available"
+        run: cd web && npm audit --audit-level=high
 
   dependency-review:
     name: Dependency Review

@@ -66,12 +66,16 @@ func (c *PGClient) EnsureSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS fleet_pools (
 			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			name TEXT NOT NULL UNIQUE, model_name TEXT NOT NULL, model_source TEXT NOT NULL,
+			desired_clusters JSONB NOT NULL DEFAULT '[]',
+			target_ports JSONB NOT NULL DEFAULT '[]',
 			placement_policy JSONB NOT NULL DEFAULT '{}',
 			routing_policy JSONB NOT NULL DEFAULT '{}',
 			scaling_policy JSONB NOT NULL DEFAULT '{}',
 			status TEXT NOT NULL DEFAULT 'pending',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`,
+		`ALTER TABLE fleet_pools ADD COLUMN IF NOT EXISTS desired_clusters JSONB NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE fleet_pools ADD COLUMN IF NOT EXISTS target_ports JSONB NOT NULL DEFAULT '[]'`,
 		`CREATE TABLE IF NOT EXISTS tenants (
 			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			name TEXT NOT NULL UNIQUE, priority INT NOT NULL DEFAULT 0,
@@ -242,17 +246,27 @@ func (c *PGClient) DeleteCluster(ctx context.Context, id string) error {
 
 // CreatePool inserts a new fleet pool record.
 func (c *PGClient) CreatePool(ctx context.Context, pool FleetPoolRecord) error {
+	desiredClusters, err := json.Marshal(pool.DesiredClusters)
+	if err != nil {
+		return fmt.Errorf("marshal desired clusters: %w", err)
+	}
+	targetPorts, err := json.Marshal(pool.TargetPorts)
+	if err != nil {
+		return fmt.Errorf("marshal target ports: %w", err)
+	}
 	query := `
 		INSERT INTO fleet_pools (id, name, model_name, model_source,
+		    desired_clusters, target_ports,
 		    placement_policy, routing_policy, scaling_policy, status,
 		    created_at, updated_at)
 		VALUES (COALESCE(NULLIF($1, ''), gen_random_uuid()::text), $2, $3, $4,
-		        $5::jsonb, $6::jsonb, $7::jsonb, $8,
-		        COALESCE(NULLIF($9::timestamptz, '0001-01-01'::timestamptz), now()),
-		        COALESCE(NULLIF($10::timestamptz, '0001-01-01'::timestamptz), now()))
+		        $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10,
+		        COALESCE(NULLIF($11::timestamptz, '0001-01-01'::timestamptz), now()),
+		        COALESCE(NULLIF($12::timestamptz, '0001-01-01'::timestamptz), now()))
 	`
-	_, err := c.db.ExecContext(ctx, query,
+	_, err = c.db.ExecContext(ctx, query,
 		pool.ID, pool.Name, pool.ModelName, pool.ModelSource,
+		desiredClusters, targetPorts,
 		defaultString(pool.PlacementPolicy, "{}"),
 		defaultString(pool.RoutingPolicy, "{}"),
 		defaultString(pool.ScalingPolicy, "{}"),
@@ -266,13 +280,16 @@ func (c *PGClient) CreatePool(ctx context.Context, pool FleetPoolRecord) error {
 func (c *PGClient) GetPool(ctx context.Context, id string) (*FleetPoolRecord, error) {
 	query := `
 		SELECT id, name, model_name, model_source,
+		       desired_clusters, target_ports,
 		       placement_policy, routing_policy, scaling_policy,
 		       status, created_at, updated_at
 		FROM fleet_pools WHERE id = $1
 	`
 	var rec FleetPoolRecord
+	var desiredClusters, targetPorts []byte
 	err := c.db.QueryRowContext(ctx, query, id).Scan(
 		&rec.ID, &rec.Name, &rec.ModelName, &rec.ModelSource,
+		&desiredClusters, &targetPorts,
 		&rec.PlacementPolicy, &rec.RoutingPolicy, &rec.ScalingPolicy,
 		&rec.Status, &rec.CreatedAt, &rec.UpdatedAt,
 	)
@@ -282,6 +299,12 @@ func (c *PGClient) GetPool(ctx context.Context, id string) (*FleetPoolRecord, er
 	if err != nil {
 		return nil, err
 	}
+	if err := json.Unmarshal(desiredClusters, &rec.DesiredClusters); err != nil {
+		return nil, fmt.Errorf("decode desired clusters: %w", err)
+	}
+	if err := json.Unmarshal(targetPorts, &rec.TargetPorts); err != nil {
+		return nil, fmt.Errorf("decode target ports: %w", err)
+	}
 	return &rec, nil
 }
 
@@ -289,6 +312,7 @@ func (c *PGClient) GetPool(ctx context.Context, id string) (*FleetPoolRecord, er
 func (c *PGClient) ListPools(ctx context.Context) ([]FleetPoolRecord, error) {
 	query := `
 		SELECT id, name, model_name, model_source,
+		       desired_clusters, target_ports,
 		       placement_policy, routing_policy, scaling_policy,
 		       status, created_at, updated_at
 		FROM fleet_pools ORDER BY created_at
@@ -302,12 +326,20 @@ func (c *PGClient) ListPools(ctx context.Context) ([]FleetPoolRecord, error) {
 	var out []FleetPoolRecord
 	for rows.Next() {
 		var rec FleetPoolRecord
+		var desiredClusters, targetPorts []byte
 		if err := rows.Scan(
 			&rec.ID, &rec.Name, &rec.ModelName, &rec.ModelSource,
+			&desiredClusters, &targetPorts,
 			&rec.PlacementPolicy, &rec.RoutingPolicy, &rec.ScalingPolicy,
 			&rec.Status, &rec.CreatedAt, &rec.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal(desiredClusters, &rec.DesiredClusters); err != nil {
+			return nil, fmt.Errorf("decode desired clusters: %w", err)
+		}
+		if err := json.Unmarshal(targetPorts, &rec.TargetPorts); err != nil {
+			return nil, fmt.Errorf("decode target ports: %w", err)
 		}
 		out = append(out, rec)
 	}
@@ -316,15 +348,25 @@ func (c *PGClient) ListPools(ctx context.Context) ([]FleetPoolRecord, error) {
 
 // UpdatePool updates an existing fleet pool.
 func (c *PGClient) UpdatePool(ctx context.Context, pool FleetPoolRecord) error {
+	desiredClusters, err := json.Marshal(pool.DesiredClusters)
+	if err != nil {
+		return fmt.Errorf("marshal desired clusters: %w", err)
+	}
+	targetPorts, err := json.Marshal(pool.TargetPorts)
+	if err != nil {
+		return fmt.Errorf("marshal target ports: %w", err)
+	}
 	query := `
 		UPDATE fleet_pools
 		SET name = $2, model_name = $3, model_source = $4,
-		    placement_policy = $5::jsonb, routing_policy = $6::jsonb,
-		    scaling_policy = $7::jsonb, status = $8, updated_at = now()
+		    desired_clusters = $5::jsonb, target_ports = $6::jsonb,
+		    placement_policy = $7::jsonb, routing_policy = $8::jsonb,
+		    scaling_policy = $9::jsonb, status = $10, updated_at = now()
 		WHERE id = $1
 	`
 	res, err := c.db.ExecContext(ctx, query,
 		pool.ID, pool.Name, pool.ModelName, pool.ModelSource,
+		desiredClusters, targetPorts,
 		defaultString(pool.PlacementPolicy, "{}"),
 		defaultString(pool.RoutingPolicy, "{}"),
 		defaultString(pool.ScalingPolicy, "{}"),

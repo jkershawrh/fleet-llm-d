@@ -18,6 +18,7 @@ type FleetPoolState struct {
 	Name             string
 	Model            string
 	Source           string
+	TargetPorts      []int
 	DesiredClusters  []string
 	ActualClusters   []string
 	Phase            v1alpha1.FleetPhase
@@ -30,7 +31,7 @@ type Reconciler struct {
 	mu        sync.RWMutex
 	pools     map[string]*FleetPoolState
 	solver    solver.ConstraintSolver
-	namespace string // configured namespace; WatchEndpoint rejects events outside this namespace
+	namespace string                                                  // configured namespace; WatchEndpoint rejects events outside this namespace
 	clusters  func(ctx context.Context) ([]solver.ClusterInfo, error) // function to list available clusters
 	policies  func(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error)
 	observe   func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error)
@@ -163,6 +164,7 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	}
 
 	state.Phase = phaseForObservation(desired, actual, pool.Placement.MinClusters, observeErr)
+	state.TargetPorts = append([]int(nil), pool.Serving.InferencePoolTemplate.Spec.TargetPorts...)
 	state.DesiredClusters = desired
 	state.ActualClusters = append([]string(nil), actual...)
 	state.LastReconciled = time.Now()
@@ -170,6 +172,7 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 
 	// Copy state and onChange ref for use outside the lock.
 	stateCopy := *state
+	stateCopy.TargetPorts = append([]int(nil), state.TargetPorts...)
 	stateCopy.DesiredClusters = make([]string, len(state.DesiredClusters))
 	copy(stateCopy.DesiredClusters, state.DesiredClusters)
 	stateCopy.ActualClusters = make([]string, len(state.ActualClusters))
@@ -240,6 +243,7 @@ func (r *Reconciler) GetPoolState(name string) (*FleetPoolState, error) {
 	}
 	// Return a copy to avoid data races.
 	cp := *state
+	cp.TargetPorts = append([]int(nil), state.TargetPorts...)
 	cp.DesiredClusters = make([]string, len(state.DesiredClusters))
 	copy(cp.DesiredClusters, state.DesiredClusters)
 	cp.ActualClusters = make([]string, len(state.ActualClusters))
@@ -256,6 +260,7 @@ func (r *Reconciler) ListPools() []FleetPoolState {
 	pools := make([]FleetPoolState, 0, len(r.pools))
 	for _, state := range r.pools {
 		cp := *state
+		cp.TargetPorts = append([]int(nil), state.TargetPorts...)
 		cp.DesiredClusters = make([]string, len(state.DesiredClusters))
 		copy(cp.DesiredClusters, state.DesiredClusters)
 		cp.ActualClusters = make([]string, len(state.ActualClusters))

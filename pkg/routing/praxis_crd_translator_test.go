@@ -8,11 +8,11 @@ func TestTranslateClusterToGridSite(t *testing.T) {
 	translator := NewGridCRDTranslator("https://k8s.local", "fleet-llm-d", "token", "test-network")
 
 	cluster := FleetClusterInfo{
-		ID:            "oberon-sno",
-		Name:          "Oberon",
-		Region:        "us-east-1",
-		Labels:        map[string]string{
-			"topology.kubernetes.io/zone":       "us-east-1a",
+		ID:     "oberon-sno",
+		Name:   "Oberon",
+		Region: "us-east-1",
+		Labels: map[string]string{
+			"topology.kubernetes.io/zone":     "us-east-1a",
 			"fleet.llm-d.ai/sovereignty-zone": "eu-gdpr",
 		},
 		EgressAddress: "praxis-ai.fleet-llm-d.svc:8080",
@@ -105,5 +105,19 @@ func TestTranslatePoolNoMetrics(t *testing.T) {
 	}
 	if spec.Endpoint != "" {
 		t.Errorf("expected empty endpoint, got %q", spec.Endpoint)
+	}
+}
+
+func TestTranslatePoolPreservesAllTargetClusters(t *testing.T) {
+	translator := NewGridCRDTranslator("https://k8s.local", "ns", "", "net")
+	spec := translator.TranslatePoolToInferenceProvider(FleetPoolInfo{
+		Name: "test", ModelName: "model", Clusters: []string{"east", "west"},
+	})
+	if spec.SiteSelector == nil || len(spec.SiteSelector.MatchExpressions) != 1 {
+		t.Fatalf("site selector = %#v, want one set-based expression", spec.SiteSelector)
+	}
+	requirement := spec.SiteSelector.MatchExpressions[0]
+	if requirement.Operator != "In" || len(requirement.Values) != 2 || requirement.Values[0] != "east" || requirement.Values[1] != "west" {
+		t.Fatalf("target clusters were truncated: %#v", requirement)
 	}
 }

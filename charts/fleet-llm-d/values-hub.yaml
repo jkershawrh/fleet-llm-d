@@ -1,5 +1,11 @@
 profile: hub
 
+auth:
+  enabled: true
+
+tls:
+  enabled: true
+
 controller:
   enabled: true
   replicaCount: 1

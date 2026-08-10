@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
 
 // clusterRegistrationRequest is the JSON body for POST /api/v1/clusters.
@@ -15,6 +18,39 @@ type clusterRegistrationRequest struct {
 	Name   string            `json:"name"`
 	Region string            `json:"region"`
 	Labels map[string]string `json:"labels"`
+}
+
+func cloneClusterRecord(record *postgres.ClusterRecord) postgres.ClusterRecord {
+	copyRecord := *record
+	copyRecord.Labels = make(map[string]string, len(record.Labels))
+	for key, value := range record.Labels {
+		copyRecord.Labels[key] = value
+	}
+	return copyRecord
+}
+
+// registerCluster applies the durable mutation and its required ledger
+// evidence as one fail-closed operation for every API transport.
+func (fc *FleetController) registerCluster(ctx context.Context, reg client.ClusterRegistration) error {
+	if err := fc.ClusterClient.RegisterCluster(ctx, reg); err != nil {
+		return err
+	}
+	clustersGauge.Add(1)
+	if fc.FleetRecorder != nil {
+		if _, err := fc.FleetRecorder.RecordClusterRegistration(ctx, reg.ID, reg.Name, reg.Region); err != nil && fc.LedgerGatewayURL != "" {
+			if rollbackErr := fc.ClusterClient.DeregisterCluster(ctx, reg.ID); rollbackErr != nil {
+				return fmt.Errorf("ledger write failed and cluster compensation failed: %v: %w", rollbackErr, err)
+			}
+			clustersGauge.Add(-1)
+			return fmt.Errorf("ledger write failed (fail-closed): %w", err)
+		}
+	}
+	_ = fc.EventPublisher.Publish(ctx, events.FleetEvent{
+		Type: events.EventClusterRegistered, Source: "urn:fleet-llm-d:controller",
+		Subject: reg.ID, Timestamp: time.Now().UTC(),
+		Payload: map[string]interface{}{"name": reg.Name, "region": reg.Region},
+	})
+	return nil
 }
 
 // handleListClusters returns all registered clusters.
@@ -59,7 +95,7 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := fc.ClusterClient.RegisterCluster(r.Context(), reg); err != nil {
+	if err := fc.registerCluster(r.Context(), reg); err != nil {
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "conflict") {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -68,19 +104,6 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 		}
 		return
 	}
-	clustersGauge.Add(1)
-	if fc.FleetRecorder != nil {
-		if _, err := fc.FleetRecorder.RecordClusterRegistration(r.Context(), reg.ID, reg.Name, reg.Region); err != nil && fc.LedgerGatewayURL != "" {
-			errorsTotal.Inc()
-			writeError(w, http.StatusInternalServerError, "ledger write failed (fail-closed): "+err.Error())
-			return
-		}
-	}
-	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
-		Type: events.EventClusterRegistered, Source: "urn:fleet-llm-d:controller",
-		Subject: reg.ID, Timestamp: time.Now().UTC(),
-		Payload: map[string]interface{}{"name": reg.Name, "region": reg.Region},
-	})
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "registered", "id": reg.ID})
 }
 
@@ -92,6 +115,12 @@ func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusBadRequest, "cluster id is required")
 		return
 	}
+	record, err := fc.ClusterRepo.Get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	original := cloneClusterRecord(record)
 	if err := fc.ClusterClient.DeregisterCluster(r.Context(), id); err != nil {
 		errorsTotal.Inc()
 		writeError(w, http.StatusNotFound, err.Error())
@@ -101,6 +130,11 @@ func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *htt
 	if fc.FleetRecorder != nil {
 		if _, err := fc.FleetRecorder.RecordClusterDeregistration(r.Context(), id, "operator-requested"); err != nil && fc.LedgerGatewayURL != "" {
 			errorsTotal.Inc()
+			if rollbackErr := fc.ClusterRepo.Create(r.Context(), original); rollbackErr != nil {
+				writeError(w, http.StatusInternalServerError, "ledger write failed and cluster compensation failed: "+rollbackErr.Error()+": "+err.Error())
+				return
+			}
+			clustersGauge.Add(1)
 			writeError(w, http.StatusInternalServerError, "ledger write failed (fail-closed): "+err.Error())
 			return
 		}

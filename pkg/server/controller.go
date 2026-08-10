@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -32,6 +31,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/metering"
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/quota"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // FleetController is the top-level controller that coordinates all fleet
@@ -108,7 +108,8 @@ type FleetController struct {
 	SessionTable *routing.SessionAffinityTable
 
 	// Routing state — tracks which clusters were healthy to avoid redundant Praxis updates.
-	lastHealthySet map[string]bool
+	lastRoutingFingerprint string
+	KubeAPI                string
 
 	// Auth secret for token refresh
 	AuthSecret string
@@ -173,65 +174,8 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 	}
 
-	// Create event publisher early so it can be captured by the onChange closure.
+	// Create the event publisher before assembling the controller.
 	eventPublisher := events.NewLedgerAwarePublisher(events.NewEventPublisher(), fleetRecorder)
-
-	// Wire the onChange callback so every placement decision is recorded
-	// to the standalone immutable ledger.
-	reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
-		ctx := context.Background()
-		for _, clusterID := range pool.DesiredClusters {
-			if _, err := fleetRecorder.RecordPlacement(
-				ctx,
-				pool.Model, clusterID, 1, "", "reconciler placement",
-			); err != nil {
-				slog.Warn("failed to record placement", "model", pool.Model, "cluster", clusterID, "error", err)
-			}
-		}
-		poolRecord := postgres.FleetPoolRecord{
-			ID:        pool.Name,
-			Name:      pool.Name,
-			ModelName: pool.Model,
-			ModelSource: pool.Source,
-			Status:    string(pool.Phase),
-			UpdatedAt: pool.LastReconciled,
-		}
-		if praxisOverlay != nil {
-			allPools := reconciler.ListPools()
-			var placements []routing.PoolPlacement
-			for _, p := range allPools {
-				if len(p.DesiredClusters) > 0 {
-					placements = append(placements, routing.PoolPlacement{
-						ModelName: p.Model,
-						Clusters:  p.DesiredClusters,
-					})
-				}
-			}
-			if cfg, err := praxisOverlay.RenderConfig(placements); err == nil {
-				if writeErr := writePraxisConfigMap(kubeAPI, namespace, cfg); writeErr != nil {
-					slog.Warn("failed to update Praxis config", "error", writeErr)
-				} else {
-					slog.Info("Praxis config updated", "placements", len(placements))
-					_ = eventPublisher.Publish(ctx, events.FleetEvent{
-						Type: events.EventRoutingUpdated, Source: "urn:fleet-llm-d:controller",
-						Subject: pool.Model, Timestamp: time.Now().UTC(),
-						Payload: map[string]interface{}{"placements": len(placements)},
-					})
-				}
-			}
-		}
-
-		if _, err := poolRepo.Get(ctx, pool.Name); err != nil {
-			poolRecord.CreatedAt = pool.LastReconciled
-			if createErr := poolRepo.Create(ctx, poolRecord); createErr != nil {
-				slog.Warn("failed to sync pool to repo", "pool", pool.Name, "error", createErr)
-			}
-		} else {
-			if updateErr := poolRepo.Update(ctx, poolRecord); updateErr != nil {
-				slog.Warn("failed to update pool in repo", "pool", pool.Name, "error", updateErr)
-			}
-		}
-	})
 
 	// Create CRDWatcher and autoscaling actuator if Kubernetes API is configured.
 	var crdWatcher *controller.CRDWatcher
@@ -259,7 +203,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 	}
 
-	return &FleetController{
+	fc := &FleetController{
 		Solver: constraintSolver,
 		Scorer: scorer.NewCompositeScorer([]scorer.WeightedScorer{
 			{Scorer: scorer.NewCostScorer(), Weight: 0.3},
@@ -299,7 +243,72 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		PoolRepo:           poolRepo,
 		TenantRepo:         tenantRepo,
 		RolloutRepo:        rolloutRepo,
-	}, nil
+		KubeAPI:            kubeAPI,
+	}
+	// The callback deliberately dereferences repositories through fc. This is
+	// important because production persistence is wired after construction.
+	fc.configureReconcilerOnChange(kubeAPI, namespace)
+	return fc, nil
+}
+
+// configureReconcilerOnChange wires placement side effects through the
+// controller's current dependencies. Never capture constructor-local
+// repositories here: OverrideWithPostgres replaces them during startup.
+func (fc *FleetController) configureReconcilerOnChange(kubeAPI, namespace string) {
+	fc.Reconciler.SetOnChange(func(pool *controller.FleetPoolState) {
+		ctx := context.Background()
+		for _, clusterID := range pool.DesiredClusters {
+			if _, err := fc.FleetRecorder.RecordPlacement(
+				ctx, pool.Model, clusterID, 1, "", "reconciler placement",
+			); err != nil {
+				slog.Warn("failed to record placement", "model", pool.Model, "cluster", clusterID, "error", err)
+			}
+		}
+
+		poolRecord := postgres.FleetPoolRecord{
+			ID:              pool.Name,
+			Name:            pool.Name,
+			ModelName:       pool.Model,
+			ModelSource:     pool.Source,
+			DesiredClusters: append([]string(nil), pool.DesiredClusters...),
+			TargetPorts:     append([]int(nil), pool.TargetPorts...),
+			Status:          string(pool.Phase),
+			UpdatedAt:       pool.LastReconciled,
+		}
+		if fc.PraxisOverlay != nil {
+			allPools := fc.Reconciler.ListPools()
+			var placements []routing.PoolPlacement
+			for _, p := range allPools {
+				if len(p.DesiredClusters) > 0 {
+					placements = append(placements, routing.PoolPlacement{
+						ModelName: p.Model,
+						Clusters:  p.DesiredClusters,
+					})
+				}
+			}
+			if cfg, err := fc.PraxisOverlay.RenderConfig(placements); err == nil {
+				if writeErr := writePraxisConfigMap(kubeAPI, namespace, cfg); writeErr != nil {
+					slog.Warn("failed to update Praxis config", "error", writeErr)
+				} else {
+					slog.Info("Praxis config updated", "placements", len(placements))
+					_ = fc.EventPublisher.Publish(ctx, events.FleetEvent{
+						Type: events.EventRoutingUpdated, Source: "urn:fleet-llm-d:controller",
+						Subject: pool.Model, Timestamp: time.Now().UTC(),
+						Payload: map[string]interface{}{"placements": len(placements)},
+					})
+				}
+			}
+		}
+
+		if _, err := fc.PoolRepo.Get(ctx, pool.Name); err != nil {
+			poolRecord.CreatedAt = pool.LastReconciled
+			if createErr := fc.PoolRepo.Create(ctx, poolRecord); createErr != nil {
+				slog.Warn("failed to sync pool to repo", "pool", pool.Name, "error", createErr)
+			}
+		} else if updateErr := fc.PoolRepo.Update(ctx, poolRecord); updateErr != nil {
+			slog.Warn("failed to update pool in repo", "pool", pool.Name, "error", updateErr)
+		}
+	})
 }
 
 // BuildClusterHealth assembles routing-ready ClusterHealth entries by combining
@@ -312,8 +321,22 @@ func (fc *FleetController) BuildClusterHealth(ctx context.Context) []policy.Clus
 	allMetrics, _ := fc.MetricsCollector.CollectAll(ctx)
 	metricsMap := make(map[string]collector.PoolMetrics)
 	for _, cm := range allMetrics {
-		if len(cm.Pools) > 0 {
-			metricsMap[cm.ClusterID] = cm.Pools[0]
+		for _, poolMetrics := range cm.Pools {
+			aggregate, exists := metricsMap[cm.ClusterID]
+			if !exists {
+				metricsMap[cm.ClusterID] = poolMetrics
+				continue
+			}
+			// Routing without a model-specific metric stream uses conservative
+			// cluster-wide values rather than whichever pool happened to be first.
+			aggregate.TTFT_P99_Ms = max(aggregate.TTFT_P99_Ms, poolMetrics.TTFT_P99_Ms)
+			aggregate.GPUUtilization = max(aggregate.GPUUtilization, poolMetrics.GPUUtilization)
+			aggregate.PoolSaturation = max(aggregate.PoolSaturation, poolMetrics.PoolSaturation)
+			aggregate.ReadyEndpoints += poolMetrics.ReadyEndpoints
+			if aggregate.KVCacheHitRate == 0 || (poolMetrics.KVCacheHitRate > 0 && poolMetrics.KVCacheHitRate < aggregate.KVCacheHitRate) {
+				aggregate.KVCacheHitRate = poolMetrics.KVCacheHitRate
+			}
+			metricsMap[cm.ClusterID] = aggregate
 		}
 	}
 
@@ -369,10 +392,11 @@ func writePraxisConfigMap(kubeAPI, namespace, configYAML string) error {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
+	if err != nil {
+		return fmt.Errorf("load Kubernetes CA: %w", err)
 	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig}}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("patch configmap: %w", err)

@@ -24,7 +24,7 @@ type PolicyInjector struct {
 
 // NewPolicyInjector creates a new PolicyInjector.
 // An optional tlsutil.TLSOptions can be passed to configure TLS behavior.
-// Verification is enabled by default; insecure mode requires explicit opt-in.
+// Certificate verification is always enabled; opts may configure a custom CA.
 func NewPolicyInjector(apiServer, token string, tlsOpts ...tlsutil.TLSOptions) *PolicyInjector {
 	opts := tlsutil.TLSOptions{}
 	if len(tlsOpts) > 0 {

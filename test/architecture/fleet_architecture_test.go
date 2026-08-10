@@ -1896,6 +1896,11 @@ func TestA68_Events_GridSyncedPublished(t *testing.T) {
 
 	// Mock K8s API that accepts PATCH requests from the CRD translator.
 	mockKube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "gridsites") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer mockKube.Close()

@@ -1,14 +1,27 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ProgressBar } from '@/components/progress-bar'
-import { MOCK_TENANTS, MOCK_TENANT_USAGE, type Tenant, type TenantUsage } from '@/lib/api-client'
+import { fetchTenants, fetchTenantUsage, type Tenant, type TenantUsage } from '@/lib/api-client'
 
 export default function TenantsPage() {
-  const [tenants] = useState(MOCK_TENANTS)
+  const [tenants, setTenants] = useState<Tenant[]>([])
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null)
-  // In production: const usage = await fetchTenantUsage(selectedTenant.id)
-  const [usage] = useState<TenantUsage>(MOCK_TENANT_USAGE)
+  const [usage, setUsage] = useState<TenantUsage | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    void fetchTenants().then(setTenants).catch((loadError: unknown) => {
+      setError(loadError instanceof Error ? loadError.message : 'Fleet API unavailable')
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!selectedTenant) return
+    void fetchTenantUsage(selectedTenant.id).then(setUsage).catch((loadError: unknown) => {
+      setError(loadError instanceof Error ? loadError.message : 'Tenant usage unavailable')
+    })
+  }, [selectedTenant])
 
   function getBudgetPercentage(tenant: Tenant): number {
     const cost = parseFloat(tenant.currentMonthCost.replace(/[$,]/g, ''))
@@ -33,6 +46,8 @@ export default function TenantsPage() {
         </p>
       </div>
 
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">{error}</div>}
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Tenant List */}
         <div className="lg:col-span-1">
@@ -47,7 +62,10 @@ export default function TenantsPage() {
                 return (
                   <button
                     key={tenant.id}
-                    onClick={() => setSelectedTenant(tenant)}
+                    onClick={() => {
+                      setUsage(null)
+                      setSelectedTenant(tenant)
+                    }}
                     className={`w-full px-4 py-4 text-left transition-colors hover:bg-accent/50 ${
                       isSelected ? 'bg-accent/50 border-l-2 border-l-blue-500' : ''
                     }`}
@@ -93,8 +111,10 @@ export default function TenantsPage() {
 
         {/* Tenant Detail */}
         <div className="lg:col-span-2">
-          {selectedTenant ? (
+          {selectedTenant && usage ? (
             <TenantDetail tenant={selectedTenant} usage={usage} />
+          ) : selectedTenant ? (
+            <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">Loading tenant usage…</div>
           ) : (
             <div className="flex h-96 items-center justify-center rounded-xl border border-border bg-card">
               <div className="text-center">

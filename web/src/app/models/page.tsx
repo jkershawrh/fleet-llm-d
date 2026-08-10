@@ -1,21 +1,17 @@
 import { StatusBadge } from '@/components/status-badge'
 import {
-  MOCK_POOLS,
-  // In production: fetchPools
+  fetchPools,
 } from '@/lib/api-client'
 
-// Model metadata (would come from ModelPack CRD in production)
-const MODEL_META: Record<string, { params: string; precision: string; gpuMemory: string }> = {
-  'llama-3.1-70b-instruct': { params: '70B', precision: 'FP16', gpuMemory: '140 GB' },
-  'mistral-7b-instruct-v0.3': { params: '7B', precision: 'FP16', gpuMemory: '14 GB' },
-  'granite-3.2-8b-instruct': { params: '8B', precision: 'FP16', gpuMemory: '16 GB' },
-  'llama-3.1-405b-instruct': { params: '405B', precision: 'FP8', gpuMemory: '405 GB' },
-}
-
 export default async function ModelsPage() {
-  // TODO: Replace with live API call
-  // const pools = await fetchPools()
-  const pools = MOCK_POOLS
+  let pools
+  try {
+    pools = await fetchPools()
+  } catch (error) {
+    return <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-sm text-red-400">
+      Fleet API unavailable: {error instanceof Error ? error.message : 'unknown error'}
+    </div>
+  }
 
   return (
     <div className="space-y-6">
@@ -49,9 +45,7 @@ export default async function ModelsPage() {
 
       {/* Model Cards */}
       <div className="space-y-4">
-        {pools.map((pool) => {
-          const meta = MODEL_META[pool.model] || { params: '?', precision: '?', gpuMemory: '?' }
-          return (
+        {pools.map((pool) => (
             <div
               key={pool.id}
               className="rounded-xl border border-border bg-card p-6"
@@ -86,19 +80,6 @@ export default async function ModelsPage() {
                   </div>
                 </div>
                 <StatusBadge status={pool.status} />
-              </div>
-
-              {/* Model Specs */}
-              <div className="mt-4 flex flex-wrap gap-3">
-                <span className="rounded-lg border border-border bg-accent/50 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                  {meta.params} params
-                </span>
-                <span className="rounded-lg border border-border bg-accent/50 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                  {meta.precision}
-                </span>
-                <span className="rounded-lg border border-border bg-accent/50 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                  {meta.gpuMemory} VRAM
-                </span>
               </div>
 
               {/* Cluster Assignments */}
@@ -146,8 +127,7 @@ export default async function ModelsPage() {
                 </div>
               )}
             </div>
-          )
-        })}
+        ))}
       </div>
     </div>
   )
