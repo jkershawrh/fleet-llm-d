@@ -36,8 +36,9 @@ func (fc *FleetController) handleModelMetrics(w http.ResponseWriter, r *http.Req
 	}
 	modelMetrics, err := fc.MetricsFederator.GetModelMetrics(r.Context(), model)
 	if err != nil {
-		errorsTotal.Inc()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"model": model, "clusters": []string{}, "metrics": map[string]interface{}{},
+		})
 		return
 	}
 	writeJSON(w, http.StatusOK, modelMetrics)

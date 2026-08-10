@@ -158,6 +158,13 @@ PROFILES = {
         "variable_intensity": True,
         "safe_sustained_phases": True,
     },
+    "4hr-variable": {
+        "sustained_duration": 14400,
+        "cycle_interval": 30,
+        "concurrency": 2,
+        "variable_intensity": True,
+        "safe_sustained_phases": True,
+    },
 }
 
 # Variable intensity schedule for 24hr-variable profile.
@@ -193,7 +200,7 @@ CLUSTERS = [
      "labels": {"gpu": "nvidia-h100", "runtime": "vllm", "hardware": "granite-rapids"}},
 ]
 
-PRAXIS_URL = "https://praxis-ai-fleet-llm-d.apps.oberon.fm2aihpcsed.com"
+PRAXIS_URL = os.environ.get("PRAXIS_URL", "https://praxis-ai-fleet-llm-d.apps.arena.fm2aihpcsed.com")
 
 EXTERNAL_INFERENCE_URLS = {
     "oberon-sno": PRAXIS_URL,
@@ -429,8 +436,8 @@ class MultiClusterTest:
                 "type": "ADDED",
                 "object": {
                     "model": {
-                        "name": "granite-3.3-2b",
-                        "source": "registry.redhat.io/granite-3.3-2b",
+                        "name": "granite-2b-cpu",
+                        "source": "registry.redhat.io/granite-2b-cpu",
                     },
                     "placement": {"policyRef": {"name": "any-available"}, "minClusters": 1},
                 },
@@ -748,7 +755,7 @@ class MultiClusterTest:
         try:
             # Create canary rollout
             rollout = {
-                "pool_id": "granite-3.3-2b-pool",
+                "pool_id": "granite-2b-cpu-pool",
                 "model_version": f"v{self._cycle}.0.0",
                 "strategy": "canary",
             }
@@ -943,7 +950,7 @@ class MultiClusterTest:
 
             # Model-specific metrics (may return 404 if no model pool is active)
             resp, ms = await self._req(
-                "GET", f"{self.fleet}/api/v1/metrics/model/granite-3.3-2b")
+                "GET", f"{self.fleet}/api/v1/metrics/model/granite-2b-cpu")
             cap.latencies.append(ms)
             if resp.status_code == 200:
                 cap.successes += 1
@@ -960,8 +967,8 @@ class MultiClusterTest:
         cap = state.phase(11)
         try:
             params = {
-                "pool": "granite-3.3-2b-pool",
-                "model": "granite-3.3-2b",
+                "pool": "granite-2b-cpu-pool",
+                "model": "granite-2b-cpu",
                 "source_cluster": self.oberon_id,
                 "target_cluster": "brutus-h100",
                 "reason": "multi-cluster lifecycle test: rebalance KV cache",
@@ -974,8 +981,8 @@ class MultiClusterTest:
                     json.dumps(event), {"Content-Type": ct})
             else:
                 intent = {"type": "kv_transfer",
-                          "pool": "granite-3.3-2b-pool",
-                          "model": "granite-3.3-2b",
+                          "pool": "granite-2b-cpu-pool",
+                          "model": "granite-2b-cpu",
                           "confidence": 0.95,
                           "reason": params.get("reason", "kv cache transfer"),
                           "target_clusters": [params.get("target_cluster", self.oberon_id)]}
@@ -1063,8 +1070,8 @@ class MultiClusterTest:
         cap = state.phase(13)
         try:
             params = {
-                "pool": "granite-3.3-2b-pool",
-                "model": "granite-3.3-2b",
+                "pool": "granite-2b-cpu-pool",
+                "model": "granite-2b-cpu",
                 "replicas": 3,
                 "target_replicas": 3,
                 "clusters": [self.oberon_id],
@@ -1080,8 +1087,8 @@ class MultiClusterTest:
             else:
                 intent = {
                     "type": "scale",
-                    "pool": "granite-3.3-2b-pool",
-                    "model": "granite-3.3-2b",
+                    "pool": "granite-2b-cpu-pool",
+                    "model": "granite-2b-cpu",
                     "confidence": 0.95,
                     "target_replicas": params.get("target_replicas", 3),
                     "reason": params.get("reason", "ecosystem pipeline"),

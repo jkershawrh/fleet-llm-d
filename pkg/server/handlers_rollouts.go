@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
@@ -72,7 +73,11 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 	state, err := fc.RolloutController.AdvanceRollout(r.Context(), id)
 	if err != nil {
 		errorsTotal.Inc()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
