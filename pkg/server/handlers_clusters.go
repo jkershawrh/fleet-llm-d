@@ -3,8 +3,10 @@ package server
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
+	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 )
 
 // clusterRegistrationRequest is the JSON body for POST /api/v1/clusters.
@@ -74,6 +76,11 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 			return
 		}
 	}
+	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
+		Type: events.EventClusterRegistered, Source: "urn:fleet-llm-d:controller",
+		Subject: reg.ID, Timestamp: time.Now().UTC(),
+		Payload: map[string]interface{}{"name": reg.Name, "region": reg.Region},
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "registered", "id": reg.ID})
 }
 
@@ -98,5 +105,10 @@ func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *htt
 			return
 		}
 	}
+	_ = fc.EventPublisher.Publish(r.Context(), events.FleetEvent{
+		Type: events.EventClusterDeregistered, Source: "urn:fleet-llm-d:controller",
+		Subject: id, Timestamp: time.Now().UTC(),
+		Payload: map[string]interface{}{"reason": "operator-requested"},
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deregistered", "id": id})
 }

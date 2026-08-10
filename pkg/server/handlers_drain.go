@@ -101,6 +101,14 @@ func (fc *FleetController) handleActivateCluster(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if record.Status == postgres.ClusterStatusRunning || record.Status == postgres.ClusterStatusHealthy {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"cluster_id": clusterID,
+			"status":     record.Status,
+		})
+		return
+	}
+
 	record.Status = postgres.ClusterStatusRunning
 	delete(record.Labels, "drain_started_at")
 	if record.Labels == nil {
