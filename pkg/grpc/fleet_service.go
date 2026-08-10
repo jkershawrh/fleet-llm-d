@@ -10,8 +10,10 @@ package grpc
 // Request / response types — mirrors of the proto messages.
 // ---------------------------------------------------------------------------
 
-// Empty is the zero-value request for RPCs that take no parameters.
-type Empty struct{}
+// Empty carries transport-independent authentication for list RPCs.
+type Empty struct {
+	Token string `json:"token,omitempty"`
+}
 
 // ClusterInfo represents a cluster registered with the fleet.
 type ClusterInfo struct {
@@ -23,6 +25,7 @@ type ClusterInfo struct {
 
 // RegisterClusterRequest maps to fleet.v1.RegisterClusterRequest.
 type RegisterClusterRequest struct {
+	Token  string            `json:"token,omitempty"`
 	ID     string            `json:"id"`
 	Name   string            `json:"name"`
 	Region string            `json:"region"`

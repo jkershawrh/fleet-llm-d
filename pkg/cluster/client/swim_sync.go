@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"crypto/tls"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // GridSitePhase represents the lifecycle phase of a GridSite.
@@ -62,6 +62,11 @@ type SWIMSyncAdapter struct {
 // NewSWIMSyncAdapter creates an adapter that reads GridSite status from
 // the K8s API and updates FleetCluster health accordingly.
 func NewSWIMSyncAdapter(apiServer, token string, clusterRepo postgres.ClusterRepository) *SWIMSyncAdapter {
+	tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
+	if err != nil {
+		slog.Warn("SWIM sync: failed to load Kubernetes CA", "error", err)
+		tlsConfig, _ = tlsutil.NewTLSConfig(tlsutil.TLSOptions{})
+	}
 	return &SWIMSyncAdapter{
 		apiServer:   strings.TrimRight(apiServer, "/"),
 		token:       token,
@@ -70,10 +75,18 @@ func NewSWIMSyncAdapter(apiServer, token string, clusterRepo postgres.ClusterRep
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+				TLSClientConfig: tlsConfig,
 			},
 		},
 	}
+}
+
+// SetClusterRepository rewires the persistence target during controller
+// startup when PostgreSQL replaces the development in-memory repository.
+func (s *SWIMSyncAdapter) SetClusterRepository(repo postgres.ClusterRepository) {
+	s.clusterRepo = repo
+	// Re-evaluate every observed phase against the new authoritative store.
+	s.lastPhases = make(map[string]GridSitePhase)
 }
 
 // Sync reads all GridSite resources and updates FleetCluster records
@@ -95,8 +108,6 @@ func (s *SWIMSyncAdapter) Sync(ctx context.Context) (int, error) {
 		if prev, ok := s.lastPhases[name]; ok && prev == phase {
 			continue
 		}
-		s.lastPhases[name] = phase
-
 		fleetStatus := gridPhaseToFleetStatus(phase)
 		recordPtr, err := s.clusterRepo.Get(ctx, name)
 		if err != nil {
@@ -118,6 +129,9 @@ func (s *SWIMSyncAdapter) Sync(ctx context.Context) (int, error) {
 			)
 			updated++
 		}
+		// Cache only after the authoritative record was successfully read and,
+		// when needed, updated. Transient repository errors must be retried.
+		s.lastPhases[name] = phase
 	}
 
 	return updated, nil

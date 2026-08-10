@@ -29,6 +29,8 @@ type FleetPoolRecord struct {
 	Name            string
 	ModelName       string
 	ModelSource     string
+	DesiredClusters []string
+	TargetPorts     []int
 	PlacementPolicy string
 	RoutingPolicy   string
 	ScalingPolicy   string
@@ -87,7 +89,7 @@ type EventRecord struct {
 type EventFilter struct {
 	EventType string
 	Source    string
-	Since    *time.Time
-	Until    *time.Time
-	Limit    int
+	Since     *time.Time
+	Until     *time.Time
+	Limit     int
 }

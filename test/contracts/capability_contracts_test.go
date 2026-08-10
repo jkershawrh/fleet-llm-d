@@ -230,9 +230,9 @@ func TestTenantContract(t *testing.T) {
 func TestObservabilityContract(t *testing.T) {
 	requireServer(t)
 
-	t.Run("model metrics returns error for unknown model", func(t *testing.T) {
+	t.Run("model metrics returns an empty result for unknown model", func(t *testing.T) {
 		resp := getPath(t, "/api/v1/metrics/model/granite-3b")
-		expectJSON(t, resp, http.StatusInternalServerError)
+		expectJSON(t, resp, http.StatusOK)
 	})
 
 	t.Run("agent status requires registered cluster", func(t *testing.T) {

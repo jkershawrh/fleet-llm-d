@@ -27,6 +27,7 @@ var (
 // is intentionally limited to tests and standalone development.
 type Repository interface {
 	Create(context.Context, FleetIntent, FleetOperation) error
+	Delete(context.Context, string, string) error
 	GetIntent(context.Context, string) (FleetIntent, error)
 	GetOperation(context.Context, string) (FleetOperation, error)
 	FindByIdempotencyKey(context.Context, string) (FleetOperation, error)
@@ -63,6 +64,22 @@ func (r *MemoryRepository) Create(_ context.Context, intent FleetIntent, operati
 	}
 	r.intents[intent.ID] = cloneIntent(intent)
 	r.operations[operation.ID] = cloneOperation(operation)
+	return nil
+}
+
+func (r *MemoryRepository) Delete(_ context.Context, intentID, operationID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	operation, operationExists := r.operations[operationID]
+	_, intentExists := r.intents[intentID]
+	if !operationExists && !intentExists {
+		return ErrNotFound
+	}
+	if operationExists && operation.IdempotencyKey != "" {
+		delete(r.idempotency, operation.IdempotencyKey)
+	}
+	delete(r.operations, operationID)
+	delete(r.intents, intentID)
 	return nil
 }
 
@@ -232,6 +249,12 @@ func (s *Service) GetIntent(ctx context.Context, id string) (FleetIntent, error)
 
 func (s *Service) GetOperation(ctx context.Context, id string) (FleetOperation, error) {
 	return s.repository.GetOperation(ctx, id)
+}
+
+// DeleteSubmission compensates a failed admission evidence write. No accepted
+// intent or operation may remain durable when a configured ledger fails.
+func (s *Service) DeleteSubmission(ctx context.Context, intentID, operationID string) error {
+	return s.repository.Delete(ctx, intentID, operationID)
 }
 
 // AttachLedgerReceipt records durable evidence without advancing the

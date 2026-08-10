@@ -64,6 +64,12 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 
 	// Start gRPC (JSON-RPC) server when grpcPort is configured.
 	if grpcPort > 0 {
+		if !authCfg.Enabled {
+			return fmt.Errorf("JSON-RPC requires FLEET_AUTH_SECRET")
+		}
+		if tlsCert == "" || tlsKey == "" {
+			return fmt.Errorf("JSON-RPC requires --tls-cert and --tls-key")
+		}
 		rpcSvc := fleetgrpc.NewFleetService(
 			func() (interface{}, error) {
 				return fc.ClusterClient.ListClusters(context.Background())
@@ -77,6 +83,7 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 				return fc.PoolRepo.List(context.Background())
 			},
 		)
+		rpcSvc.SetAuthSecret(authCfg.Secret)
 		rpcSvc.SetRegisterCluster(func(req fleetgrpc.RegisterClusterRequest) (*fleetgrpc.RegisterClusterResponse, error) {
 			if fc.LeaderElector != nil && !fc.LeaderElector.IsLeader() {
 				return nil, fmt.Errorf("standby: mutating requests are handled by the elected leader")
@@ -91,14 +98,13 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 			if err != nil {
 				return nil, err
 			}
-			if err := fc.ClusterClient.RegisterCluster(context.Background(), reg); err != nil {
+			if err := fc.registerCluster(context.Background(), reg); err != nil {
 				return nil, err
 			}
-			clustersGauge.Add(1)
 			return &fleetgrpc.RegisterClusterResponse{ID: reg.ID, Status: "registered"}, nil
 		})
 
-		grpcListener, err := fleetgrpc.Serve(fmt.Sprintf(":%d", grpcPort), rpcSvc)
+		grpcListener, err := fleetgrpc.ServeTLS(fmt.Sprintf(":%d", grpcPort), rpcSvc, tlsCert, tlsKey)
 		if err != nil {
 			return fmt.Errorf("grpc server: %w", err)
 		}

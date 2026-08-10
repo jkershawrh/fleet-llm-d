@@ -63,8 +63,6 @@ spec:
                   key: gcl-signing-key
             - name: GCL_DECISION_SIGNING_KEY_ID
               value: "fleet-llm-d-2026-08"
-            - name: FLEET_ALLOW_OPERATOR_JSON_INTENTS
-              value: "true"
             - name: GCL_URL
               value: http://gcl-app.governed-cognitive-loop.svc:8000
             - name: SEMANTIC_CLASSIFIER_URL

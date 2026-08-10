@@ -9,8 +9,11 @@ import (
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
+	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
+	"github.com/llm-d/fleet-llm-d/pkg/tenant/metering"
+	"github.com/llm-d/fleet-llm-d/pkg/tenant/quota"
 )
 
 // ConfigureLeaderElection enables Kubernetes Lease-based active/passive
@@ -31,13 +34,36 @@ func (fc *FleetController) OverrideWithPostgres(db *sql.DB) error {
 	}
 	slog.Info("connected to PostgreSQL — using persistent stores")
 
-	fc.ClusterRepo = postgres.NewPGClusterRepository(pgClient)
-	fc.ClusterClient = client.NewRepositoryClusterClient(fc.ClusterRepo)
-	fc.Reconciler.SetClusterLister(fc.ClusterClient.ListClusters)
-	fc.PoolRepo = postgres.NewPGFleetPoolRepository(pgClient)
-	fc.TenantRepo = postgres.NewPGTenantRepository(pgClient)
-	fc.RolloutRepo = postgres.NewPGRolloutRepository(pgClient)
+	fc.rewireRepositories(
+		postgres.NewPGClusterRepository(pgClient),
+		postgres.NewPGFleetPoolRepository(pgClient),
+		postgres.NewPGTenantRepository(pgClient),
+		postgres.NewPGRolloutRepository(pgClient),
+	)
 	return nil
+}
+
+// rewireRepositories replaces every repository consumer as one unit. Startup
+// calls this before serving requests, so no component can retain an in-memory
+// repository while the public handlers use PostgreSQL.
+func (fc *FleetController) rewireRepositories(
+	clusterRepo postgres.ClusterRepository,
+	poolRepo postgres.FleetPoolRepository,
+	tenantRepo postgres.TenantRepository,
+	rolloutRepo postgres.RolloutRepository,
+) {
+	fc.ClusterRepo = clusterRepo
+	fc.ClusterClient = client.NewRepositoryClusterClient(clusterRepo)
+	fc.Reconciler.SetClusterLister(fc.ClusterClient.ListClusters)
+	fc.PoolRepo = poolRepo
+	fc.TenantRepo = tenantRepo
+	fc.RolloutRepo = rolloutRepo
+	fc.QuotaEnforcer = quota.NewQuotaEnforcer(tenantRepo)
+	fc.UsageTracker = metering.NewUsageTracker(tenantRepo)
+	fc.RolloutController = rollout.NewRolloutController(rolloutRepo)
+	if fc.SWIMSyncAdapter != nil {
+		fc.SWIMSyncAdapter.SetClusterRepository(clusterRepo)
+	}
 }
 
 // WireModelPlane sets up ModelPlane integration with ledger recording callbacks.

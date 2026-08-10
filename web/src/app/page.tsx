@@ -2,21 +2,18 @@ import { StatCard } from '@/components/stat-card'
 import { StatusBadge } from '@/components/status-badge'
 import { ProgressBar } from '@/components/progress-bar'
 import {
-  MOCK_FLEET_METRICS,
-  MOCK_CLUSTERS,
-  MOCK_EVENTS,
-  // In production, replace mocks with:
-  // fetchFleetMetrics,
-  // fetchClusters,
+  fetchFleetMetrics,
+  fetchClusters,
 } from '@/lib/api-client'
 
 export default async function DashboardPage() {
-  // TODO: Replace with live API calls
-  // const metrics = await fetchFleetMetrics()
-  // const clusters = await fetchClusters()
-  const metrics = MOCK_FLEET_METRICS
-  const clusters = MOCK_CLUSTERS
-  const events = MOCK_EVENTS
+  let metrics
+  let clusters
+  try {
+    ;[metrics, clusters] = await Promise.all([fetchFleetMetrics(), fetchClusters()])
+  } catch (error) {
+    return <APIUnavailable message={error instanceof Error ? error.message : 'Fleet API unavailable'} />
+  }
 
   return (
     <div className="space-y-8">
@@ -34,28 +31,24 @@ export default async function DashboardPage() {
           title="Total Clusters"
           value={metrics.totalClusters}
           subtitle={`${clusters.filter((c) => c.status === 'Running').length} healthy`}
-          trend={{ value: 0, label: 'vs last week' }}
           icon={<ServerSvg />}
         />
         <StatCard
           title="Active Models"
           value={metrics.activeModels}
           subtitle="Deployed across fleet"
-          trend={{ value: 33, label: 'vs last month' }}
           icon={<CubeSvg />}
         />
         <StatCard
           title="Total GPUs"
-          value={`${metrics.gpusAvailable}/${metrics.totalGpus}`}
+          value={`${clusters.reduce((sum, cluster) => sum + cluster.gpuAvailable, 0)}/${clusters.reduce((sum, cluster) => sum + cluster.gpuTotal, 0)}`}
           subtitle="Available / Total"
-          trend={{ value: -5, label: 'utilization change' }}
           icon={<ChipSvg />}
         />
         <StatCard
           title="Fleet Throughput"
           value={`${(metrics.totalThroughput / 1000).toFixed(1)}K`}
           subtitle="tokens/sec aggregate"
-          trend={{ value: 12, label: 'vs yesterday' }}
           icon={<BoltSvg />}
         />
       </div>
@@ -107,76 +100,15 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent Events */}
-      <div>
-        <h2 className="mb-4 text-lg font-semibold text-foreground">Recent Events</h2>
-        <div className="rounded-xl border border-border bg-card">
-          <div className="divide-y divide-border/50">
-            {events.map((event) => (
-              <div key={event.id} className="flex items-start gap-4 px-5 py-4">
-                <div className="mt-1 shrink-0">
-                  <EventIcon severity={event.severity} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-foreground">{event.message}</p>
-                  <div className="mt-1 flex items-center gap-3">
-                    <span className="rounded bg-accent px-1.5 py-0.5 text-xs text-muted-foreground">
-                      {event.type}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatTimestamp(event.timestamp)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
 
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  if (diffMins < 60) return `${diffMins}m ago`
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-function EventIcon({ severity }: { severity: 'info' | 'warning' | 'error' }) {
-  const colors = {
-    info: 'text-blue-400',
-    warning: 'text-yellow-400',
-    error: 'text-red-400',
-  }
+function APIUnavailable({ message }: { message: string }) {
   return (
-    <div className={`h-4 w-4 ${colors[severity]}`}>
-      {severity === 'info' && (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="16" x2="12" y2="12" />
-          <line x1="12" y1="8" x2="12.01" y2="8" />
-        </svg>
-      )}
-      {severity === 'warning' && (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          <line x1="12" y1="9" x2="12" y2="13" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-      )}
-      {severity === 'error' && (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="15" y1="9" x2="9" y2="15" />
-          <line x1="9" y1="9" x2="15" y2="15" />
-        </svg>
-      )}
+    <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6">
+      <h1 className="text-xl font-semibold text-red-400">Fleet API unavailable</h1>
+      <p className="mt-2 text-sm text-muted-foreground">{message}</p>
     </div>
   )
 }

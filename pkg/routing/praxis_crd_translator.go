@@ -5,20 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"crypto/tls"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 // GridCRDTranslator watches fleet-llm-d CRDs and renders corresponding
 // Praxis Grid CRDs. The translation is unidirectional: fleet → Grid.
 // Grid CRDs are applied via the K8s API using server-side apply.
 type GridCRDTranslator struct {
-	apiServer  string
-	namespace  string
-	token      string
-	httpClient *http.Client
+	apiServer   string
+	namespace   string
+	token       string
+	httpClient  *http.Client
 	gridNetwork string
 }
 
@@ -26,6 +27,11 @@ type GridCRDTranslator struct {
 // given K8s API server. The gridNetwork parameter names the GridNetwork
 // resource that owns the translated GridSite and InferenceProvider CRDs.
 func NewGridCRDTranslator(apiServer, namespace, token, gridNetwork string) *GridCRDTranslator {
+	tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
+	if err != nil {
+		slog.Warn("grid translator: failed to load Kubernetes CA", "error", err)
+		tlsConfig, _ = tlsutil.NewTLSConfig(tlsutil.TLSOptions{})
+	}
 	return &GridCRDTranslator{
 		apiServer:   strings.TrimRight(apiServer, "/"),
 		namespace:   namespace,
@@ -33,22 +39,22 @@ func NewGridCRDTranslator(apiServer, namespace, token, gridNetwork string) *Grid
 		gridNetwork: gridNetwork,
 		httpClient: &http.Client{
 			Timeout:   10 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
 		},
 	}
 }
 
 // GridSiteSpec is the spec for a grid.praxis-proxy.io/v1alpha1 GridSite.
 type GridSiteSpec struct {
-	GridNetworkRef  string        `json:"gridNetworkRef"`
-	Region          string        `json:"region,omitempty"`
-	Zone            string        `json:"zone,omitempty"`
-	SovereigntyZone string        `json:"sovereigntyZone,omitempty"`
-	Egress          *GridEgress   `json:"egress,omitempty"`
+	GridNetworkRef  string      `json:"gridNetworkRef"`
+	Region          string      `json:"region,omitempty"`
+	Zone            string      `json:"zone,omitempty"`
+	SovereigntyZone string      `json:"sovereigntyZone,omitempty"`
+	Egress          *GridEgress `json:"egress,omitempty"`
 }
 
 type GridEgress struct {
-	Address string        `json:"address"`
+	Address string         `json:"address"`
 	TLS     *GridEgressTLS `json:"tls,omitempty"`
 }
 
@@ -75,29 +81,36 @@ type InferenceModelEntry struct {
 }
 
 type MetricsConfig struct {
-	MetricsEndpoint    string            `json:"metricsEndpoint,omitempty"`
-	Path               string            `json:"path,omitempty"`
-	Timeout            string            `json:"timeout,omitempty"`
-	PoolName           string            `json:"poolName,omitempty"`
-	QueueCapacity      int               `json:"queueCapacity,omitempty"`
-	StaleMetricsSeconds int              `json:"staleMetricsSeconds,omitempty"`
-	SignalNames        map[string]string `json:"signalNames,omitempty"`
+	MetricsEndpoint     string            `json:"metricsEndpoint,omitempty"`
+	Path                string            `json:"path,omitempty"`
+	Timeout             string            `json:"timeout,omitempty"`
+	PoolName            string            `json:"poolName,omitempty"`
+	QueueCapacity       int               `json:"queueCapacity,omitempty"`
+	StaleMetricsSeconds int               `json:"staleMetricsSeconds,omitempty"`
+	SignalNames         map[string]string `json:"signalNames,omitempty"`
 }
 
 type LabelSelector struct {
-	MatchLabels map[string]string `json:"matchLabels,omitempty"`
+	MatchLabels      map[string]string          `json:"matchLabels,omitempty"`
+	MatchExpressions []LabelSelectorRequirement `json:"matchExpressions,omitempty"`
+}
+
+type LabelSelectorRequirement struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values,omitempty"`
 }
 
 // FleetClusterInfo holds the fleet-llm-d cluster state needed for translation.
 type FleetClusterInfo struct {
-	ID              string
-	Name            string
-	Region          string
-	Labels          map[string]string
-	EgressAddress   string
-	GPUTypes        []string
-	GPUAvailable    int
-	GPUTotal        int
+	ID            string
+	Name          string
+	Region        string
+	Labels        map[string]string
+	EgressAddress string
+	GPUTypes      []string
+	GPUAvailable  int
+	GPUTotal      int
 }
 
 // FleetPoolInfo holds the fleet-llm-d pool state needed for translation.
@@ -145,29 +158,36 @@ func (t *GridCRDTranslator) TranslatePoolToInferenceProvider(pool FleetPoolInfo)
 	if len(pool.TargetPorts) > 0 {
 		spec.Endpoint = fmt.Sprintf("http://%s.%s.svc:%d",
 			pool.Name, t.namespace, pool.TargetPorts[0])
+		if pool.MetricsEndpoint == "" {
+			pool.MetricsEndpoint = spec.Endpoint
+		}
 	}
 
 	if pool.MetricsEndpoint != "" {
 		spec.MetricsConfig = &MetricsConfig{
-			MetricsEndpoint:    pool.MetricsEndpoint,
-			Path:               "/metrics",
-			Timeout:            "2s",
-			PoolName:           pool.ModelName,
-			QueueCapacity:      64,
+			MetricsEndpoint:     pool.MetricsEndpoint,
+			Path:                "/metrics",
+			Timeout:             "2s",
+			PoolName:            pool.ModelName,
+			QueueCapacity:       64,
 			StaleMetricsSeconds: 30,
 			SignalNames: map[string]string{
-				"queueDepth":          "llm_d_router_epp_average_queue_size",
-				"kvCacheUtilization":  "llm_d_router_epp_average_kv_cache_utilization",
-				"healthy":             "llm_d_router_epp_ready_endpoints",
+				"queueDepth":         "llm_d_router_epp_average_queue_size",
+				"kvCacheUtilization": "llm_d_router_epp_average_kv_cache_utilization",
+				"healthy":            "llm_d_router_epp_ready_endpoints",
 			},
 		}
 	}
 
 	if len(pool.Clusters) > 0 {
-		spec.SiteSelector = &LabelSelector{
-			MatchLabels: map[string]string{
+		if len(pool.Clusters) == 1 {
+			spec.SiteSelector = &LabelSelector{MatchLabels: map[string]string{
 				"fleet.llm-d.ai/cluster-id": pool.Clusters[0],
-			},
+			}}
+		} else {
+			spec.SiteSelector = &LabelSelector{MatchExpressions: []LabelSelectorRequirement{{
+				Key: "fleet.llm-d.ai/cluster-id", Operator: "In", Values: append([]string(nil), pool.Clusters...),
+			}}}
 		}
 	}
 
@@ -183,6 +203,7 @@ func (t *GridCRDTranslator) ApplyGridSite(ctx context.Context, name string, spec
 			"name": name,
 			"labels": map[string]string{
 				"fleet.llm-d.ai/managed-by": "fleet-controller",
+				"fleet.llm-d.ai/cluster-id": name,
 			},
 		},
 		"spec": spec,

@@ -1,11 +1,41 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { StatusBadge } from '@/components/status-badge'
-import { MOCK_ROLLOUTS, type Rollout } from '@/lib/api-client'
+import {
+  fetchRollouts,
+  promoteRollout,
+  rollbackRollout,
+  type Rollout,
+} from '@/lib/api-client'
 
 export default function RolloutsPage() {
-  const [rollouts] = useState(MOCK_ROLLOUTS)
+  const [rollouts, setRollouts] = useState<Rollout[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const loadRollouts = useCallback(async () => {
+    try {
+      setRollouts(await fetchRollouts())
+      setError('')
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Fleet API unavailable')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void fetchRollouts().then((rows) => {
+      if (active) setRollouts(rows)
+    }).catch((loadError: unknown) => {
+      if (active) setError(loadError instanceof Error ? loadError.message : 'Fleet API unavailable')
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [])
 
   return (
     <div className="space-y-6">
@@ -16,6 +46,9 @@ export default function RolloutsPage() {
           Track model rollouts, canary progressions, and SLO gate status
         </p>
       </div>
+
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">{error}</div>}
+      {loading && <p className="text-sm text-muted-foreground">Loading rollouts...</p>}
 
       {/* Summary */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -48,26 +81,44 @@ export default function RolloutsPage() {
       {/* Rollout Cards */}
       <div className="space-y-4">
         {rollouts.map((rollout) => (
-          <RolloutCard key={rollout.id} rollout={rollout} />
+          <RolloutCard key={rollout.id} rollout={rollout} onChanged={loadRollouts} onError={setError} />
         ))}
+        {!loading && rollouts.length === 0 && !error && (
+          <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">No rollouts found.</div>
+        )}
       </div>
     </div>
   )
 }
 
-function RolloutCard({ rollout }: { rollout: Rollout }) {
+function RolloutCard({ rollout, onChanged, onError }: { rollout: Rollout; onChanged: () => Promise<void>; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false)
   const isActive = rollout.phase === 'Progressing' || rollout.phase === 'Paused'
   const canPromote = rollout.phase === 'Progressing' || rollout.phase === 'Paused'
   const canRollback = rollout.phase !== 'Complete' && rollout.phase !== 'RolledBack'
 
-  const handlePromote = () => {
-    // TODO: await promoteRollout(rollout.id)
-    console.log('Promote rollout:', rollout.id)
+  const handlePromote = async () => {
+    setBusy(true)
+    try {
+      await promoteRollout(rollout.id)
+      await onChanged()
+    } catch (actionError) {
+      onError(actionError instanceof Error ? actionError.message : 'Promotion failed')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const handleRollback = () => {
-    // TODO: await rollbackRollout(rollout.id)
-    console.log('Rollback rollout:', rollout.id)
+  const handleRollback = async () => {
+    setBusy(true)
+    try {
+      await rollbackRollout(rollout.id)
+      await onChanged()
+    } catch (actionError) {
+      onError(actionError instanceof Error ? actionError.message : 'Rollback failed')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -104,6 +155,7 @@ function RolloutCard({ rollout }: { rollout: Rollout }) {
           {canPromote && (
             <button
               onClick={handlePromote}
+              disabled={busy}
               className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
             >
               Promote
@@ -112,6 +164,7 @@ function RolloutCard({ rollout }: { rollout: Rollout }) {
           {canRollback && (
             <button
               onClick={handleRollback}
+              disabled={busy}
               className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20"
             >
               Rollback

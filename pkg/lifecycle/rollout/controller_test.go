@@ -5,15 +5,70 @@ import (
 	"testing"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
+
+func TestRolloutStatePersistsAcrossControllerRestart(t *testing.T) {
+	ctx := context.Background()
+	repo := postgres.NewInMemoryRolloutRepository()
+	ctrl := NewRolloutController(repo)
+	lifecycle := v1alpha1.ModelLifecycleSpec{
+		Model:        v1alpha1.ModelRef{Name: "llama-3", Version: "v2"},
+		FleetPoolRef: "production-pool",
+		Strategy: v1alpha1.RolloutStrategy{Type: "Canary", Canary: &v1alpha1.CanaryConfig{
+			InitialWeight: 10, WeightIncrement: 17,
+		}},
+		Clusters: &v1alpha1.ClusterOrder{Order: []string{"east", "west"}},
+	}
+
+	created, err := ctrl.CreateRollout(ctx, lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ctrl.AdvanceRollout(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	persisted, err := repo.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.PoolID != "production-pool" || persisted.Status != "Canary" || persisted.CurrentWeight != 27 {
+		t.Fatalf("unexpected persisted rollout: %#v", persisted)
+	}
+
+	restarted := NewRolloutController(repo)
+	restored, err := restarted.GetRolloutState(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != created.ID || restored.CurrentWeight != 27 || len(restored.ClusterStates) != 2 {
+		t.Fatalf("restart did not restore rollout: %#v", restored)
+	}
+	advanced, err := restarted.AdvanceRollout(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if advanced.CurrentWeight != 44 {
+		t.Fatalf("restart lost canary strategy: weight = %d, want 44", advanced.CurrentWeight)
+	}
+
+	createdAfterRestart, err := restarted.CreateRollout(ctx, lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdAfterRestart.ID == created.ID {
+		t.Fatalf("rollout ID was reused after restart: %q", created.ID)
+	}
+}
 
 func TestCreateRollout_Canary(t *testing.T) {
 	tests := []struct {
-		name          string
-		lifecycle     v1alpha1.ModelLifecycleSpec
-		wantPhase     string
-		wantWeight    int
-		wantErr       bool
+		name       string
+		lifecycle  v1alpha1.ModelLifecycleSpec
+		wantPhase  string
+		wantWeight int
+		wantErr    bool
 	}{
 		{
 			name: "canary rollout with initial weight 10",

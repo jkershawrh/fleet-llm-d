@@ -158,3 +158,27 @@ func TestGridSyncLoop_PublishesGridSyncedEvent(t *testing.T) {
 		t.Fatalf("expected event type %q, got %q", events.EventGridSynced, received[0].Type)
 	}
 }
+
+func TestGridSyncLoop_DoesNotPublishSuccessAfterApplyFailure(t *testing.T) {
+	mockAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "apply failed", http.StatusInternalServerError)
+	}))
+	defer mockAPI.Close()
+
+	fc := NewFleetController("", "", "", "", "")
+	fc.GridCRDTranslator = routing.NewGridCRDTranslator(mockAPI.URL, "fleet-llm-d", "", "test-grid")
+	fc.SWIMSyncAdapter = nil
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "arena", Name: "arena", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+
+	received := 0
+	fc.EventPublisher.Subscribe(context.Background(), []string{events.EventGridSynced}, func(context.Context, events.FleetEvent) error {
+		received++
+		return nil
+	})
+	fc.runGridSyncCycle(context.Background())
+	if received != 0 {
+		t.Fatalf("published %d success events after failed GridSite apply", received)
+	}
+}

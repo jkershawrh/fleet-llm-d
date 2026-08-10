@@ -62,10 +62,10 @@ func WithHTTPClient(c *http.Client) CRDWatcherOption {
 
 // NewCRDWatcher creates a new CRDWatcher that polls the Kubernetes API for
 // FleetInferencePool CRD changes and reconciles them via the given Reconciler.
-// An optional tlsutil.TLSOptions can be passed to configure TLS behavior.
-// Verification is enabled by default; insecure mode requires explicit opt-in.
+// An optional tlsutil.TLSOptions can be passed to configure a custom CA.
+// Certificate verification is always enabled.
 func NewCRDWatcher(apiServer, namespace, token string, reconciler *Reconciler, tlsOpts ...tlsutil.TLSOptions) *CRDWatcher {
-	opts := tlsutil.TLSOptions{}
+	opts := tlsutil.KubernetesTLSOptions()
 	if len(tlsOpts) > 0 {
 		opts = tlsOpts[0]
 	}

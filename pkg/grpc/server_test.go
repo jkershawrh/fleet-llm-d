@@ -2,8 +2,40 @@ package grpc
 
 import (
 	"net/rpc/jsonrpc"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
 )
+
+func TestFleetServiceRequiresTokenWhenConfigured(t *testing.T) {
+	svc := NewFleetService(func() (interface{}, error) { return nil, nil }, func() (interface{}, error) { return nil, nil })
+	svc.SetAuthSecret("test-secret")
+	var result interface{}
+	if err := svc.ListClusters(&Empty{}, &result); err == nil || !strings.Contains(err.Error(), "unauthorized") {
+		t.Fatalf("missing token error = %v, want unauthorized", err)
+	}
+}
+
+func TestFleetServiceEnforcesMutationRole(t *testing.T) {
+	const secret = "test-secret"
+	token, err := auth.GenerateToken(secret, auth.Claims{
+		Subject: "reader", Role: auth.RoleViewer, IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewFleetService(func() (interface{}, error) { return nil, nil }, func() (interface{}, error) { return nil, nil })
+	svc.SetAuthSecret(secret)
+	svc.SetRegisterCluster(func(req RegisterClusterRequest) (*RegisterClusterResponse, error) {
+		return &RegisterClusterResponse{ID: req.ID}, nil
+	})
+	var response RegisterClusterResponse
+	if err := svc.RegisterCluster(&RegisterClusterRequest{Token: token, ID: "c1", Name: "c1"}, &response); err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("viewer mutation error = %v, want forbidden", err)
+	}
+}
 
 func TestFleetService_ListClusters(t *testing.T) {
 	svc := NewFleetService(

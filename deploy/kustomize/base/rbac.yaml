@@ -73,6 +73,18 @@ rules:
       - get
       - list
   - apiGroups:
+      - grid.praxis-proxy.io
+    resources:
+      - gridsites
+      - inferenceproviders
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
       - ""
     resources:
       - nodes

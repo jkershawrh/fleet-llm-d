@@ -197,6 +197,17 @@ func expectStatus(t *testing.T, resp *http.Response, want int) []byte {
 	return body
 }
 
+func registerAgentCluster(t *testing.T, agent map[string]interface{}) {
+	t.Helper()
+	clusterID, _ := agent["cluster_id"].(string)
+	name, _ := agent["name"].(string)
+	region, _ := agent["region"].(string)
+	expectStatus(t, postJSON(t, "/api/v1/clusters", map[string]interface{}{
+		"id": clusterID, "name": name, "region": region,
+	}), http.StatusCreated)
+	expectStatus(t, postJSON(t, "/api/v1/agent/status", agent), http.StatusOK)
+}
+
 // ---------------------------------------------------------------------------
 // 1. Placement
 // ---------------------------------------------------------------------------
@@ -247,7 +258,7 @@ func TestIntegrationPlacement(t *testing.T) {
 				"source": "registry.redhat.io/granite-3b",
 			},
 			"placement": map[string]interface{}{
-				"policyRef":   "spread",
+				"policyRef":   map[string]string{"name": "spread"},
 				"minClusters": 2,
 			},
 		},
@@ -277,11 +288,7 @@ func TestIntegrationRouting(t *testing.T) {
 		{"cluster_id": "routing-slow", "name": "slow-cluster", "region": "us-west-2", "phase": "Running", "healthy": true, "gpu_total": 4, "gpu_available": 2},
 	}
 	for _, a := range agents {
-		resp := postJSON(t, "/api/v1/agent/status", a)
-		body := readBody(t, resp)
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			t.Fatalf("agent status: %d: %s", resp.StatusCode, body)
-		}
+		registerAgentCluster(t, a)
 	}
 	t.Cleanup(func() {
 		deleteHTTP(t, "/api/v1/clusters/routing-fast")
@@ -317,18 +324,14 @@ func TestIntegrationAutoscaling(t *testing.T) {
 		"cluster_id": "autoscale-hot", "name": "hot-cluster", "region": "us-east-1",
 		"phase": "Running", "healthy": true, "gpu_total": 8, "gpu_available": 1,
 	}
-	resp := postJSON(t, "/api/v1/agent/status", agent)
-	body := readBody(t, resp)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		t.Fatalf("agent status: %d: %s", resp.StatusCode, body)
-	}
+	registerAgentCluster(t, agent)
 	t.Cleanup(func() { deleteHTTP(t, "/api/v1/clusters/autoscale-hot") })
 
 	highLoad := map[string]interface{}{
 		"cluster_id": "autoscale-hot", "throughput_tps": 5.0, "ttft_p50_ms": 500.0,
 		"ttft_p99_ms": 2000.0, "queue_depth": 50, "gpu_utilization": 0.95, "kv_cache_hit_rate": 0.1,
 	}
-	resp = postJSON(t, "/api/v1/agent/metrics", highLoad)
+	resp := postJSON(t, "/api/v1/agent/metrics", highLoad)
 	expectStatus(t, resp, http.StatusAccepted)
 
 	lowLoad := map[string]interface{}{
@@ -421,8 +424,8 @@ func TestIntegrationTenant(t *testing.T) {
 		"name":     "ACME Corp",
 		"priority": 10,
 		"quotas": map[string]interface{}{
-			"maxTokensPerMinute":      500000,
-			"maxConcurrentRequests":   50,
+			"maxTokensPerMinute":    500000,
+			"maxConcurrentRequests": 50,
 		},
 		"rate_limit": map[string]interface{}{
 			"requests_per_second": 100,
@@ -461,8 +464,7 @@ func TestIntegrationTenant(t *testing.T) {
 		"cluster_id": "tenant-test-cluster", "name": "tenant-cluster", "region": "us-east-1",
 		"phase": "Running", "healthy": true, "gpu_total": 4, "gpu_available": 4,
 	}
-	resp = postJSON(t, "/api/v1/agent/status", agent)
-	readBody(t, resp)
+	registerAgentCluster(t, agent)
 	t.Cleanup(func() { deleteHTTP(t, "/api/v1/clusters/tenant-test-cluster") })
 
 	resp = getJSON(t, "/api/v1/agent/policies/tenant-test-cluster")
@@ -490,15 +492,14 @@ func TestIntegrationObservability(t *testing.T) {
 		"cluster_id": "obs-cluster", "name": "obs-cluster", "region": "us-east-1",
 		"phase": "Running", "healthy": true, "gpu_total": 8, "gpu_available": 6,
 	}
-	resp := postJSON(t, "/api/v1/agent/status", agent)
-	readBody(t, resp)
+	registerAgentCluster(t, agent)
 	t.Cleanup(func() { deleteHTTP(t, "/api/v1/clusters/obs-cluster") })
 
 	m := map[string]interface{}{
 		"cluster_id": "obs-cluster", "throughput_tps": 42.0, "ttft_p50_ms": 15.0,
 		"ttft_p99_ms": 45.0, "queue_depth": 3, "gpu_utilization": 0.6, "kv_cache_hit_rate": 0.75,
 	}
-	resp = postJSON(t, "/api/v1/agent/metrics", m)
+	resp := postJSON(t, "/api/v1/agent/metrics", m)
 	expectStatus(t, resp, http.StatusAccepted)
 
 	resp = getJSON(t, "/api/v1/metrics/model/agent-aggregate")
@@ -535,8 +536,7 @@ func TestIntegrationKVTransfer(t *testing.T) {
 		{"cluster_id": "kv-target", "name": "target-cluster", "region": "us-west-2", "phase": "Running", "healthy": true, "gpu_total": 8, "gpu_available": 8},
 	}
 	for _, a := range agents {
-		resp := postJSON(t, "/api/v1/agent/status", a)
-		readBody(t, resp)
+		registerAgentCluster(t, a)
 	}
 	t.Cleanup(func() {
 		deleteHTTP(t, "/api/v1/clusters/kv-source")
@@ -598,7 +598,7 @@ func TestIntegrationModelPack(t *testing.T) {
 				"ociRef": "registry.redhat.io/granite-7b:v1.0",
 			},
 			"placement": map[string]interface{}{
-				"policyRef":   "binpack",
+				"policyRef":   map[string]string{"name": "binpack"},
 				"minClusters": 1,
 				"maxClusters": 3,
 			},

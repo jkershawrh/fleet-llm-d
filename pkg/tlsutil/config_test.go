@@ -23,16 +23,6 @@ func TestNewTLSConfig_DefaultVerifiesSystemCAs(t *testing.T) {
 	}
 }
 
-func TestNewTLSConfig_InsecureSkipVerify(t *testing.T) {
-	cfg, err := NewTLSConfig(TLSOptions{InsecureSkipVerify: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.InsecureSkipVerify {
-		t.Error("InsecureSkipVerify should be true when requested")
-	}
-}
-
 // generateTestCA creates a self-signed CA certificate PEM for testing.
 func generateTestCA(t *testing.T) []byte {
 	t.Helper()

@@ -7,19 +7,16 @@ import (
 	"os"
 )
 
+const ServiceAccountCAPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
 // TLSOptions configures TLS behavior for HTTP clients.
 type TLSOptions struct {
-	CAPath             string
-	InsecureSkipVerify bool
+	CAPath string
 }
 
 // NewTLSConfig creates a *tls.Config from the given options.
 // By default (empty options), it uses system CA certificates and verifies.
 func NewTLSConfig(opts TLSOptions) (*tls.Config, error) {
-	if opts.InsecureSkipVerify {
-		return &tls.Config{InsecureSkipVerify: true}, nil //nolint:gosec // caller explicitly opted in
-	}
-
 	pool, err := x509.SystemCertPool()
 	if err != nil {
 		pool = x509.NewCertPool()
@@ -35,5 +32,15 @@ func NewTLSConfig(opts TLSOptions) (*tls.Config, error) {
 		}
 	}
 
-	return &tls.Config{RootCAs: pool}, nil
+	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}, nil
+}
+
+// KubernetesTLSOptions trusts the mounted service-account CA when running in
+// a pod and otherwise uses the host's system trust store.
+func KubernetesTLSOptions() TLSOptions {
+	opts := TLSOptions{}
+	if _, err := os.Stat(ServiceAccountCAPath); err == nil {
+		opts.CAPath = ServiceAccountCAPath
+	}
+	return opts
 }

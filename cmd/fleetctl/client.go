@@ -30,6 +30,7 @@ func NewFleetClient(baseURL, caPath string) *FleetClient {
 	}
 
 	if caPath != "" {
+		// #nosec G703 G304 -- fleetctl reads the CA path explicitly supplied by its operator.
 		pemData, err := os.ReadFile(caPath)
 		if err != nil {
 			log.Printf("WARNING: failed to read CA file %s: %v; using default TLS config", caPath, err)
@@ -186,6 +187,7 @@ func (c *FleetClient) doRequest(ctx context.Context, method, path string, body i
 		bodyReader = bytes.NewReader(data)
 	}
 
+	// #nosec G704 -- fleetctl intentionally targets the operator-configured fleet API URL.
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bodyReader)
 	if err != nil {
 		return nil, 0, fmt.Errorf("create request: %w", err)
@@ -197,6 +199,7 @@ func (c *FleetClient) doRequest(ctx context.Context, method, path string, body i
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
+	// #nosec G704 -- req is limited to the operator-configured fleet API URL above.
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("request %s %s: %w", method, path, err)

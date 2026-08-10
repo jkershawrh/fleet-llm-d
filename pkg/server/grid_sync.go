@@ -53,32 +53,43 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 
 	clusterInfos := make([]routing.FleetClusterInfo, 0, len(clusters))
 	for _, c := range clusters {
+		egressAddress := ""
+		if c.Labels != nil {
+			egressAddress = c.Labels["fleet.llm-d.ai/egress-address"]
+		}
 		clusterInfos = append(clusterInfos, routing.FleetClusterInfo{
-			ID:           c.ID,
-			Name:         c.Name,
-			Region:       c.Region,
-			Labels:       c.Labels,
-			GPUAvailable: c.GPUAvailable,
-			GPUTotal:     c.GPUTotal,
+			ID:            c.ID,
+			Name:          c.Name,
+			Region:        c.Region,
+			Labels:        c.Labels,
+			EgressAddress: egressAddress,
+			GPUAvailable:  c.GPUAvailable,
+			GPUTotal:      c.GPUTotal,
 		})
 	}
 
 	poolInfos := make([]routing.FleetPoolInfo, 0, len(pools))
 	for _, p := range pools {
 		poolInfos = append(poolInfos, routing.FleetPoolInfo{
-			Name:      p.Name,
-			ModelName: p.ModelName,
+			Name:        p.Name,
+			ModelName:   p.ModelName,
+			ModelSource: p.ModelSource,
+			Clusters:    append([]string(nil), p.DesiredClusters...),
+			TargetPorts: append([]int(nil), p.TargetPorts...),
 		})
 	}
 
+	syncSucceeded := true
 	if err := fc.GridCRDTranslator.SyncFromFleetState(ctx, clusterInfos, poolInfos); err != nil {
 		slog.Warn("grid sync: CRD translation failed", "error", err)
+		syncSucceeded = false
 	}
 
 	if fc.SWIMSyncAdapter != nil {
 		updated, err := fc.SWIMSyncAdapter.Sync(ctx)
 		if err != nil {
 			slog.Warn("grid sync: SWIM sync failed", "error", err)
+			syncSucceeded = false
 		} else if updated > 0 {
 			slog.Info("grid sync: SWIM updated cluster health", "updated", updated)
 			_ = fc.EventPublisher.Publish(ctx, events.FleetEvent{
@@ -87,6 +98,9 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 				Payload: map[string]interface{}{"updated": updated},
 			})
 		}
+	}
+	if !syncSucceeded {
+		return
 	}
 
 	_ = fc.EventPublisher.Publish(ctx, events.FleetEvent{

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,6 +115,19 @@ func (r *KubernetesRepository) Create(ctx context.Context, intent FleetIntent, o
 		return fmt.Errorf("initialize FleetIntent status: %w", err)
 	}
 	return nil
+}
+
+func (r *KubernetesRepository) Delete(ctx context.Context, intentID, operationID string) error {
+	operationPath := r.collectionPath("fleetoperations") + "/" + url.PathEscape(resourceName(operationID))
+	intentPath := r.collectionPath("fleetintents") + "/" + url.PathEscape(resourceName(intentID))
+	var deleteErrors []error
+	if err := r.request(ctx, http.MethodDelete, operationPath, nil, nil); err != nil {
+		deleteErrors = append(deleteErrors, fmt.Errorf("delete FleetOperation: %w", err))
+	}
+	if err := r.request(ctx, http.MethodDelete, intentPath, nil, nil); err != nil {
+		deleteErrors = append(deleteErrors, fmt.Errorf("delete FleetIntent: %w", err))
+	}
+	return errors.Join(deleteErrors...)
 }
 
 func (r *KubernetesRepository) cleanupCreate(ctx context.Context, intentName, operationName string) {

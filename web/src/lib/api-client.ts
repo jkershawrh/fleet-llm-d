@@ -1,4 +1,8 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+const SERVER_API_BASE = process.env.FLEET_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+
+function apiBase(): string {
+  return typeof window === 'undefined' ? SERVER_API_BASE : process.env.NEXT_PUBLIC_API_URL || '/api/fleet'
+}
 
 // --- Type Definitions ---
 
@@ -6,7 +10,7 @@ export interface Cluster {
   id: string
   name: string
   region: string
-  status: 'Running' | 'Degraded' | 'Failed' | 'Pending' | 'ScaledToZero'
+  status: string
   gpuAvailable: number
   gpuTotal: number
   gpuType: string
@@ -27,7 +31,7 @@ export interface FleetPool {
   name: string
   model: string
   modelVersion: string
-  status: 'Pending' | 'Placing' | 'Running' | 'Degraded' | 'Failed'
+  status: string
   clusters: ClusterAssignment[]
   rolloutStrategy: string
   totalThroughput: number
@@ -117,53 +121,58 @@ export interface ChainVerification {
   latestEntryTime: string
 }
 
-export interface LedgerEntry {
-  id: string
-  chainType: string
-  source: string
-  timestamp: string
-  hash: string
-  parentHash: string
-  verified: boolean
-}
-
 // --- API Functions ---
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const serverToken = typeof window === 'undefined' ? process.env.FLEET_API_TOKEN : undefined
+  const res = await fetch(`${apiBase()}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(serverToken ? { Authorization: `Bearer ${serverToken}` } : {}),
       ...options?.headers,
     },
-    next: { revalidate: 30 }, // ISR: revalidate every 30 seconds
+    ...(options?.method ? { cache: 'no-store' as const } : { next: { revalidate: 30 } }),
   })
 
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`)
   }
 
-  return res.json()
+  const body = await res.text()
+  return (body ? JSON.parse(body) : undefined) as T
 }
 
 export async function fetchClusters(): Promise<Cluster[]> {
-  return apiFetch<Cluster[]>('/api/v1/clusters')
+  const rows = await apiFetch<Record<string, unknown>[]>('/api/v1/clusters')
+  return rows.map(normalizeCluster)
 }
-
 export async function fetchPools(): Promise<FleetPool[]> {
-  return apiFetch<FleetPool[]>('/api/v1/pools')
+  const rows = await apiFetch<Record<string, unknown>[]>('/api/v1/pools')
+  return rows.map(normalizePool)
 }
-
 export async function fetchTenants(): Promise<Tenant[]> {
-  return apiFetch<Tenant[]>('/api/v1/tenants')
+  const rows = await apiFetch<Record<string, unknown>[]>('/api/v1/tenants')
+  return rows.map(normalizeTenant)
 }
 
 export async function fetchTenantUsage(id: string): Promise<TenantUsage> {
-  return apiFetch<TenantUsage>(`/api/v1/tenants/${id}/usage`)
+  const row = await apiFetch<Record<string, unknown>>(`/api/v1/tenants/${id}/usage`)
+  return normalizeTenantUsage(row)
 }
 
 export async function fetchFleetMetrics(): Promise<FleetMetrics> {
-  return apiFetch<FleetMetrics>('/api/v1/metrics/fleet')
+  const row = await apiFetch<Record<string, unknown>>('/api/v1/metrics/fleet')
+  const clusters = arrayValue(row.Clusters ?? row.clusters)
+  return {
+    totalClusters: clusters.length,
+    totalGpus: numberValue(row.TotalGPUs ?? row.totalGpus),
+    gpusAvailable: numberValue(row.GPUsAvailable ?? row.gpusAvailable),
+    activeModels: numberValue(row.ActiveModels ?? row.activeModels),
+    totalThroughput: numberValue(row.TotalThroughput ?? row.totalThroughput),
+    avgTtft: numberValue(row.AvgTTFT_Ms ?? row.avgTtft),
+    avgKvCacheHitRate: numberValue(row.AvgKVCacheHitRate ?? row.avgKvCacheHitRate),
+  }
 }
 
 export async function fetchModelMetrics(model: string): Promise<ModelMetrics> {
@@ -171,7 +180,15 @@ export async function fetchModelMetrics(model: string): Promise<ModelMetrics> {
 }
 
 export async function fetchRollouts(): Promise<Rollout[]> {
-  return apiFetch<Rollout[]>('/api/v1/rollouts')
+  const rows = await apiFetch<Record<string, unknown>[]>('/api/v1/rollouts')
+  return rows.map(normalizeRollout)
+}
+
+export async function registerCluster(input: { name: string; region: string }): Promise<void> {
+  await apiFetch('/api/v1/clusters', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
 }
 
 export async function promoteRollout(id: string): Promise<void> {
@@ -183,134 +200,144 @@ export async function rollbackRollout(id: string): Promise<void> {
 }
 
 export async function verifyChains(): Promise<Record<string, ChainVerification>> {
-  return apiFetch<Record<string, ChainVerification>>('/api/v1/verify/chains')
+  const rows = await apiFetch<Record<string, Record<string, unknown>>>('/api/v1/verify/chains')
+  return Object.fromEntries(
+    Object.entries(rows).map(([key, row]) => {
+      const verifiedAt = stringValue(row.VerifiedAt ?? row.verifiedAt)
+      return [
+        key,
+        {
+          chainType: stringValue(row.ChainType ?? row.chainType) || key,
+          valid: booleanValue(row.Valid ?? row.valid),
+          entriesChecked: numberValue(row.EntriesChecked ?? row.entriesChecked),
+          lastVerified: verifiedAt,
+          latestEntryTime: verifiedAt,
+        },
+      ]
+    }),
+  )
 }
 
-// --- Mock Data (used when API is unavailable during development) ---
-
-export const MOCK_CLUSTERS: Cluster[] = [
-  { id: 'cl-1', name: 'us-east-prod', region: 'us-east-1', status: 'Running', gpuAvailable: 24, gpuTotal: 32, gpuType: 'A100-80GB', throughput: 14200, ttftP99: 125, kvCacheHitRate: 0.87 },
-  { id: 'cl-2', name: 'us-west-prod', region: 'us-west-2', status: 'Running', gpuAvailable: 16, gpuTotal: 24, gpuType: 'A100-80GB', throughput: 10800, ttftP99: 118, kvCacheHitRate: 0.91 },
-  { id: 'cl-3', name: 'eu-central-prod', region: 'eu-central-1', status: 'Degraded', gpuAvailable: 4, gpuTotal: 16, gpuType: 'H100-80GB', throughput: 8400, ttftP99: 195, kvCacheHitRate: 0.72 },
-  { id: 'cl-4', name: 'ap-southeast-prod', region: 'ap-southeast-1', status: 'Running', gpuAvailable: 8, gpuTotal: 8, gpuType: 'A100-40GB', throughput: 5200, ttftP99: 142, kvCacheHitRate: 0.85 },
-  { id: 'cl-5', name: 'us-east-staging', region: 'us-east-1', status: 'Running', gpuAvailable: 4, gpuTotal: 4, gpuType: 'L40S', throughput: 2100, ttftP99: 210, kvCacheHitRate: 0.68 },
-]
-
-export const MOCK_POOLS: FleetPool[] = [
-  {
-    id: 'fp-1', name: 'llama-3.1-70b-pool', model: 'llama-3.1-70b-instruct', modelVersion: 'v1.2.0',
-    status: 'Running', rolloutStrategy: 'Canary', totalThroughput: 18600, avgTTFT: 135, kvCacheHitRate: 0.86,
-    clusters: [
-      { cluster: 'us-east-prod', replicas: 4, gpuType: 'A100-80GB', status: 'Running' },
-      { cluster: 'us-west-prod', replicas: 3, gpuType: 'A100-80GB', status: 'Running' },
-      { cluster: 'eu-central-prod', replicas: 2, gpuType: 'H100-80GB', status: 'Degraded' },
-    ],
-  },
-  {
-    id: 'fp-2', name: 'mistral-7b-pool', model: 'mistral-7b-instruct-v0.3', modelVersion: 'v0.3.1',
-    status: 'Running', rolloutStrategy: 'Rolling', totalThroughput: 12400, avgTTFT: 45, kvCacheHitRate: 0.92,
-    clusters: [
-      { cluster: 'us-east-prod', replicas: 2, gpuType: 'A100-80GB', status: 'Running' },
-      { cluster: 'ap-southeast-prod', replicas: 2, gpuType: 'A100-40GB', status: 'Running' },
-    ],
-  },
-  {
-    id: 'fp-3', name: 'granite-code-pool', model: 'granite-3.2-8b-instruct', modelVersion: 'v3.2.0',
-    status: 'Running', rolloutStrategy: 'AllAtOnce', totalThroughput: 8900, avgTTFT: 62, kvCacheHitRate: 0.88,
-    clusters: [
-      { cluster: 'us-west-prod', replicas: 2, gpuType: 'A100-80GB', status: 'Running' },
-      { cluster: 'us-east-staging', replicas: 1, gpuType: 'L40S', status: 'Running' },
-    ],
-  },
-  {
-    id: 'fp-4', name: 'llama-3.1-405b-pool', model: 'llama-3.1-405b-instruct', modelVersion: 'v1.0.0',
-    status: 'Placing', rolloutStrategy: 'BlueGreen', totalThroughput: 0, avgTTFT: 0, kvCacheHitRate: 0,
-    clusters: [
-      { cluster: 'us-east-prod', replicas: 0, gpuType: 'H100-80GB', status: 'Pending' },
-    ],
-  },
-]
-
-export const MOCK_TENANTS: Tenant[] = [
-  { id: 't-1', name: 'platform-team', priority: 900, maxTokensPerMinute: 500000, maxConcurrentRequests: 200, maxModels: 10, gpuBudget: 16, monthlyBudget: '$25,000', alertThreshold: 0.8, tokensConsumed: 12400000, currentMonthCost: '$18,750', avgLatency: 128, activeModels: 4, currentConcurrentRequests: 45 },
-  { id: 't-2', name: 'ml-research', priority: 700, maxTokensPerMinute: 300000, maxConcurrentRequests: 100, maxModels: 8, gpuBudget: 8, monthlyBudget: '$15,000', alertThreshold: 0.8, tokensConsumed: 8900000, currentMonthCost: '$13,200', avgLatency: 145, activeModels: 3, currentConcurrentRequests: 22 },
-  { id: 't-3', name: 'customer-support', priority: 500, maxTokensPerMinute: 100000, maxConcurrentRequests: 50, maxModels: 2, gpuBudget: 4, monthlyBudget: '$5,000', alertThreshold: 0.8, tokensConsumed: 4200000, currentMonthCost: '$4,800', avgLatency: 95, activeModels: 1, currentConcurrentRequests: 18 },
-  { id: 't-4', name: 'internal-tools', priority: 300, maxTokensPerMinute: 50000, maxConcurrentRequests: 20, maxModels: 3, gpuBudget: 2, monthlyBudget: '$2,000', alertThreshold: 0.9, tokensConsumed: 1100000, currentMonthCost: '$850', avgLatency: 112, activeModels: 2, currentConcurrentRequests: 5 },
-]
-
-export const MOCK_TENANT_USAGE: TenantUsage = {
-  tenantId: 't-1', tenantName: 'platform-team', tokensConsumed: 12400000, currentMonthCost: '$18,750',
-  totalRequests: 245000, avgLatency: 128,
-  modelBreakdown: [
-    { model: 'llama-3.1-70b-instruct', tokensConsumed: 6200000, requests: 120000, cost: '$9,800' },
-    { model: 'mistral-7b-instruct-v0.3', tokensConsumed: 3800000, requests: 85000, cost: '$5,200' },
-    { model: 'granite-3.2-8b-instruct', tokensConsumed: 2400000, requests: 40000, cost: '$3,750' },
-  ],
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
-export const MOCK_ROLLOUTS: Rollout[] = [
-  {
-    id: 'ro-1', model: 'llama-3.1-70b-instruct', version: 'v1.3.0', strategy: 'canary',
-    phase: 'Progressing', weight: 35, startTime: '2026-07-06T08:00:00Z',
-    clusterStatus: [
-      { cluster: 'us-east-prod', phase: 'Progressing', currentWeight: 35, sloMet: true, lastCheckTime: '2026-07-06T14:30:00Z' },
-      { cluster: 'us-west-prod', phase: 'Progressing', currentWeight: 35, sloMet: true, lastCheckTime: '2026-07-06T14:30:00Z' },
-      { cluster: 'eu-central-prod', phase: 'Pending', currentWeight: 0, sloMet: true, lastCheckTime: '2026-07-06T14:30:00Z' },
-    ],
-  },
-  {
-    id: 'ro-2', model: 'granite-3.2-8b-instruct', version: 'v3.2.1', strategy: 'rolling',
-    phase: 'Complete', weight: 100, startTime: '2026-07-05T10:00:00Z', completionTime: '2026-07-05T14:30:00Z',
-    clusterStatus: [
-      { cluster: 'us-west-prod', phase: 'Complete', currentWeight: 100, sloMet: true, lastCheckTime: '2026-07-05T14:30:00Z' },
-      { cluster: 'us-east-staging', phase: 'Complete', currentWeight: 100, sloMet: true, lastCheckTime: '2026-07-05T14:30:00Z' },
-    ],
-  },
-  {
-    id: 'ro-3', model: 'mistral-7b-instruct-v0.3', version: 'v0.4.0', strategy: 'canary',
-    phase: 'Paused', weight: 15, startTime: '2026-07-06T06:00:00Z',
-    clusterStatus: [
-      { cluster: 'us-east-prod', phase: 'Paused', currentWeight: 15, sloMet: false, lastCheckTime: '2026-07-06T12:00:00Z' },
-      { cluster: 'ap-southeast-prod', phase: 'Pending', currentWeight: 0, sloMet: true, lastCheckTime: '2026-07-06T12:00:00Z' },
-    ],
-  },
-]
-
-export const MOCK_FLEET_METRICS: FleetMetrics = {
-  totalClusters: 5,
-  totalGpus: 84,
-  gpusAvailable: 56,
-  activeModels: 4,
-  totalThroughput: 40700,
-  avgTtft: 134,
-  avgKvCacheHitRate: 0.84,
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
 }
 
-export const MOCK_CHAIN_VERIFICATIONS: Record<string, ChainVerification> = {
-  placement: { chainType: 'placement', valid: true, entriesChecked: 1247, lastVerified: '2026-07-06T14:30:00Z', latestEntryTime: '2026-07-06T14:28:00Z' },
-  scaling: { chainType: 'scaling', valid: true, entriesChecked: 892, lastVerified: '2026-07-06T14:30:00Z', latestEntryTime: '2026-07-06T14:25:00Z' },
-  routing: { chainType: 'routing', valid: true, entriesChecked: 2103, lastVerified: '2026-07-06T14:30:00Z', latestEntryTime: '2026-07-06T14:29:00Z' },
-  lifecycle: { chainType: 'lifecycle', valid: false, entriesChecked: 456, lastVerified: '2026-07-06T14:30:00Z', latestEntryTime: '2026-07-06T13:15:00Z' },
-  tenant: { chainType: 'tenant', valid: true, entriesChecked: 634, lastVerified: '2026-07-06T14:30:00Z', latestEntryTime: '2026-07-06T14:20:00Z' },
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
-export const MOCK_LEDGER_ENTRIES: LedgerEntry[] = [
-  { id: 'le-1', chainType: 'placement', source: 'fleet-controller', timestamp: '2026-07-06T14:28:00Z', hash: 'a3f2c1d8e9b4', parentHash: '7c6d5e4f3a2b', verified: true },
-  { id: 'le-2', chainType: 'routing', source: 'fleet-controller', timestamp: '2026-07-06T14:29:00Z', hash: 'b4e3d2c1f0a5', parentHash: '8d7e6f5a4b3c', verified: true },
-  { id: 'le-3', chainType: 'scaling', source: 'fleet-autoscaler', timestamp: '2026-07-06T14:25:00Z', hash: 'c5f4e3d2a1b6', parentHash: '9e8f7a6b5c4d', verified: true },
-  { id: 'le-4', chainType: 'lifecycle', source: 'rollout-controller', timestamp: '2026-07-06T13:15:00Z', hash: 'd6a5f4e3b2c7', parentHash: '0f9a8b7c6d5e', verified: false },
-  { id: 'le-5', chainType: 'tenant', source: 'tenant-controller', timestamp: '2026-07-06T14:20:00Z', hash: 'e7b6a5f4c3d8', parentHash: '1a0b9c8d7e6f', verified: true },
-  { id: 'le-6', chainType: 'placement', source: 'fleet-controller', timestamp: '2026-07-06T14:15:00Z', hash: 'f8c7b6a5d4e9', parentHash: '2b1c0d9e8f7a', verified: true },
-  { id: 'le-7', chainType: 'routing', source: 'fleet-controller', timestamp: '2026-07-06T14:10:00Z', hash: 'a9d8c7b6e5f0', parentHash: '3c2d1e0f9a8b', verified: true },
-  { id: 'le-8', chainType: 'scaling', source: 'fleet-autoscaler', timestamp: '2026-07-06T14:05:00Z', hash: 'b0e9d8c7f6a1', parentHash: '4d3e2f1a0b9c', verified: true },
-]
+function numberValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
 
-export const MOCK_EVENTS = [
-  { id: 'ev-1', type: 'rollout', message: 'Canary rollout for llama-3.1-70b v1.3.0 advanced to 35%', timestamp: '2026-07-06T14:30:00Z', severity: 'info' as const },
-  { id: 'ev-2', type: 'alert', message: 'Cluster eu-central-prod degraded: 4/16 GPUs available', timestamp: '2026-07-06T14:15:00Z', severity: 'warning' as const },
-  { id: 'ev-3', type: 'rollout', message: 'Rollout mistral-7b v0.4.0 paused: SLO gate failed (TTFT p99 > 200ms)', timestamp: '2026-07-06T12:00:00Z', severity: 'error' as const },
-  { id: 'ev-4', type: 'scaling', message: 'Auto-scaled granite-3.2-8b in us-west-prod: 2 -> 3 replicas', timestamp: '2026-07-06T11:45:00Z', severity: 'info' as const },
-  { id: 'ev-5', type: 'tenant', message: 'Tenant customer-support approaching budget threshold (96%)', timestamp: '2026-07-06T11:30:00Z', severity: 'warning' as const },
-  { id: 'ev-6', type: 'compliance', message: 'All ARE ledger chains verified successfully', timestamp: '2026-07-06T10:00:00Z', severity: 'info' as const },
-  { id: 'ev-7', type: 'rollout', message: 'Rolling update granite-3.2-8b v3.2.1 completed successfully', timestamp: '2026-07-05T14:30:00Z', severity: 'info' as const },
-]
+function booleanValue(value: unknown): boolean {
+  return value === true
+}
+
+function money(value: unknown): string {
+  return `$${numberValue(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+}
+
+function normalizeCluster(row: Record<string, unknown>): Cluster {
+  const capacity = recordValue(row.gpu_capacity ?? row.GPUCapacity)
+  const labels = recordValue(row.labels ?? row.Labels)
+  return {
+    id: stringValue(row.id ?? row.ID),
+    name: stringValue(row.name ?? row.Name),
+    region: stringValue(row.region ?? row.Region),
+    status: stringValue(row.status ?? row.Status) || 'Pending',
+    gpuAvailable: numberValue(capacity.available ?? capacity.Available ?? row.GPUAvailable),
+    gpuTotal: numberValue(capacity.total ?? capacity.Total ?? row.GPUTotal),
+    gpuType: arrayValue(capacity.types ?? capacity.Types)[0]?.toString() || stringValue(labels['gpu-type']) || 'n/a',
+    throughput: numberValue(row.throughput ?? row.Throughput),
+    ttftP99: numberValue(row.ttftP99 ?? row.TTFT_P99_Ms),
+    kvCacheHitRate: numberValue(row.kvCacheHitRate ?? row.KVCacheHitRate),
+  }
+}
+
+function normalizePool(row: Record<string, unknown>): FleetPool {
+  const desired = arrayValue(row.DesiredClusters ?? row.desiredClusters)
+  const model = stringValue(row.Model ?? row.ModelName ?? row.model)
+  return {
+    id: stringValue(row.ID ?? row.Name ?? row.id),
+    name: stringValue(row.Name ?? row.name) || model,
+    model,
+    modelVersion: stringValue(row.ModelVersion ?? row.modelVersion) || 'n/a',
+    status: stringValue(row.Phase ?? row.Status ?? row.status) || 'Pending',
+    rolloutStrategy: stringValue(row.RolloutStrategy ?? row.rolloutStrategy) || 'n/a',
+    totalThroughput: numberValue(row.TotalThroughput ?? row.totalThroughput),
+    avgTTFT: numberValue(row.AvgTTFT ?? row.avgTTFT),
+    kvCacheHitRate: numberValue(row.KVCacheHitRate ?? row.kvCacheHitRate),
+    clusters: desired.map((cluster) => ({
+      cluster: String(cluster),
+      replicas: 0,
+      gpuType: 'n/a',
+      status: 'Desired',
+    })),
+  }
+}
+
+function normalizeTenant(row: Record<string, unknown>): Tenant {
+  const quotas = recordValue(row.Quotas ?? row.quotas)
+  const cost = recordValue(row.CostControl ?? row.costControl)
+  return {
+    id: stringValue(row.ID ?? row.id),
+    name: stringValue(row.Name ?? row.name),
+    priority: numberValue(row.Priority ?? row.priority),
+    maxTokensPerMinute: numberValue(quotas.max_tokens_per_minute ?? quotas.maxTokensPerMinute),
+    maxConcurrentRequests: numberValue(quotas.max_concurrent_requests ?? quotas.maxConcurrentRequests),
+    maxModels: numberValue(quotas.max_models ?? quotas.maxModels),
+    gpuBudget: numberValue(quotas.gpu_budget ?? quotas.gpuBudget),
+    monthlyBudget: money(cost.monthly_budget_usd ?? cost.monthlyBudget),
+    alertThreshold: numberValue(cost.alert_threshold ?? cost.alertThreshold) || 0.8,
+    tokensConsumed: 0,
+    currentMonthCost: '$0',
+    avgLatency: 0,
+    activeModels: 0,
+    currentConcurrentRequests: 0,
+  }
+}
+
+function normalizeTenantUsage(row: Record<string, unknown>): TenantUsage {
+  return {
+    tenantId: stringValue(row.TenantID ?? row.tenantId),
+    tenantName: stringValue(row.TenantName ?? row.tenantName),
+    tokensConsumed: numberValue(row.TokensConsumed ?? row.tokensConsumed),
+    currentMonthCost: stringValue(row.Cost ?? row.currentMonthCost) || '$0',
+    totalRequests: numberValue(row.TotalRequests ?? row.totalRequests),
+    avgLatency: numberValue(row.AvgLatencyMs ?? row.avgLatency),
+    modelBreakdown: [],
+  }
+}
+
+function normalizeRollout(row: Record<string, unknown>): Rollout {
+  const strategy = recordValue(row.Strategy ?? row.strategy)
+  const rawPhase = stringValue(row.Status ?? row.phase).toLowerCase()
+  const phases: Record<string, Rollout['phase']> = {
+    pending: 'Pending',
+    canary: 'Progressing',
+    active: 'Progressing',
+    progressing: 'Progressing',
+    paused: 'Paused',
+    complete: 'Complete',
+    completed: 'Complete',
+    rolledback: 'RolledBack',
+    'rolled-back': 'RolledBack',
+    failed: 'Failed',
+  }
+  return {
+    id: stringValue(row.ID ?? row.id),
+    model: stringValue(row.PoolID ?? row.model),
+    version: stringValue(row.ModelVersion ?? row.version),
+    strategy: (stringValue(strategy.type) || 'canary') as Rollout['strategy'],
+    phase: phases[rawPhase] || 'Pending',
+    weight: numberValue(row.CurrentWeight ?? row.weight),
+    startTime: stringValue(row.StartedAt ?? row.startTime),
+    completionTime: stringValue(row.CompletedAt ?? row.completionTime) || undefined,
+    clusterStatus: [],
+  }
+}

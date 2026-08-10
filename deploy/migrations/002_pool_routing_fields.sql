@@ -1,0 +1,3 @@
+ALTER TABLE fleet_pools
+    ADD COLUMN IF NOT EXISTS desired_clusters JSONB NOT NULL DEFAULT '[]',
+    ADD COLUMN IF NOT EXISTS target_ports JSONB NOT NULL DEFAULT '[]';

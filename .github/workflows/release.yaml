@@ -34,13 +34,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
           cache: true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry and target
+      - name: Cache cargo registry and targets
         uses: actions/cache@v4
         with:
           path: |
@@ -50,6 +50,9 @@ jobs:
           key: rust-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             rust-release-${{ runner.os }}-
+
+      - name: Install Rust cross compiler
+        run: cargo install cross --locked
 
       - name: Build Go binaries (linux/amd64)
         env:
@@ -75,11 +78,12 @@ jobs:
           go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
             -o dist/linux-arm64/fleetctl ./cmd/fleetctl
 
-      - name: Build Rust binaries (linux/amd64)
+      - name: Build fleet-agent for both release architectures
         run: |
-          mkdir -p dist/linux-amd64
-          cargo build --release --workspace
-          cp target/release/fleet-agent dist/linux-amd64/ 2>/dev/null || true
+          cross build --release --locked --bin fleet-agent --target x86_64-unknown-linux-gnu
+          cross build --release --locked --bin fleet-agent --target aarch64-unknown-linux-gnu
+          install -m 0755 target/x86_64-unknown-linux-gnu/release/fleet-agent dist/linux-amd64/fleet-agent
+          install -m 0755 target/aarch64-unknown-linux-gnu/release/fleet-agent dist/linux-arm64/fleet-agent
 
       - name: Create release archives
         run: |
@@ -103,6 +107,7 @@ jobs:
         with:
           context: .
           file: deploy/docker/Dockerfile.controller
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
@@ -134,6 +139,7 @@ jobs:
         with:
           context: .
           file: deploy/docker/Dockerfile.agent
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}

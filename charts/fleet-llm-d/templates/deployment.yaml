@@ -53,6 +53,10 @@ spec:
             - --rate-limit={{ .Values.controller.rateLimit.requestsPerSecond }}
             - --rate-burst={{ .Values.controller.rateLimit.burst }}
             - --max-inflight={{ .Values.controller.loadShedding.maxInflight }}
+            {{- if .Values.tls.enabled }}
+            - --tls-cert=/etc/fleet-tls/{{ .Values.tls.certKey }}
+            - --tls-key=/etc/fleet-tls/{{ .Values.tls.keyKey }}
+            {{- end }}
             {{- if .Values.controller.grpc.enabled }}
             - --grpc-port={{ .Values.controller.ports.grpc }}
             {{- end }}
@@ -149,12 +153,18 @@ spec:
             httpGet:
               path: /healthz
               port: api
+              {{- if .Values.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
             failureThreshold: 30
             periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: api
+              {{- if .Values.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
@@ -162,11 +172,31 @@ spec:
             httpGet:
               path: /readyz
               port: api
+              {{- if .Values.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
+          {{- if .Values.tls.enabled }}
+          volumeMounts:
+            - name: fleet-tls
+              mountPath: /etc/fleet-tls
+              readOnly: true
+          {{- end }}
+      {{- if .Values.tls.enabled }}
+      volumes:
+        - name: fleet-tls
+          secret:
+            secretName: {{ required "tls.existingSecret is required when TLS is enabled" .Values.tls.existingSecret }}
+            items:
+              - key: {{ .Values.tls.certKey }}
+                path: {{ .Values.tls.certKey }}
+              - key: {{ .Values.tls.keyKey }}
+                path: {{ .Values.tls.keyKey }}
+      {{- end }}
       {{- with .Values.controller.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
