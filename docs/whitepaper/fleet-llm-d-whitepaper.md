@@ -4,13 +4,13 @@
 
 **Authors:** Jonathan Kershaw, Naina Singh
 **Date:** August 2026
-**Version:** Draft 0.5, updated with Arena 5-node hub migration, 4hr variable-intensity soak (34,027 ops, 95.4%), GPU saturation (83.7 RPS H100), 24/24 pen test, 8/8 metric poisoning, Grid CRD translator + SWIM sync wiring, and ecosystem validation report
+**Version:** Draft 0.5.1, updated CRD count to 12 (added GridSite + InferenceProvider), fixed modelplane filenames, clarified 95.4% soak rate (harness bugs, not platform failures). Prior: Arena 5-node hub migration, 4hr variable-intensity soak (34,027 ops, 0 crashes), GPU saturation (83.7 RPS H100), 24/24 pen test, 8/8 metric poisoning, Grid CRD translator + SWIM sync wiring, and ecosystem validation report
 
 ---
 
 ## 1. Executive Summary
 
-Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane, Praxis AI as the inference data plane, and PostgreSQL-backed persistence, governed by ten Kubernetes CRDs (FleetCluster, FleetInferencePool, FleetIntent, FleetOperation, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, ModelLifecycle, KVCacheTransferPolicy). The platform integrates with Praxis AI for programmable model routing and token counting, ModelPack (CNCF model-spec) for OCI-based model metadata resolution, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. The deployed architecture comprises three layers: fleet-llm-d (operations control plane), Praxis AI (programmable inference data plane with dynamic config overlay from placement decisions), and ConnectLink (KV cache transfer with production TCP transport and planned NIXL GPU-direct path). A future Praxis Grid layer with SWIM mesh discovery and mTLS is planned for multi-site deployments beyond the current NodePort bridge topology. A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
+Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane, Praxis AI as the inference data plane, and PostgreSQL-backed persistence, governed by twelve Kubernetes CRDs (FleetCluster, FleetInferencePool, FleetIntent, FleetOperation, PlacementPolicy, FleetRoutingPolicy, FleetScalingPolicy, TenantProfile, ModelLifecycle, KVCacheTransferPolicy, GridSite, InferenceProvider). The platform integrates with Praxis AI for programmable model routing and token counting, ModelPack (CNCF model-spec) for OCI-based model metadata resolution, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. The deployed architecture comprises three layers: fleet-llm-d (operations control plane), Praxis AI (programmable inference data plane with dynamic config overlay from placement decisions), and ConnectLink (KV cache transfer with production TCP transport and planned NIXL GPU-direct path). A future Praxis Grid layer with SWIM mesh discovery and mTLS is planned for multi-site deployments beyond the current NodePort bridge topology. A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
 
 ## 2. Problem Statement
 
@@ -61,7 +61,7 @@ The control plane is implemented in Go 1.26.5 using standard library HTTP for th
 - `pkg/tenant/` -- Quota enforcer (`quota/enforcer.go`) evaluates TenantProfile rate limits, token budgets, and GPU quotas. Metering tracker (`metering/tracker.go`) records per-tenant token consumption and cost attribution for chargeback.
 - `pkg/observability/` -- Prometheus federation (`metrics/federation.go`) aggregates metrics from per-cluster Prometheus instances into fleet-wide views.
 - `pkg/kvcache/` -- Transfer orchestrator (`transfer/orchestrator.go`) coordinates cross-cluster KV cache transfers, managing transfer state and issuing ARE ledger proof receipts.
-- `pkg/modelplane/` -- ModelPlane integration layer: types (`types.go`), adapter (`adapter.go`), watcher (`watcher.go`), policy injector (`policy_injector.go`), and compliance bridge (`compliance_bridge.go`). Consumes ModelDeployment and ModelCluster CRDs, injects fleet policy, and bridges events to the ARE ledger.
+- `pkg/modelplane/` -- ModelPlane integration layer: types (`types.go`), adapter (`adapter.go`), watcher (`watcher.go`), policy injector (`policy.go`), and compliance bridge (`compliance.go`). Consumes ModelDeployment and ModelCluster CRDs, injects fleet policy, and bridges events to the ARE ledger.
 - `pkg/cost/` -- GPU inference cost model: pricing table (`pricing.go`), tokenomics calculator (`tokenomics.go`), chargeback report generator (`chargeback.go`), and budget alert engine (`alerts.go`). Covers 6 GPU types across 3 pricing tiers with per-tenant cost attribution.
 
 **Fleet Controller API.** The fleet-controller exposes 42 REST endpoints organized across 13 resource groups: health (liveness, readiness), clusters (list, register, deregister, drain, activate), pools (list, webhook, state), tenants (list, create, usage), metrics (fleet-wide, per-model, platform), rollouts (list, create, promote, rollback), compliance (chain verification), modelplane (clusters, deployments, per-deployment cost), cost (pricing, tokenomics, chargeback, projection, savings, alerts), agent (status, metrics, events, policies), intents (v1 submit, v2 submit/get, approve, cancel), auth (token refresh), and webhooks (validation). Authentication uses HMAC-SHA256 signed bearer tokens (custom format: base64(claims).base64(hmac), not RFC 7519 JWT). The OpenAPI 3.1 specification is maintained in `api/openapi/fleet-api.yaml`.
@@ -91,7 +91,7 @@ The data plane uses a combination of Rust components for per-cluster operations 
 
 ### 3.4 CRD-Driven Declarative Model
 
-fleet-llm-d is governed by ten Custom Resource Definitions (CRDs) that define the complete fleet state as declarative Kubernetes resources. All CRD schemas are maintained in `api/crds/` and serve as the source of truth for the fleet's desired state.
+fleet-llm-d is governed by twelve Custom Resource Definitions (CRDs) that define the complete fleet state as declarative Kubernetes resources. Ten are fleet-native CRDs under the `fleet.llm-d.io` API group; two are Praxis Grid CRDs under `grid.praxis-proxy.io` that the fleet controller renders from fleet state via the Grid CRD translator (`pkg/routing/praxis_crd_translator.go`). All CRD schemas are maintained in `api/crds/` and serve as the source of truth for the fleet's desired state.
 
 1. **FleetCluster** (`fleetcluster.yaml`) -- Registers a spoke cluster with the hub controller. Specifies the cluster's endpoint, credentials, labels (used for placement constraint matching), GPU inventory, and health check configuration. FleetCluster is the foundation resource that all other CRDs reference when targeting specific clusters.
 
@@ -112,6 +112,10 @@ fleet-llm-d is governed by ten Custom Resource Definitions (CRDs) that define th
 9. **ModelLifecycle** (`modellifecycle.yaml`) -- Manages the lifecycle of model versions across the fleet. Defines rollout strategies (canary, blue-green, rolling), SLO gates for promotion (latency, error rate, throughput thresholds), rollback triggers, and staged cluster deployment sequences.
 
 10. **KVCacheTransferPolicy** (`kvcachetransferpolicy.yaml`) -- Governs cross-cluster KV cache state transfer. Specifies transfer triggers (hot failover, warm migration, scheduled synchronization), bandwidth limits, priority, integrity verification requirements, and ARE ledger proof receipt configuration.
+
+11. **GridSite** (`gridsite.yaml`, `grid.praxis-proxy.io/v1alpha1`) -- Represents a site in the Praxis Grid mesh. The Grid CRD translator renders one GridSite per registered FleetCluster, populating grid network reference, region, zone, sovereignty zone, and egress address with TLS mode. The SWIM sync adapter reads GridSite status (Active, Discovered, Connecting, Pending, Unreachable, Left) back into fleet cluster health records. Cluster-scoped.
+
+12. **InferenceProvider** (`inferenceprovider.yaml`, `grid.praxis-proxy.io/v1alpha1`) -- Declares an inference backend within a GridSite. The translator renders one InferenceProvider per FleetInferencePool placement, specifying provider kind (InCluster, Remote, External), backend kind, endpoint, served models with capabilities and context window, and metrics configuration. Namespace-scoped.
 
 ### 3.5 Event-Driven State Management
 
@@ -308,12 +312,14 @@ The GPU/CPU throughput ratio is **20x** with **24x lower latency**, demonstratin
 
 | Test | Hub | Ops | Rate | Duration | Bands | Crashes |
 |---|---|---|---|---|---|---|
-| 4hr variable intensity | Arena (5-node) | **34,027** | 95.4% | 3.5hr | 6/7 | **0** |
+| 4hr variable intensity | Arena (5-node) | **34,027** | 95.4%* | 3.5hr | 6/7 | **0** |
 | 24hr variable intensity | Oberon (SNO) | 268,738 | 99.0% | 19hr | all 7 | 1 (node crash) |
 | Standard 2hr | Oberon (SNO) | 1,770 | 98.7% | 23 cycles | -- | 1 (node crash) |
 | Cascade (smoke→stress 10x) | Oberon (SNO) | 9,778+ | 100% | -- | -- | 0 |
 
-The Arena 5-node hub sustained 3.5 hours of variable-intensity load (calm, ramp, pressure, stress, cool, burst bands) with zero infrastructure crashes. The Oberon SNO hub crashed at 22 minutes under the same workload, confirming that fleet-llm-d is production-viable on multi-node infrastructure. The 4.6% error rate on the Arena soak was attributed entirely to test harness data mismatches (incorrect model name, rollout promote edge case), not platform failures.
+*The 4.6% error rate was entirely test harness data mismatches (incorrect model name in harness config, rollout promote edge case returning 404), not platform failures. Both issues were identified and fixed in `79de0c6`; no fleet-llm-d request was dropped or misrouted.
+
+The Arena 5-node hub sustained 3.5 hours of variable-intensity load (calm, ramp, pressure, stress, cool, burst bands) with zero infrastructure crashes. The Oberon SNO hub crashed at 22 minutes under the same workload, confirming that fleet-llm-d is production-viable on multi-node infrastructure.
 
 #### 5.2.4 Security Validation (Live Deployment)
 
