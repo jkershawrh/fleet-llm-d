@@ -99,6 +99,26 @@ spec:
                             description: >-
                               Source identifier to match (e.g. tenant name,
                               cluster name, IP CIDR).
+                          semanticTier:
+                            type: string
+                            description: >-
+                              Semantic classification tier to match. When set,
+                              the rule only applies if the prompt was classified
+                              into this tier by the semantic classifier.
+                            enum:
+                              - SIMPLE
+                              - MEDIUM
+                              - COMPLEX
+                              - REASONING
+                          minConfidence:
+                            type: number
+                            format: double
+                            minimum: 0
+                            maximum: 2
+                            description: >-
+                              Minimum classification margin (score gap between
+                              top two labels) required for this rule to match.
+                              Prevents routing on low-confidence classifications.
                       action:
                         type: object
                         description: >-
@@ -132,6 +152,14 @@ spec:
                               Maximum acceptable latency in milliseconds.
                               Clusters that cannot meet this target are
                               excluded from routing.
+                          targetModelTier:
+                            type: string
+                            description: >-
+                              Target model tier for semantic routing. When set,
+                              routes to clusters serving models matching this
+                              tier (e.g. "gpu-large", "cpu-small"). Used with
+                              semanticTier match to map prompt complexity to
+                              model capability.
                           failover:
                             type: object
                             description: >-

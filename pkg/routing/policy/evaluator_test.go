@@ -235,3 +235,206 @@ func TestEvaluate_CostOptimized(t *testing.T) {
 		t.Errorf("expected cheapest cluster %q, got %q", "ap-south-cluster-1", decision.TargetCluster)
 	}
 }
+
+func TestEvaluate_SemanticTierMatch(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+
+	request := RoutingRequest{
+		Model:          "auto",
+		SemanticLabel:  "REASONING",
+		SemanticScore:  0.999,
+		SemanticMargin: 1.235,
+	}
+
+	clusters := []ClusterHealth{
+		{ClusterID: "cpu-cluster", Healthy: true, CapacityRemaining: 0.8},
+		{ClusterID: "gpu-cluster", Healthy: true, CapacityRemaining: 0.6},
+	}
+
+	policy := v1alpha1.FleetRoutingPolicySpec{
+		Strategy: "rules-based",
+		Rules: []v1alpha1.RoutingRule{
+			{
+				Match: v1alpha1.RoutingMatch{
+					SemanticTier: "REASONING",
+				},
+				Action: v1alpha1.RoutingAction{
+					TargetModelTier: "gpu-large",
+				},
+			},
+		},
+	}
+
+	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.Reason != "semantic-tier:gpu-large" {
+		t.Errorf("expected reason %q, got %q", "semantic-tier:gpu-large", decision.Reason)
+	}
+	if decision.HeadersToInject["X-Semantic-Label"] != "REASONING" {
+		t.Errorf("expected X-Semantic-Label header REASONING, got %q", decision.HeadersToInject["X-Semantic-Label"])
+	}
+}
+
+func TestEvaluate_SemanticTierNoMatch(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+
+	request := RoutingRequest{
+		Model:          "auto",
+		SemanticLabel:  "SIMPLE",
+		SemanticScore:  0.999,
+		SemanticMargin: 1.074,
+	}
+
+	clusters := []ClusterHealth{
+		{ClusterID: "cpu-cluster", Healthy: true, CapacityRemaining: 0.8},
+	}
+
+	policy := v1alpha1.FleetRoutingPolicySpec{
+		Strategy: "rules-based",
+		Rules: []v1alpha1.RoutingRule{
+			{
+				Match: v1alpha1.RoutingMatch{
+					SemanticTier: "REASONING",
+				},
+				Action: v1alpha1.RoutingAction{
+					TargetModelTier: "gpu-large",
+				},
+			},
+		},
+	}
+
+	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// SIMPLE doesn't match REASONING rule, falls through to default-healthy
+	if decision.Reason != "default-healthy" {
+		t.Errorf("expected reason %q, got %q", "default-healthy", decision.Reason)
+	}
+}
+
+func TestEvaluate_SemanticMinConfidence(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+
+	request := RoutingRequest{
+		Model:          "auto",
+		SemanticLabel:  "REASONING",
+		SemanticScore:  0.682,
+		SemanticMargin: 0.237, // low confidence
+	}
+
+	clusters := []ClusterHealth{
+		{ClusterID: "gpu-cluster", Healthy: true, CapacityRemaining: 0.6},
+	}
+
+	policy := v1alpha1.FleetRoutingPolicySpec{
+		Strategy: "rules-based",
+		Rules: []v1alpha1.RoutingRule{
+			{
+				Match: v1alpha1.RoutingMatch{
+					SemanticTier:  "REASONING",
+					MinConfidence: 0.5, // requires margin > 0.5
+				},
+				Action: v1alpha1.RoutingAction{
+					TargetModelTier: "gpu-large",
+				},
+			},
+		},
+	}
+
+	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Margin 0.237 < MinConfidence 0.5, so rule doesn't match
+	if decision.Reason != "default-healthy" {
+		t.Errorf("expected reason %q, got %q", "default-healthy", decision.Reason)
+	}
+}
+
+func TestEvaluate_NoSemanticFieldsPassThrough(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+
+	// Request with no semantic fields — existing behavior unchanged
+	request := RoutingRequest{
+		Model:        "llama-3-70b",
+		SourceRegion: "us-east",
+	}
+
+	clusters := []ClusterHealth{
+		{ClusterID: "us-east-cluster", Healthy: true, CapacityRemaining: 0.7},
+	}
+
+	policy := v1alpha1.FleetRoutingPolicySpec{
+		Strategy: "rules-based",
+		Rules: []v1alpha1.RoutingRule{
+			{
+				Match: v1alpha1.RoutingMatch{
+					Source: "us-east",
+				},
+				Action: v1alpha1.RoutingAction{
+					PreferLocal: true,
+				},
+			},
+		},
+	}
+
+	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.Reason != "prefer-local" {
+		t.Errorf("expected reason %q, got %q", "prefer-local", decision.Reason)
+	}
+}
+
+func TestEvaluate_SemanticWithMultipleRules(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+
+	clusters := []ClusterHealth{
+		{ClusterID: "cpu-small", Healthy: true, CapacityRemaining: 0.9},
+		{ClusterID: "gpu-large", Healthy: true, CapacityRemaining: 0.5},
+	}
+
+	policy := v1alpha1.FleetRoutingPolicySpec{
+		Strategy: "rules-based",
+		Rules: []v1alpha1.RoutingRule{
+			{
+				Match:  v1alpha1.RoutingMatch{SemanticTier: "REASONING"},
+				Action: v1alpha1.RoutingAction{TargetModelTier: "gpu-large"},
+			},
+			{
+				Match:  v1alpha1.RoutingMatch{SemanticTier: "COMPLEX"},
+				Action: v1alpha1.RoutingAction{TargetModelTier: "gpu-large"},
+			},
+			{
+				Match:  v1alpha1.RoutingMatch{},
+				Action: v1alpha1.RoutingAction{PreferCheapest: true},
+			},
+		},
+	}
+
+	// REASONING request hits first rule
+	decision, err := evaluator.Evaluate(context.Background(), RoutingRequest{
+		SemanticLabel: "REASONING", SemanticMargin: 1.2,
+	}, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.Reason != "semantic-tier:gpu-large" {
+		t.Errorf("REASONING: expected semantic-tier:gpu-large, got %q", decision.Reason)
+	}
+
+	// SIMPLE request falls through to catch-all
+	decision, err = evaluator.Evaluate(context.Background(), RoutingRequest{
+		SemanticLabel: "SIMPLE", SemanticMargin: 1.0,
+	}, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.Reason != "prefer-cheapest" {
+		t.Errorf("SIMPLE: expected prefer-cheapest, got %q", decision.Reason)
+	}
+}

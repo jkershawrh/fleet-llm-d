@@ -26,6 +26,13 @@ type RoutingRequest struct {
 	// DeniedClusters excludes these clusters from routing consideration.
 	// Populated from TenantProfile.spec.clusters.denied.
 	DeniedClusters []string
+
+	// SemanticLabel is the top classification label from llm-d-sc (e.g. SIMPLE, REASONING).
+	SemanticLabel string
+	// SemanticScore is the cosine similarity score of the top label.
+	SemanticScore float64
+	// SemanticMargin is the score gap between the top two labels (confidence signal).
+	SemanticMargin float64
 }
 
 // RouteDecision describes where to send a request and why.
@@ -136,6 +143,14 @@ func matchesRule(request RoutingRequest, match v1alpha1.RoutingMatch) bool {
 			return false
 		}
 	}
+	if match.SemanticTier != "" {
+		if request.SemanticLabel != match.SemanticTier {
+			return false
+		}
+		if match.MinConfidence > 0 && request.SemanticMargin < match.MinConfidence {
+			return false
+		}
+	}
 	return true
 }
 
@@ -207,6 +222,26 @@ func applyAction(request RoutingRequest, clusters []ClusterHealth, action v1alph
 			return RouteDecision{
 				TargetCluster: best.ClusterID,
 				Reason:        "prefer-cheapest",
+			}, nil
+		}
+	}
+
+	if action.TargetModelTier != "" {
+		var best *ClusterHealth
+		for i := range clusters {
+			if !clusters[i].Healthy {
+				continue
+			}
+			if best == nil || clusters[i].CapacityRemaining > best.CapacityRemaining {
+				best = &clusters[i]
+			}
+		}
+		if best != nil {
+			headers := map[string]string{"X-Semantic-Label": request.SemanticLabel}
+			return RouteDecision{
+				TargetCluster:   best.ClusterID,
+				HeadersToInject: headers,
+				Reason:          "semantic-tier:" + action.TargetModelTier,
 			}, nil
 		}
 	}

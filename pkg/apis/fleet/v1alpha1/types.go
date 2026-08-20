@@ -198,17 +198,20 @@ type RoutingRule struct {
 }
 
 type RoutingMatch struct {
-	Headers map[string]string `json:"headers,omitempty"`
-	Source  string            `json:"source,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	Source        string            `json:"source,omitempty"`
+	SemanticTier  string            `json:"semanticTier,omitempty"`
+	MinConfidence float64           `json:"minConfidence,omitempty"`
 }
 
 type RoutingAction struct {
-	PreferLocal     bool     `json:"preferLocal,omitempty"`
-	PreferCheapest  bool     `json:"preferCheapest,omitempty"`
-	KVCacheAffinity bool     `json:"kvCacheAffinity,omitempty"`
-	SessionAffinity bool     `json:"sessionAffinity,omitempty"`
-	MaxLatencyMs    int      `json:"maxLatencyMs,omitempty"`
+	PreferLocal     bool      `json:"preferLocal,omitempty"`
+	PreferCheapest  bool      `json:"preferCheapest,omitempty"`
+	KVCacheAffinity bool      `json:"kvCacheAffinity,omitempty"`
+	SessionAffinity bool      `json:"sessionAffinity,omitempty"`
+	MaxLatencyMs    int       `json:"maxLatencyMs,omitempty"`
 	Failover        *Failover `json:"failover,omitempty"`
+	TargetModelTier string    `json:"targetModelTier,omitempty"`
 }
 
 type Failover struct {
