@@ -359,11 +359,15 @@ func (fc *FleetController) BuildClusterHealth(ctx context.Context) []policy.Clus
 
 	var result []policy.ClusterHealth
 	for _, c := range clusters {
+		capacity := float64(c.GPUAvailable) / float64(max(c.GPUTotal, 1))
+		if c.GPUTotal == 0 {
+			capacity = 1.0
+		}
 		ch := policy.ClusterHealth{
 			ClusterID:         c.ID,
 			Healthy:           c.Status == "Running" || c.Status == "Healthy",
 			AvailableSlots:    c.GPUAvailable,
-			CapacityRemaining: float64(c.GPUAvailable) / float64(max(c.GPUTotal, 1)),
+			CapacityRemaining: capacity,
 			Region:            c.Region,
 			Labels:            c.Labels,
 		}
