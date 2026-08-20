@@ -55,6 +55,7 @@ type ClusterHealth struct {
 	CostPerToken      float64
 	Region            string
 	PoolSaturation    float64 // EPP flow-control pool saturation (0-1)
+	Labels            map[string]string
 }
 
 // RoutingPolicyEvaluator evaluates a FleetRoutingPolicySpec against a request
@@ -230,6 +231,9 @@ func applyAction(request RoutingRequest, clusters []ClusterHealth, action v1alph
 		var best *ClusterHealth
 		for i := range clusters {
 			if !clusters[i].Healthy {
+				continue
+			}
+			if tier, ok := clusters[i].Labels["model-tier"]; ok && tier != action.TargetModelTier {
 				continue
 			}
 			if best == nil || clusters[i].CapacityRemaining > best.CapacityRemaining {

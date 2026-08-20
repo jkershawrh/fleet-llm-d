@@ -365,6 +365,7 @@ func (fc *FleetController) BuildClusterHealth(ctx context.Context) []policy.Clus
 			AvailableSlots:    c.GPUAvailable,
 			CapacityRemaining: float64(c.GPUAvailable) / float64(max(c.GPUTotal, 1)),
 			Region:            c.Region,
+			Labels:            c.Labels,
 		}
 		if pm, ok := metricsMap[c.ID]; ok {
 			ch.KVCacheHitRate = pm.KVCacheHitRate

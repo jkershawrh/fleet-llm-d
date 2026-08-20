@@ -247,8 +247,8 @@ func TestEvaluate_SemanticTierMatch(t *testing.T) {
 	}
 
 	clusters := []ClusterHealth{
-		{ClusterID: "cpu-cluster", Healthy: true, CapacityRemaining: 0.8},
-		{ClusterID: "gpu-cluster", Healthy: true, CapacityRemaining: 0.6},
+		{ClusterID: "cpu-cluster", Healthy: true, CapacityRemaining: 0.8, Labels: map[string]string{"model-tier": "cpu-small"}},
+		{ClusterID: "gpu-cluster", Healthy: true, CapacityRemaining: 0.6, Labels: map[string]string{"model-tier": "gpu-large"}},
 	}
 
 	policy := v1alpha1.FleetRoutingPolicySpec{
@@ -268,6 +268,9 @@ func TestEvaluate_SemanticTierMatch(t *testing.T) {
 	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.TargetCluster != "gpu-cluster" {
+		t.Errorf("expected target cluster %q, got %q", "gpu-cluster", decision.TargetCluster)
 	}
 	if decision.Reason != "semantic-tier:gpu-large" {
 		t.Errorf("expected reason %q, got %q", "semantic-tier:gpu-large", decision.Reason)
@@ -394,8 +397,8 @@ func TestEvaluate_SemanticWithMultipleRules(t *testing.T) {
 	evaluator := NewRoutingPolicyEvaluator()
 
 	clusters := []ClusterHealth{
-		{ClusterID: "cpu-small", Healthy: true, CapacityRemaining: 0.9},
-		{ClusterID: "gpu-large", Healthy: true, CapacityRemaining: 0.5},
+		{ClusterID: "cpu-small", Healthy: true, CapacityRemaining: 0.9, Labels: map[string]string{"model-tier": "cpu-small"}},
+		{ClusterID: "gpu-large", Healthy: true, CapacityRemaining: 0.5, Labels: map[string]string{"model-tier": "gpu-large"}},
 	}
 
 	policy := v1alpha1.FleetRoutingPolicySpec{
