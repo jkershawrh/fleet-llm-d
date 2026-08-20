@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -112,6 +113,10 @@ type FleetController struct {
 	// Semantic classifier for prompt complexity classification
 	ClassifierClient classifier.ClassifierClient
 	ClassifierCache  *classifier.ClassificationCache
+
+	// Per-session tier tracking for escalation detection
+	sessionTierMu sync.RWMutex
+	sessionTiers  map[string]string
 
 	// Routing state — tracks which clusters were healthy to avoid redundant Praxis updates.
 	lastRoutingFingerprint string

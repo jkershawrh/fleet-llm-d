@@ -63,6 +63,41 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 		routingReq.SemanticMargin = result.Margin
 	}
 
+	// Session affinity with tier escalation: if this session is already
+	// bound to a cluster, keep it there UNLESS the new turn's complexity
+	// tier is higher than the original binding. A conversation that starts
+	// SIMPLE and escalates to REASONING should rebind to a GPU cluster.
+	// Downgrading never breaks affinity — overspending on a big model is
+	// better than losing coherence.
+	escalated := false
+	if req.SessionID != "" && fc.SessionTable != nil {
+		if boundCluster, found := fc.SessionTable.Lookup(req.SessionID); found {
+			if result != nil && tierRank(result.TopLabel) > fc.sessionTierRank(req.SessionID) {
+				fc.SessionTable.Unbind(req.SessionID)
+				escalated = true
+				slog.Info("session tier escalated",
+					"session", req.SessionID,
+					"new_tier", result.TopLabel,
+					"old_cluster", boundCluster)
+			} else {
+				resp := routeResponse{
+					TargetCluster: boundCluster,
+					Reason:        "session-affinity",
+					LatencyMs:     float64(time.Since(start).Microseconds()) / 1000,
+				}
+				if result != nil {
+					resp.SemanticLabel = result.TopLabel
+					resp.SemanticScore = result.TopScore
+					resp.SemanticMargin = result.Margin
+					resp.ClassifierID = result.ClassifierID
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp)
+				return
+			}
+		}
+	}
+
 	health := fc.BuildClusterHealth(ctx)
 	routingPolicy := fc.getRoutingPolicy(req.Policy)
 
@@ -72,9 +107,22 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Bind session to the selected cluster for future turns.
+	if req.SessionID != "" && fc.SessionTable != nil {
+		fc.SessionTable.Bind(req.SessionID, decision.TargetCluster)
+		if result != nil {
+			fc.setSessionTier(req.SessionID, result.TopLabel)
+		}
+	}
+
+	reason := decision.Reason
+	if escalated {
+		reason = "escalated:" + decision.Reason
+	}
+
 	resp := routeResponse{
 		TargetCluster:   decision.TargetCluster,
-		Reason:          decision.Reason,
+		Reason:          reason,
 		HeadersToInject: decision.HeadersToInject,
 		LatencyMs:       float64(time.Since(start).Microseconds()) / 1000,
 	}
@@ -123,6 +171,35 @@ func (fc *FleetController) getRoutingPolicy(name string) v1alpha1.FleetRoutingPo
 	return v1alpha1.FleetRoutingPolicySpec{
 		Strategy: "weighted",
 	}
+}
+
+var tierRanks = map[string]int{
+	"SIMPLE": 0, "MEDIUM": 1, "COMPLEX": 2, "REASONING": 3,
+}
+
+func tierRank(label string) int {
+	if r, ok := tierRanks[label]; ok {
+		return r
+	}
+	return -1
+}
+
+func (fc *FleetController) sessionTierRank(sessionID string) int {
+	fc.sessionTierMu.RLock()
+	defer fc.sessionTierMu.RUnlock()
+	if tier, ok := fc.sessionTiers[sessionID]; ok {
+		return tierRank(tier)
+	}
+	return -1
+}
+
+func (fc *FleetController) setSessionTier(sessionID, tier string) {
+	fc.sessionTierMu.Lock()
+	defer fc.sessionTierMu.Unlock()
+	if fc.sessionTiers == nil {
+		fc.sessionTiers = make(map[string]string)
+	}
+	fc.sessionTiers[sessionID] = tier
 }
 
 func (fc *FleetController) semanticTierDistribution() map[string]float64 {
