@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nemotron-3-5-lightning
+  namespace: fleet-llm-d
+  labels:
+    app: nemotron-3-5-lightning
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nemotron-3-5-lightning
+  template:
+    metadata:
+      labels:
+        app: nemotron-3-5-lightning
+    spec:
+      containers:
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server-b10362
+          imagePullPolicy: Always
+          args:
+            - "-m"
+            - "/models/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "-c"
+            - "8192"
+            - "-t"
+            - "64"
+            - "-np"
+            - "4"
+            - "--reasoning-format"
+            - "none"
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+          resources:
+            requests:
+              cpu: "8"
+              memory: "48Gi"
+            limits:
+              cpu: "128"
+              memory: "96Gi"
+      nodeSelector:
+        kubernetes.io/hostname: oberon
+      volumes:
+        - name: models
+          hostPath:
+            path: /var/lib/models/nemotron-3.5-lightning-30b
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nemotron-3-5-lightning
+  namespace: fleet-llm-d
+spec:
+  selector:
+    app: nemotron-3-5-lightning
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: nemotron-3-5-lightning
+  namespace: fleet-llm-d
+spec:
+  to:
+    kind: Service
+    name: nemotron-3-5-lightning
+  port:
+    targetPort: http
+  tls:
+    termination: edge
