@@ -29,6 +29,9 @@ type CRDWatcher struct {
 	mu       sync.Mutex
 	lastSeen map[string]v1alpha1.FleetInferencePoolSpec // keyed by metadata.name
 	ready    atomic.Bool
+
+	routingMu     sync.RWMutex
+	routingPolicy *v1alpha1.FleetRoutingPolicySpec
 }
 
 // k8sPoolList represents the Kubernetes API list response for FleetInferencePool CRDs.
@@ -155,6 +158,49 @@ func (w *CRDWatcher) GetScalingPolicy(ref string) (*v1alpha1.FleetScalingPolicyS
 		return nil, fmt.Errorf("decoding scaling policy %q: %w", ref, err)
 	}
 	return &resource.Spec, nil
+}
+
+// GetRoutingPolicy returns the cached FleetRoutingPolicy, or nil if none has been loaded.
+func (w *CRDWatcher) GetRoutingPolicy() *v1alpha1.FleetRoutingPolicySpec {
+	w.routingMu.RLock()
+	defer w.routingMu.RUnlock()
+	return w.routingPolicy
+}
+
+func (w *CRDWatcher) pollRoutingPolicy(ctx context.Context) {
+	url := fmt.Sprintf("%s/apis/fleet.llm-d.ai/v1alpha1/namespaces/%s/fleetroutingpolicies",
+		w.apiServer, w.namespace)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+w.token)
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var list struct {
+		Items []struct {
+			Metadata k8sMetadata                       `json:"metadata"`
+			Spec     v1alpha1.FleetRoutingPolicySpec `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&list); err != nil {
+		return
+	}
+	w.routingMu.Lock()
+	defer w.routingMu.Unlock()
+	if len(list.Items) > 0 {
+		spec := list.Items[0].Spec
+		w.routingPolicy = &spec
+		slog.Info("routing policy loaded", "name", list.Items[0].Metadata.Name, "rules", len(spec.Rules))
+	} else {
+		w.routingPolicy = nil
+	}
 }
 
 // Start begins polling the Kubernetes API for CRD changes in the background.
@@ -285,6 +331,8 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 	w.lastSeen = nextSeen
 
 	slog.Info("polled pools", "total", len(current), "added", added, "modified", modified, "deleted", deleted)
+
+	w.pollRoutingPolicy(ctx)
 
 	return nil
 }

@@ -76,17 +76,19 @@ func TestCRDWatcher_PollsForResources(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify the expected URL path.
-		expectedPath := "/apis/fleet.llm-d.ai/v1alpha1/namespaces/default/fleetinferencepools"
-		if r.URL.Path != expectedPath {
-			t.Errorf("unexpected path: got %q, want %q", r.URL.Path, expectedPath)
-		}
 		// Verify Authorization header.
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-token" {
 			t.Errorf("unexpected Authorization header: got %q", auth)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(poolList)
+		switch r.URL.Path {
+		case "/apis/fleet.llm-d.ai/v1alpha1/namespaces/default/fleetinferencepools":
+			json.NewEncoder(w).Encode(poolList)
+		case "/apis/fleet.llm-d.ai/v1alpha1/namespaces/default/fleetroutingpolicies":
+			json.NewEncoder(w).Encode(map[string]interface{}{"items": []interface{}{}})
+		default:
+			t.Errorf("unexpected path: %q", r.URL.Path)
+		}
 	}))
 	defer srv.Close()
 

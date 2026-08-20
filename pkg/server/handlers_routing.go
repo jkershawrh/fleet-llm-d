@@ -114,6 +114,11 @@ func (fc *FleetController) classifyPrompt(ctx context.Context, text, requestID s
 }
 
 func (fc *FleetController) getDefaultRoutingPolicy() v1alpha1.FleetRoutingPolicySpec {
+	if fc.CRDWatcher != nil {
+		if p := fc.CRDWatcher.GetRoutingPolicy(); p != nil {
+			return *p
+		}
+	}
 	return v1alpha1.FleetRoutingPolicySpec{
 		Strategy: "rules-based",
 	}
