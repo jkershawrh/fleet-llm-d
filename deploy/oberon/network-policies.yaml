@@ -261,3 +261,36 @@ spec:
       ports:
         - port: 3000
           protocol: TCP
+---
+# Semantic Classifier — ingress from controller, praxis, and in-namespace pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-semantic-classifier-ingress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: llm-d-semantic-classifier
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-controller
+      ports:
+        - port: 50051
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: praxis-ai
+      ports:
+        - port: 50051
+          protocol: TCP
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 50051
+          protocol: TCP

@@ -176,7 +176,7 @@ externalDependencies:
     endpoint: ""
     namespace: default
   semanticClassifier:
-    endpoint: ""
+    endpoint: "" # gRPC target, e.g. "llm-d-semantic-classifier.fleet-llm-d.svc:50051"
   platformMetrics:
     gclURL: ""
     deepfieldURL: ""

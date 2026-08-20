@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/classifier"
+
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/actuator"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/collector"
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/optimizer"
@@ -107,6 +109,10 @@ type FleetController struct {
 	// Session affinity table for multi-turn conversation routing
 	SessionTable *routing.SessionAffinityTable
 
+	// Semantic classifier for prompt complexity classification
+	ClassifierClient classifier.ClassifierClient
+	ClassifierCache  *classifier.ClassificationCache
+
 	// Routing state — tracks which clusters were healthy to avoid redundant Praxis updates.
 	lastRoutingFingerprint string
 	KubeAPI                string
@@ -203,6 +209,15 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 	}
 
+	classifierEndpoint := os.Getenv("SEMANTIC_CLASSIFIER_URL")
+	classifierClient, err := classifier.NewClassifierClient(classifierEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("initialize semantic classifier client: %w", err)
+	}
+	if classifierEndpoint != "" {
+		slog.Info("semantic classifier enabled", "endpoint", classifierEndpoint)
+	}
+
 	fc := &FleetController{
 		Solver: constraintSolver,
 		Scorer: scorer.NewCompositeScorer([]scorer.WeightedScorer{
@@ -239,6 +254,8 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		GridCRDTranslator:  gridTranslator,
 		SWIMSyncAdapter:    swimSync,
 		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
+		ClassifierClient:   classifierClient,
+		ClassifierCache:    classifier.NewClassificationCache(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,
 		TenantRepo:         tenantRepo,
