@@ -94,6 +94,9 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/cost/savings", fc.handleCostSavings)
 		mux.HandleFunc("GET /api/v1/cost/alerts", fc.handleCostAlerts)
 
+		// Semantic classification + routing
+		mux.HandleFunc("POST /api/v1/route", fc.handleClassifyAndRoute)
+
 		// Auth
 		mux.HandleFunc("POST /api/v1/auth/refresh", fc.handleRefreshToken)
 
@@ -125,6 +128,7 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 			ClustersFunc: func() int { return int(clustersGauge.Value()) },
 			PoolsFunc:    func() int { return int(poolsGauge.Value()) },
 			TenantsFunc:  func() int { return int(tenantsGauge.Value()) },
+			SemanticTiers: fc.semanticTierDistribution,
 		}
 		mux.HandleFunc("GET /api/v1/metrics/platform", metrics.HandlePlatformMetrics(platformCollector))
 	}

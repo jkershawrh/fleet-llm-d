@@ -64,6 +64,31 @@ func (c *ClassificationCache) StartReaper(ctx context.Context, interval time.Dur
 	}()
 }
 
+func (c *ClassificationCache) TierDistribution() map[string]float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	counts := make(map[string]int)
+	total := 0
+	now := time.Now()
+	for _, entry := range c.entries {
+		if now.After(entry.ExpiresAt) {
+			continue
+		}
+		if entry.Result != nil && entry.Result.TopLabel != "" {
+			counts[entry.Result.TopLabel]++
+			total++
+		}
+	}
+	if total == 0 {
+		return nil
+	}
+	dist := make(map[string]float64, len(counts))
+	for label, count := range counts {
+		dist[label] = float64(count) / float64(total)
+	}
+	return dist
+}
+
 func (c *ClassificationCache) reap() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

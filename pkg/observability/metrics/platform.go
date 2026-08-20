@@ -72,14 +72,16 @@ type LedgerMetrics struct {
 
 // PlatformCollector aggregates metrics from all platform systems.
 type PlatformCollector struct {
-	GCLURL       string
-	DeepfieldURL string
-	LedgerURL    string
-	LedgerToken  string
-	ClustersFunc func() int
-	PoolsFunc    func() int
-	TenantsFunc  func() int
-	ProxyStats   func() (map[string]ModelMetricsDetail, int64)
+	GCLURL        string
+	DeepfieldURL  string
+	LedgerURL     string
+	LedgerToken   string
+	ClassifierURL string
+	ClustersFunc  func() int
+	PoolsFunc     func() int
+	TenantsFunc   func() int
+	ProxyStats    func() (map[string]ModelMetricsDetail, int64)
+	SemanticTiers func() map[string]float64
 }
 
 // Collect gathers metrics from all systems in parallel.
@@ -137,6 +139,13 @@ func (pc *PlatformCollector) Collect(ctx context.Context) *PlatformMetrics {
 	}()
 
 	wg.Wait()
+
+	if pc.SemanticTiers != nil {
+		if tiers := pc.SemanticTiers(); len(tiers) > 0 {
+			result.Fleet.Routing = &RoutingMetrics{SemanticTiers: tiers}
+		}
+	}
+
 	return result
 }
 
