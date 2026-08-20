@@ -30,8 +30,8 @@ type CRDWatcher struct {
 	lastSeen map[string]v1alpha1.FleetInferencePoolSpec // keyed by metadata.name
 	ready    atomic.Bool
 
-	routingMu     sync.RWMutex
-	routingPolicy *v1alpha1.FleetRoutingPolicySpec
+	routingMu       sync.RWMutex
+	routingPolicies map[string]v1alpha1.FleetRoutingPolicySpec
 }
 
 // k8sPoolList represents the Kubernetes API list response for FleetInferencePool CRDs.
@@ -160,11 +160,22 @@ func (w *CRDWatcher) GetScalingPolicy(ref string) (*v1alpha1.FleetScalingPolicyS
 	return &resource.Spec, nil
 }
 
-// GetRoutingPolicy returns the cached FleetRoutingPolicy, or nil if none has been loaded.
-func (w *CRDWatcher) GetRoutingPolicy() *v1alpha1.FleetRoutingPolicySpec {
+// GetRoutingPolicy returns a cached FleetRoutingPolicy by name. If name is
+// empty, returns the first policy found (for backward compatibility).
+func (w *CRDWatcher) GetRoutingPolicy(name ...string) *v1alpha1.FleetRoutingPolicySpec {
 	w.routingMu.RLock()
 	defer w.routingMu.RUnlock()
-	return w.routingPolicy
+	if len(name) > 0 && name[0] != "" {
+		if p, ok := w.routingPolicies[name[0]]; ok {
+			return &p
+		}
+		return nil
+	}
+	for _, p := range w.routingPolicies {
+		spec := p
+		return &spec
+	}
+	return nil
 }
 
 func (w *CRDWatcher) pollRoutingPolicy(ctx context.Context) {
@@ -194,12 +205,12 @@ func (w *CRDWatcher) pollRoutingPolicy(ctx context.Context) {
 	}
 	w.routingMu.Lock()
 	defer w.routingMu.Unlock()
+	w.routingPolicies = make(map[string]v1alpha1.FleetRoutingPolicySpec, len(list.Items))
+	for _, item := range list.Items {
+		w.routingPolicies[item.Metadata.Name] = item.Spec
+	}
 	if len(list.Items) > 0 {
-		spec := list.Items[0].Spec
-		w.routingPolicy = &spec
-		slog.Info("routing policy loaded", "name", list.Items[0].Metadata.Name, "rules", len(spec.Rules))
-	} else {
-		w.routingPolicy = nil
+		slog.Info("routing policies loaded", "count", len(list.Items))
 	}
 }
 

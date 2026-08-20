@@ -19,6 +19,7 @@ type routeRequest struct {
 	Model     string `json:"model"`
 	TenantID  string `json:"tenant_id"`
 	SessionID string `json:"session_id"`
+	Policy    string `json:"policy,omitempty"`
 }
 
 type routeResponse struct {
@@ -63,7 +64,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 	}
 
 	health := fc.BuildClusterHealth(ctx)
-	routingPolicy := fc.getDefaultRoutingPolicy()
+	routingPolicy := fc.getRoutingPolicy(req.Policy)
 
 	decision, err := fc.RoutingEvaluator.Evaluate(ctx, routingReq, health, routingPolicy)
 	if err != nil {
@@ -113,14 +114,14 @@ func (fc *FleetController) classifyPrompt(ctx context.Context, text, requestID s
 	return result, nil
 }
 
-func (fc *FleetController) getDefaultRoutingPolicy() v1alpha1.FleetRoutingPolicySpec {
+func (fc *FleetController) getRoutingPolicy(name string) v1alpha1.FleetRoutingPolicySpec {
 	if fc.CRDWatcher != nil {
-		if p := fc.CRDWatcher.GetRoutingPolicy(); p != nil {
+		if p := fc.CRDWatcher.GetRoutingPolicy(name); p != nil {
 			return *p
 		}
 	}
 	return v1alpha1.FleetRoutingPolicySpec{
-		Strategy: "rules-based",
+		Strategy: "weighted",
 	}
 }
 
