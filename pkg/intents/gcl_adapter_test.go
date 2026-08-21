@@ -2,6 +2,7 @@ package intents
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -72,6 +73,59 @@ func TestGCLDecisionPackageDecoderMapsVerifiedProposal(t *testing.T) {
 	if err := ValidateGovernedIntent(intent, now); err != nil {
 		t.Fatalf("projected intent does not satisfy Fleet v2 validation: %v", err)
 	}
+}
+
+func TestGCLDecisionPackageDecoderVerifiesEd25519Signature(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, decision, _ := buildGCLDecisionEventEd25519(t, priv, nil)
+	now := decision.CreatedAt.Add(time.Minute)
+	decoder := NewGCLDecisionPackageDecoder(map[string][]byte{"ed25519-key-v1": pub})
+
+	intent, err := decoder.DecodeAt(GCLDecisionPackageCloudEventContentType, payload, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.ID != decision.PackageID || intent.Type != IntentScale {
+		t.Fatalf("identity/type = %q/%q, want %q/%q", intent.ID, intent.Type, decision.PackageID, IntentScale)
+	}
+	if intent.Pool != "primary" {
+		t.Fatalf("pool = %q, want primary", intent.Pool)
+	}
+	if intent.Proposer.AuthorityRef != "gcl://signing-keys/ed25519-key-v1" {
+		t.Fatalf("authority ref = %q", intent.Proposer.AuthorityRef)
+	}
+
+	t.Run("wrong public key rejects", func(t *testing.T) {
+		otherPub, _, _ := ed25519.GenerateKey(nil)
+		_, err := DecodeGCLDecisionPackageCloudEvent(
+			GCLDecisionPackageCloudEventContentType, payload,
+			map[string][]byte{"ed25519-key-v1": otherPub}, now)
+		if err == nil || !strings.Contains(err.Error(), "signature verification failed") {
+			t.Fatalf("expected Ed25519 signature rejection, got %v", err)
+		}
+	})
+
+	t.Run("wrong key size rejects", func(t *testing.T) {
+		_, err := DecodeGCLDecisionPackageCloudEvent(
+			GCLDecisionPackageCloudEventContentType, payload,
+			map[string][]byte{"ed25519-key-v1": []byte("only-sixteen-byte")}, now)
+		if err == nil || !strings.Contains(err.Error(), "exactly 32 bytes") {
+			t.Fatalf("expected key-size rejection, got %v", err)
+		}
+	})
+
+	t.Run("tampered package rejects", func(t *testing.T) {
+		tampered := bytes.ReplaceAll(payload, []byte(`"tenant":"tenant-a"`), []byte(`"tenant":"tenant-b"`))
+		_, err := DecodeGCLDecisionPackageCloudEvent(
+			GCLDecisionPackageCloudEventContentType, tampered,
+			map[string][]byte{"ed25519-key-v1": pub}, now)
+		if err == nil || !strings.Contains(err.Error(), "digest does not match") {
+			t.Fatalf("expected digest rejection, got %v", err)
+		}
+	})
 }
 
 func TestGCLDecisionPackageDecoderRejectsIntegrityFailures(t *testing.T) {
@@ -441,6 +495,131 @@ func buildGCLDecisionEvent(t *testing.T, mutate func(*gclDecisionPackage)) ([]by
 	signed := gclSignedDecisionPackage{
 		Package: packageJSON, Digest: digest, Signature: signature,
 		Algorithm: "HMAC-SHA256", KeyID: gclFixtureKeyID,
+	}
+	fingerprint := sha256.Sum256([]byte(decision.PackageID + ":" + digest + ":" + GCLDecisionPackageCloudEventType))
+	event := gclDecisionPackageCloudEvent{
+		SpecVersion:     "1.0",
+		ID:              "urn:sha256:" + hex.EncodeToString(fingerprint[:]),
+		Source:          "spiffe://llm-d.ai/ns/gcl/sa/controller",
+		Type:            GCLDecisionPackageCloudEventType,
+		Subject:         "decision-package/" + decision.PackageID,
+		Time:            decision.CreatedAt,
+		DataContentType: "application/json",
+		DataSchema:      GCLDecisionPackageSchemaURI,
+		CorrelationID:   decision.CorrelationID,
+		CausationID:     decision.CausationID,
+		IdempotencyID:   decision.IdempotencyID,
+		Tenant:          decision.Tenant,
+		Zone:            decision.Zone,
+		Expiry:          decision.ExpiresAt,
+		Evidence:        append([]string(nil), decision.EvidenceRefs...),
+		Data:            signed,
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload, decision, digest
+}
+
+func buildGCLDecisionEventEd25519(t *testing.T, privKey ed25519.PrivateKey, mutate func(*gclDecisionPackage)) ([]byte, gclDecisionPackage, string) {
+	t.Helper()
+	createdAt := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	expiresAt := createdAt.Add(5 * time.Minute)
+	hard := true
+	bound := 5000.0
+	constraintConfidence := 0.91
+	candidateConfidence := 0.87
+	rejectedConfidence := 0.62
+	packageConfidence := 0.87
+	evidenceOne := "sha256:" + strings.Repeat("a", 64)
+	evidenceTwo := "sha256:" + strings.Repeat("b", 64)
+	decision := gclDecisionPackage{
+		SchemaVersion: GCLDecisionPackageSchemaVersion,
+		PackageID:     "018f6a4c-7b31-7d2a-9f28-4c6b5f9a1234",
+		CreatedAt:     createdAt,
+		ExpiresAt:     expiresAt,
+		CorrelationID: "corr-123",
+		CausationID:   "forecast-456",
+		IdempotencyID: "decision:corr-123",
+		Tenant:        "tenant-a",
+		Zone:          "us-central",
+		Proposer: gclProposerIdentity{
+			AgentID:          "gcl",
+			WorkloadIdentity: "spiffe://llm-d.ai/ns/gcl/sa/controller",
+			TrustDomain:      "llm-d.ai",
+		},
+		Constraints: []gclDecisionConstraint{{
+			ConstraintID:   "latency-slo",
+			ConstraintType: "latency",
+			Hard:           &hard,
+			Bound:          &bound,
+			Confidence:     &constraintConfidence,
+			EvidenceRefs:   []string{evidenceOne},
+		}},
+		Candidates: []gclDecisionCandidate{
+			{
+				CandidateID: "candidate-scale",
+				ActionClass: "fleet.scale",
+				Parameters: map[string]any{
+					"pool":             "primary",
+					"model":            "qwen",
+					"replicas":         6,
+					"current_replicas": 3,
+					"target_clusters":  []string{"spoke-a", "spoke-b"},
+				},
+				PredictedEffect: map[string]any{"latency_ms": 3900},
+				Confidence:      &candidateConfidence,
+			},
+			{
+				CandidateID:     "candidate-route",
+				ActionClass:     "fleet.route",
+				Parameters:      map[string]any{"pool": "primary"},
+				PredictedEffect: map[string]any{},
+				Confidence:      &rejectedConfidence,
+			},
+		},
+		SelectedCandidateID: "candidate-scale",
+		RejectedAlternatives: []gclRejectedAlternative{{
+			Candidate: gclDecisionCandidate{
+				CandidateID:     "candidate-route",
+				ActionClass:     "fleet.route",
+				Parameters:      map[string]any{"pool": "primary"},
+				PredictedEffect: map[string]any{},
+				Confidence:      &rejectedConfidence,
+			},
+			ReasonCode: "RECEDING_HORIZON_NOT_SELECTED",
+			Reasoning:  "The route change was not selected.",
+		}},
+		FalsificationResults: []gclDecisionFalsification{{
+			CandidateID:  "candidate-scale",
+			CheckID:      "all-required-checks",
+			Verdict:      "survives",
+			Reasoning:    "All deterministic disconfirmation checks survived.",
+			EvidenceRefs: []string{evidenceOne, evidenceTwo},
+		}},
+		Confidence:      &packageConfidence,
+		EvidenceSources: []string{"deepfield-fleet"},
+		EvidenceRefs:    []string{evidenceOne, evidenceTwo},
+	}
+	if mutate != nil {
+		mutate(&decision)
+	}
+	packageJSON, err := json.Marshal(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageJSON = bytes.Replace(packageJSON, []byte(`"bound":5000`), []byte(`"bound":5000.0`), 1)
+	canonical, err := canonicalGCLJSON(packageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digestBytes := sha256.Sum256(canonical)
+	digest := "sha256:" + hex.EncodeToString(digestBytes[:])
+	signature := base64.RawURLEncoding.EncodeToString(ed25519.Sign(privKey, canonical))
+	signed := gclSignedDecisionPackage{
+		Package: packageJSON, Digest: digest, Signature: signature,
+		Algorithm: "Ed25519", KeyID: "ed25519-key-v1",
 	}
 	fingerprint := sha256.Sum256([]byte(decision.PackageID + ":" + digest + ":" + GCLDecisionPackageCloudEventType))
 	event := gclDecisionPackageCloudEvent{

@@ -40,6 +40,48 @@ for cluster in "$HUB" "$SPOKE1" "$SPOKE2"; do
 done
 
 echo ""
+echo "=== Creating RBAC for fleet-agent ==="
+for spoke in "$SPOKE1" "$SPOKE2"; do
+  kubectl --context "kind-${spoke}" create namespace fleet-llm-d 2>/dev/null || true
+  cat <<EOF | kubectl --context "kind-${spoke}" apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-agent
+  namespace: fleet-llm-d
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-agent
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["fleet.llm-d.ai"]
+    resources: ["fleetinferencepools"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-agent
+subjects:
+  - kind: ServiceAccount
+    name: fleet-agent
+    namespace: fleet-llm-d
+roleRef:
+  kind: ClusterRole
+  name: fleet-agent
+  apiGroup: rbac.authorization.k8s.io
+EOF
+  echo "RBAC created on $spoke"
+done
+
+echo ""
 echo "=== Building e2e component images ==="
 build_image fleet-controller:e2e deploy/docker/Dockerfile.controller
 build_image fleet-agent:e2e deploy/docker/Dockerfile.agent
@@ -190,6 +232,7 @@ spec:
       labels:
         app: fleet-agent
     spec:
+      serviceAccountName: fleet-agent
       enableServiceLinks: false
       containers:
         - name: agent

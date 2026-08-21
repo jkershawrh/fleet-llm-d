@@ -2,6 +2,7 @@ package intents
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -31,13 +32,14 @@ const (
 )
 
 var (
-	gclDigestPattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	gclSignaturePattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
-	gclUUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	gclSourcePattern      = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:.+$`)
-	gclSPIFFEPattern      = regexp.MustCompile(`^spiffe://[a-z0-9.-]+(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*$`)
-	gclTrustDomainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
-	gclTraceparentPattern = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
+	gclDigestPattern           = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	gclHMACSignaturePattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+	gclEd25519SignaturePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{86}$`)
+	gclUUIDPattern             = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	gclSourcePattern           = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:.+$`)
+	gclSPIFFEPattern           = regexp.MustCompile(`^spiffe://[a-z0-9.-]+(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*$`)
+	gclTrustDomainPattern      = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
+	gclTraceparentPattern      = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
 )
 
 var gclActionClasses = map[string]IntentType{
@@ -487,17 +489,11 @@ func validateGCLNestedEvidence(refs []string, knownEvidence map[string]struct{})
 }
 
 func verifyGCLSignedPackage(signed gclSignedDecisionPackage, canonical []byte, keyring map[string][]byte) error {
-	if signed.Algorithm != "HMAC-SHA256" {
-		return fmt.Errorf("GCL DecisionPackage algorithm must be HMAC-SHA256")
-	}
 	if !gclDigestPattern.MatchString(signed.Digest) {
 		return fmt.Errorf("GCL DecisionPackage digest must be sha256:<64 lowercase hex>")
 	}
 	if err := validateGCLString("data.key_id", signed.KeyID, 256); err != nil {
 		return err
-	}
-	if !gclSignaturePattern.MatchString(signed.Signature) {
-		return fmt.Errorf("GCL DecisionPackage signature must be unpadded base64url HMAC-SHA256")
 	}
 	digestBytes := sha256.Sum256(canonical)
 	expectedDigest := "sha256:" + hex.EncodeToString(digestBytes[:])
@@ -508,17 +504,40 @@ func verifyGCLSignedPackage(signed gclSignedDecisionPackage, canonical []byte, k
 	if !ok {
 		return fmt.Errorf("GCL DecisionPackage signing key %q is unknown", signed.KeyID)
 	}
-	if len(key) < 32 {
-		return fmt.Errorf("GCL DecisionPackage signing key %q must contain at least 32 bytes", signed.KeyID)
-	}
-	providedSignature, err := base64.RawURLEncoding.DecodeString(signed.Signature)
-	if err != nil || len(providedSignature) != sha256.Size {
-		return fmt.Errorf("GCL DecisionPackage signature is invalid")
-	}
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write(canonical)
-	if !hmac.Equal(providedSignature, mac.Sum(nil)) {
-		return fmt.Errorf("GCL DecisionPackage signature verification failed")
+
+	switch signed.Algorithm {
+	case "Ed25519":
+		if !gclEd25519SignaturePattern.MatchString(signed.Signature) {
+			return fmt.Errorf("GCL DecisionPackage Ed25519 signature must be 86-char unpadded base64url")
+		}
+		if len(key) != ed25519.PublicKeySize {
+			return fmt.Errorf("GCL DecisionPackage Ed25519 public key %q must be exactly 32 bytes", signed.KeyID)
+		}
+		sigBytes, err := base64.RawURLEncoding.DecodeString(signed.Signature)
+		if err != nil || len(sigBytes) != ed25519.SignatureSize {
+			return fmt.Errorf("GCL DecisionPackage signature is invalid")
+		}
+		if !ed25519.Verify(ed25519.PublicKey(key), canonical, sigBytes) {
+			return fmt.Errorf("GCL DecisionPackage signature verification failed")
+		}
+	case "HMAC-SHA256":
+		if !gclHMACSignaturePattern.MatchString(signed.Signature) {
+			return fmt.Errorf("GCL DecisionPackage HMAC signature must be 43-char unpadded base64url")
+		}
+		if len(key) < 32 {
+			return fmt.Errorf("GCL DecisionPackage signing key %q must contain at least 32 bytes", signed.KeyID)
+		}
+		sigBytes, err := base64.RawURLEncoding.DecodeString(signed.Signature)
+		if err != nil || len(sigBytes) != sha256.Size {
+			return fmt.Errorf("GCL DecisionPackage signature is invalid")
+		}
+		mac := hmac.New(sha256.New, key)
+		_, _ = mac.Write(canonical)
+		if !hmac.Equal(sigBytes, mac.Sum(nil)) {
+			return fmt.Errorf("GCL DecisionPackage signature verification failed")
+		}
+	default:
+		return fmt.Errorf("GCL DecisionPackage algorithm %q is not supported (expected Ed25519 or HMAC-SHA256)", signed.Algorithm)
 	}
 	return nil
 }
