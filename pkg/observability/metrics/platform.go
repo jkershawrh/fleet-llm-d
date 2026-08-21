@@ -318,12 +318,6 @@ func safeCallInt(f func() int) int {
 	return f()
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
 // HandlePlatformMetrics is the HTTP handler for GET /api/v1/metrics/platform.
 func HandlePlatformMetrics(collector *PlatformCollector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

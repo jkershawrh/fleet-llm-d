@@ -213,7 +213,7 @@ func (s *Service) Submit(ctx context.Context, intent FleetIntent) (SubmissionRes
 	operation.ObjectUID = operation.ID
 
 	reason := ""
-	next := StateAccepted
+	var next OperationState
 	if intent.ExpiresAt != nil && !intent.ExpiresAt.After(now) {
 		next = StateExpired
 		reason = "intent expired before admission"

@@ -9,10 +9,10 @@ import (
 
 // GPURequirements computed from model metadata.
 type GPURequirements struct {
-	MinGPUMemoryGB    float64
-	RecommendedGPUs   int
-	SupportedGPUTypes []string
-	TensorParallelism int
+	MinGPUMemoryGB      float64
+	RecommendedGPUs     int
+	SupportedGPUTypes   []string
+	TensorParallelism   int
 	EstimatedThroughput float64 // tok/s estimate based on param size + precision
 }
 
@@ -71,10 +71,10 @@ func ComputeGPURequirements(config *ModelPackConfig) (*GPURequirements, error) {
 	throughput := estimateThroughput(params, bytesPerParam)
 
 	return &GPURequirements{
-		MinGPUMemoryGB:    math.Ceil(totalMemoryGB),
-		RecommendedGPUs:   recommendedCount,
-		SupportedGPUTypes: supported,
-		TensorParallelism: tp,
+		MinGPUMemoryGB:      math.Ceil(totalMemoryGB),
+		RecommendedGPUs:     recommendedCount,
+		SupportedGPUTypes:   supported,
+		TensorParallelism:   tp,
 		EstimatedThroughput: math.Round(throughput*10) / 10,
 	}, nil
 }
@@ -87,7 +87,7 @@ func parseParamSize(s string) (float64, error) {
 		return 0, fmt.Errorf("empty paramSize")
 	}
 
-	multiplier := 1.0
+	var multiplier float64
 	switch {
 	case strings.HasSuffix(s, "b"):
 		multiplier = 1e9

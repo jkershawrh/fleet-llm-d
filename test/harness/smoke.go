@@ -134,13 +134,14 @@ func RunSmoke(cfg Config) SuiteResult {
 		if !ep.Auth {
 			resp, lat, err = doRequest(ep.Method, cfg.BaseURL+ep.Path, nil, nil)
 		} else if cfg.Token != "" {
-			if ep.Method == "POST" {
+			switch ep.Method {
+			case "POST":
 				body := bodyForEndpoint(ep.Path)
 				resp, lat, err = authPost(cfg.BaseURL, ep.Path, cfg.Token,
 					strings.NewReader(body))
-			} else if ep.Method == "DELETE" {
+			case "DELETE":
 				resp, lat, err = authDelete(cfg.BaseURL, ep.Path, cfg.Token)
-			} else {
+			default:
 				resp, lat, err = authGet(cfg.BaseURL, ep.Path, cfg.Token)
 			}
 		} else {

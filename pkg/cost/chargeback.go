@@ -104,7 +104,8 @@ func GenerateChargebackReport(tenantID string, usage []UsageRecord, pricing *Pri
 			// Fall back to zero cost if GPU type is unknown.
 			costPerHour = 0
 			item.Unpriced = true
-			slog.Info("WARNING: unknown GPU type %q for tenant %s — cost will be $0", u.GPUType, tenantID)
+			slog.Warn("unknown GPU type; cost will be $0",
+				"gpu_type", u.GPUType, "tenant", tenantID)
 		}
 		item.Cost += gpuHours * costPerHour
 	}

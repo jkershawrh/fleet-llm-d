@@ -54,7 +54,8 @@ func ComputeDeploymentCost(md modelplane.ModelDeployment, clusters []modelplane.
 	for _, name := range targetClusters {
 		cluster, ok := clusterMap[name]
 		if !ok {
-			slog.Info("WARNING: cluster %q in deployment %s not found — replicas will be redistributed", name, md.Name)
+			slog.Warn("cluster in deployment not found; replicas will be redistributed",
+				"cluster", name, "deployment", md.Name)
 			continue
 		}
 		if len(cluster.Pools) == 0 {
@@ -63,7 +64,8 @@ func ComputeDeploymentCost(md modelplane.ModelDeployment, clusters []modelplane.
 		}
 		gpuType := cluster.Pools[0].GPUType
 		if _, err := table.CostPerHour(gpuType, "on-demand"); err != nil {
-			slog.Info("WARNING: GPU type %q on cluster %q has no pricing — replicas will be redistributed", gpuType, name)
+			slog.Warn("GPU type has no pricing; replicas will be redistributed",
+				"gpu_type", gpuType, "cluster", name)
 			continue
 		}
 		priceableClusters = append(priceableClusters, name)

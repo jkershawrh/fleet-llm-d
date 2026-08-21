@@ -59,15 +59,15 @@ func AuthMiddleware(cfg Config, exempt []string, next http.Handler) http.Handler
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			writeAuthError(w, "missing Authorization header")
-			slog.Info("fleet.security.auth.failed: remote=%s reason=missing_header path=%s",
-				r.RemoteAddr, r.URL.Path)
+			slog.Info("fleet.security.auth.failed",
+				"remote", r.RemoteAddr, "reason", "missing_header", "path", r.URL.Path)
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
 			writeAuthError(w, "invalid Authorization header format, expected 'Bearer <token>'")
-			slog.Info("fleet.security.auth.failed: remote=%s reason=invalid_header_format path=%s",
-				r.RemoteAddr, r.URL.Path)
+			slog.Info("fleet.security.auth.failed",
+				"remote", r.RemoteAddr, "reason", "invalid_header_format", "path", r.URL.Path)
 			return
 		}
 
@@ -110,15 +110,17 @@ func AuthorizationMiddleware(exempt []string, next http.Handler) http.Handler {
 
 		if !CheckPermission(claims.Role, r.Method) {
 			writeAuthorizationError(w, "role is not allowed to perform this action")
-			slog.Info("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=method",
-				claims.Subject, claims.Role, r.Method, r.URL.Path)
+			slog.Info("fleet.security.rbac.denied",
+				"subject", claims.Subject, "role", claims.Role,
+				"method", r.Method, "path", r.URL.Path, "reason", "method")
 			return
 		}
 
 		if claims.Role == RoleTenant && !tenantRequestAllowed(claims.Subject, r.Method, r.URL.Path) {
 			writeAuthorizationError(w, "tenant is not allowed to access this resource")
-			slog.Info("fleet.security.rbac.denied: subject=%s role=%s method=%s path=%s reason=tenant_scope",
-				claims.Subject, claims.Role, r.Method, r.URL.Path)
+			slog.Info("fleet.security.rbac.denied",
+				"subject", claims.Subject, "role", claims.Role,
+				"method", r.Method, "path", r.URL.Path, "reason", "tenant_scope")
 			return
 		}
 
