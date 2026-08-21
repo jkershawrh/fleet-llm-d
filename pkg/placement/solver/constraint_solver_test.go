@@ -38,8 +38,8 @@ func sampleClusters() []ClusterInfo {
 			Name:   "us-east-prod",
 			Region: "us-east",
 			Labels: map[string]string{
-				"env":          "production",
-				"cost-tier":    "standard",
+				"env":              "production",
+				"cost-tier":        "standard",
 				"data-sovereignty": "us",
 			},
 			GPUCapacity: GPUCapacity{
@@ -54,8 +54,8 @@ func sampleClusters() []ClusterInfo {
 			Name:   "eu-west-prod",
 			Region: "eu-west",
 			Labels: map[string]string{
-				"env":          "production",
-				"cost-tier":    "premium",
+				"env":              "production",
+				"cost-tier":        "premium",
 				"data-sovereignty": "eu",
 			},
 			GPUCapacity: GPUCapacity{
@@ -70,8 +70,8 @@ func sampleClusters() []ClusterInfo {
 			Name:   "ap-south-prod",
 			Region: "ap-south",
 			Labels: map[string]string{
-				"env":          "production",
-				"cost-tier":    "economy",
+				"env":              "production",
+				"cost-tier":        "economy",
 				"data-sovereignty": "ap",
 			},
 			GPUCapacity: GPUCapacity{
@@ -86,8 +86,8 @@ func sampleClusters() []ClusterInfo {
 			Name:   "us-west-staging",
 			Region: "us-west",
 			Labels: map[string]string{
-				"env":          "staging",
-				"cost-tier":    "economy",
+				"env":              "staging",
+				"cost-tier":        "economy",
 				"data-sovereignty": "us",
 			},
 			GPUCapacity: GPUCapacity{
@@ -102,12 +102,12 @@ func sampleClusters() []ClusterInfo {
 
 func TestSolve_RegulatoryConstraint(t *testing.T) {
 	tests := []struct {
-		name              string
-		pool              v1alpha1.FleetInferencePoolSpec
-		clusters          []ClusterInfo
-		policy            v1alpha1.PlacementPolicySpec
-		wantClusterIDs    []string
-		wantMinDecisions  int
+		name             string
+		pool             v1alpha1.FleetInferencePoolSpec
+		clusters         []ClusterInfo
+		policy           v1alpha1.PlacementPolicySpec
+		wantClusterIDs   []string
+		wantMinDecisions int
 	}{
 		{
 			name:     "EU data sovereignty restricts placement to eu-west",
@@ -280,11 +280,11 @@ func TestSolve_CostConstraint(t *testing.T) {
 
 func TestSolve_MultiCluster(t *testing.T) {
 	tests := []struct {
-		name             string
-		pool             v1alpha1.FleetInferencePoolSpec
-		clusters         []ClusterInfo
-		policy           v1alpha1.PlacementPolicySpec
-		wantMinClusters  int
+		name              string
+		pool              v1alpha1.FleetInferencePoolSpec
+		clusters          []ClusterInfo
+		policy            v1alpha1.PlacementPolicySpec
+		wantMinClusters   int
 		wantTotalReplicas int
 	}{
 		{
@@ -405,8 +405,8 @@ func TestSolve_NoFeasiblePlacement(t *testing.T) {
 			},
 		},
 		{
-			name: "empty cluster list",
-			pool: poolSpec("phi-3-mini", "huggingface://microsoft/Phi-3-mini"),
+			name:     "empty cluster list",
+			pool:     poolSpec("phi-3-mini", "huggingface://microsoft/Phi-3-mini"),
 			clusters: []ClusterInfo{},
 			policy: v1alpha1.PlacementPolicySpec{
 				Constraints: []v1alpha1.PlacementConstraint{
@@ -441,10 +441,10 @@ func TestSolve_GPUCapacity(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
+		name     string
 		clusters []ClusterInfo
-		wantN   int
-		wantErr bool
+		wantN    int
+		wantErr  bool
 	}{
 		{
 			name: "zero available GPUs excluded",

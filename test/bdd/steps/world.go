@@ -19,20 +19,20 @@ import (
 
 // ClusterState holds the state of a cluster in the test world.
 type ClusterState struct {
-	Info         solver.ClusterInfo
-	Healthy      bool
-	LatencyMs    float64
+	Info           solver.ClusterInfo
+	Healthy        bool
+	LatencyMs      float64
 	CostPerGPUHour float64
 	KVCacheHitRate float64
-	CostPerToken float64
-	Region       string
-	KVCacheSize  string
-	Replicas     int
+	CostPerToken   float64
+	Region         string
+	KVCacheSize    string
+	Replicas       int
 	GPUsPerReplica int
 	GPUUtilization float64
-	TTFT_P99_Ms  float64
-	Throughput   float64
-	PoolMetrics  collector.PoolMetrics
+	TTFT_P99_Ms    float64
+	Throughput     float64
+	PoolMetrics    collector.PoolMetrics
 }
 
 // PoolState holds FleetInferencePool state.
@@ -48,11 +48,11 @@ type PoolState struct {
 
 // TenantState holds tenant profile state.
 type TenantState struct {
-	Spec           v1alpha1.TenantProfileSpec
-	TokensConsumed int64
+	Spec            v1alpha1.TenantProfileSpec
+	TokensConsumed  int64
 	CostAccumulated float64
 	AllowedClusters []string
-	Priority       int
+	Priority        int
 }
 
 // RolloutState holds rollout state for lifecycle tests.
@@ -63,10 +63,10 @@ type RolloutTestState struct {
 
 // LedgerEntry represents a recorded ledger entry.
 type LedgerEntry struct {
-	Type          string
-	Receipt       *ledger.LedgerReceipt
-	ProofReceipt  *ledger.ProofReceipt
-	Content       map[string]interface{}
+	Type         string
+	Receipt      *ledger.LedgerReceipt
+	ProofReceipt *ledger.ProofReceipt
+	Content      map[string]interface{}
 }
 
 // PlacementResult holds a placement decision result.
@@ -92,28 +92,28 @@ type TransferResult struct {
 
 // World holds shared state across BDD steps.
 type World struct {
-	Ctx             context.Context
-	Clusters        map[string]*ClusterState
-	FleetPools      map[string]*PoolState
-	Tenants         map[string]*TenantState
-	Rollouts        map[string]*RolloutTestState
-	LedgerEntries   []LedgerEntry
-	LastError       error
-	LastPlacement   []PlacementResult
+	Ctx               context.Context
+	Clusters          map[string]*ClusterState
+	FleetPools        map[string]*PoolState
+	Tenants           map[string]*TenantState
+	Rollouts          map[string]*RolloutTestState
+	LedgerEntries     []LedgerEntry
+	LastError         error
+	LastPlacement     []PlacementResult
 	LastRouteDecision *RouteDecisionResult
-	LastScaling     *ScalingResult
-	LastTransfer    *TransferResult
+	LastScaling       *ScalingResult
+	LastTransfer      *TransferResult
 
 	// References to capability packages
-	Solver          solver.ConstraintSolver
-	Evaluator       policy.RoutingPolicyEvaluator
-	Optimizer       optimizer.FleetOptimizer
-	QuotaEnforcer   quota.QuotaEnforcer
-	Collector       *collector.InMemoryCollector
-	Rollout         rollout.RolloutController
-	Federator       metrics.MetricsFederator
-	Orchestrator    transfer.TransferOrchestrator
-	Recorder        *ledger.FleetRecorder
+	Solver        solver.ConstraintSolver
+	Evaluator     policy.RoutingPolicyEvaluator
+	Optimizer     optimizer.FleetOptimizer
+	QuotaEnforcer quota.QuotaEnforcer
+	Collector     *collector.InMemoryCollector
+	Rollout       rollout.RolloutController
+	Federator     metrics.MetricsFederator
+	Orchestrator  transfer.TransferOrchestrator
+	Recorder      *ledger.FleetRecorder
 
 	// Quota check results
 	LastQuotaResult *quota.QuotaCheckResult

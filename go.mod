@@ -1,6 +1,6 @@
 module github.com/llm-d/fleet-llm-d
 
-go 1.26.5
+go 1.26.7
 
 require (
 	github.com/lib/pq v1.10.9
@@ -9,8 +9,8 @@ require (
 )
 
 require (
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )

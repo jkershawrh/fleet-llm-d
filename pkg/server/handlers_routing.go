@@ -35,12 +35,14 @@ type routeResponse struct {
 
 func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http.Request) {
 	var req routeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
+	// Bounded like every other request body on this server: prompt text is
+	// caller-supplied and must not be able to exhaust memory.
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
 	if req.Text == "" {
-		http.Error(w, "text field is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "text field is required")
 		return
 	}
 

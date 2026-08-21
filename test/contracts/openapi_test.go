@@ -111,6 +111,11 @@ func startFleetController() (cleanup func(), retErr error) {
 	proc := exec.Command(binPath,
 		"--port", fmt.Sprintf("%d", apiPort),
 		"--metrics-port", fmt.Sprintf("%d", metricsPort),
+		// Contract tests exercise evidence-recording endpoints without a real
+		// ledger. The binary defaults to --ledger-mode=disabled so that a
+		// forgotten flag fails closed rather than fabricating receipts, so the
+		// harness opts into in-memory mode explicitly.
+		"--ledger-mode", "memory",
 	)
 
 	// Filter out FLEET_AUTH_SECRET so auth is disabled during tests.

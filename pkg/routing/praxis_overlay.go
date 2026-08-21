@@ -37,9 +37,9 @@ func NewPraxisOverlay(endpoints []PraxisClusterEndpoint) *PraxisOverlay {
 
 // PoolPlacement represents a model placed on specific clusters.
 type PoolPlacement struct {
-	ModelName string
+	ModelName    string
 	ModelAliases []string
-	Clusters  []string // cluster IDs where the model is placed
+	Clusters     []string // cluster IDs where the model is placed
 }
 
 // RenderConfig generates the full Praxis AI config YAML from the current

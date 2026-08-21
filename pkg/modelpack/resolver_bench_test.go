@@ -22,9 +22,15 @@ func benchmarkComputeGPURequirements(b *testing.B, paramSize, precision string) 
 	}
 }
 
-func BenchmarkComputeGPURequirements_2B(b *testing.B)  { benchmarkComputeGPURequirements(b, "2b", "float16") }
-func BenchmarkComputeGPURequirements_7B(b *testing.B)  { benchmarkComputeGPURequirements(b, "7b", "float16") }
-func BenchmarkComputeGPURequirements_70B(b *testing.B) { benchmarkComputeGPURequirements(b, "70b", "bfloat16") }
+func BenchmarkComputeGPURequirements_2B(b *testing.B) {
+	benchmarkComputeGPURequirements(b, "2b", "float16")
+}
+func BenchmarkComputeGPURequirements_7B(b *testing.B) {
+	benchmarkComputeGPURequirements(b, "7b", "float16")
+}
+func BenchmarkComputeGPURequirements_70B(b *testing.B) {
+	benchmarkComputeGPURequirements(b, "70b", "bfloat16")
+}
 func BenchmarkComputeGPURequirements_405B(b *testing.B) {
 	benchmarkComputeGPURequirements(b, "405b", "int8")
 }

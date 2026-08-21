@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	pb "github.com/llm-d/fleet-llm-d/pkg/classifier/gen"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -30,13 +32,43 @@ type ClassifierClient interface {
 	Close() error
 }
 
-func NewClassifierClient(endpoint string) (ClassifierClient, error) {
+// NewClassifierClient dials the semantic classifier over TLS.
+//
+// Classification requests carry the caller's prompt text, so this channel
+// handles the same content the rest of the control plane takes care never to
+// log. It is encrypted by default; caRoots optionally names a PEM bundle for
+// a private CA.
+//
+// Plaintext gRPC remains available for local development via
+// NewInsecureClassifierClient, and is never selected implicitly.
+func NewClassifierClient(endpoint, caRoots string) (ClassifierClient, error) {
 	if endpoint == "" {
 		return &disabledClassifierClient{}, nil
 	}
-	conn, err := grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	opts := tlsutil.KubernetesTLSOptions()
+	if caRoots != "" {
+		opts.CAPath = caRoots
+	}
+	tlsCfg, err := tlsutil.NewTLSConfig(opts)
+	if err != nil {
+		return nil, fmt.Errorf("classifier TLS config: %w", err)
+	}
+	return dialClassifier(endpoint, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+}
+
+// NewInsecureClassifierClient dials the classifier over plaintext gRPC.
+//
+// Prompt text crosses the network unencrypted. Use it only for local
+// development against a classifier on the same host.
+func NewInsecureClassifierClient(endpoint string) (ClassifierClient, error) {
+	if endpoint == "" {
+		return &disabledClassifierClient{}, nil
+	}
+	return dialClassifier(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+func dialClassifier(endpoint string, opts ...grpc.DialOption) (ClassifierClient, error) {
+	conn, err := grpc.NewClient(endpoint, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("grpc dial %s: %w", endpoint, err)
 	}

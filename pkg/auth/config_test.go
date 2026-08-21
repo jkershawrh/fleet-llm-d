@@ -2,16 +2,24 @@ package auth
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+// testSecret is long enough to satisfy MinSecretLength.
+const testSecret = "0123456789abcdef0123456789abcdef"
 
 func TestConfigFromEnv_NoVarsSet(t *testing.T) {
 	// Ensure the relevant env vars are unset.
 	t.Setenv("FLEET_AUTH_SECRET", "")
 	t.Setenv("FLEET_AUTH_TTL", "")
 
-	cfg := ConfigFromEnv()
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if cfg.Enabled {
 		t.Error("expected Enabled to be false when FLEET_AUTH_SECRET is empty")
@@ -25,16 +33,19 @@ func TestConfigFromEnv_NoVarsSet(t *testing.T) {
 }
 
 func TestConfigFromEnv_SecretSet(t *testing.T) {
-	t.Setenv("FLEET_AUTH_SECRET", "my-signing-key")
+	t.Setenv("FLEET_AUTH_SECRET", testSecret)
 	t.Setenv("FLEET_AUTH_TTL", "")
 
-	cfg := ConfigFromEnv()
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if !cfg.Enabled {
 		t.Error("expected Enabled to be true when FLEET_AUTH_SECRET is set")
 	}
-	if cfg.Secret != "my-signing-key" {
-		t.Errorf("expected Secret %q, got %q", "my-signing-key", cfg.Secret)
+	if cfg.Secret != testSecret {
+		t.Errorf("expected Secret %q, got %q", testSecret, cfg.Secret)
 	}
 	if cfg.TokenTTL != 24*time.Hour {
 		t.Errorf("expected default TokenTTL of 24h, got %v", cfg.TokenTTL)
@@ -42,10 +53,13 @@ func TestConfigFromEnv_SecretSet(t *testing.T) {
 }
 
 func TestConfigFromEnv_TTLSet(t *testing.T) {
-	t.Setenv("FLEET_AUTH_SECRET", "key")
+	t.Setenv("FLEET_AUTH_SECRET", testSecret)
 	t.Setenv("FLEET_AUTH_TTL", "1h30m")
 
-	cfg := ConfigFromEnv()
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	expected := 90 * time.Minute
 	if cfg.TokenTTL != expected {
@@ -53,42 +67,62 @@ func TestConfigFromEnv_TTLSet(t *testing.T) {
 	}
 }
 
-func TestConfigFromEnv_TTLInvalidFallsBackToDefault(t *testing.T) {
-	t.Setenv("FLEET_AUTH_SECRET", "key")
+// TestConfigFromEnv_TTLInvalidIsRejected: an unparseable TTL is an operator
+// error. Silently substituting the 24h default hides a misconfiguration that
+// was meant to shorten token lifetime.
+func TestConfigFromEnv_TTLInvalidIsRejected(t *testing.T) {
+	t.Setenv("FLEET_AUTH_SECRET", testSecret)
 	t.Setenv("FLEET_AUTH_TTL", "not-a-duration")
 
-	cfg := ConfigFromEnv()
-
-	if cfg.TokenTTL != 24*time.Hour {
-		t.Errorf("expected default TokenTTL of 24h for invalid TTL, got %v", cfg.TokenTTL)
+	if _, err := ConfigFromEnv(); err == nil {
+		t.Fatal("expected an error for an unparseable FLEET_AUTH_TTL")
 	}
 }
 
 func TestConfigFromEnv_EnabledIsFalseForEmptySecret(t *testing.T) {
 	t.Setenv("FLEET_AUTH_SECRET", "")
 
-	cfg := ConfigFromEnv()
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if cfg.Enabled {
 		t.Error("expected Enabled=false for empty secret")
 	}
 }
 
+// TestConfigFromEnv_ShortSecretIsRejected guards against placeholder secrets
+// being accepted as real ones.
+func TestConfigFromEnv_ShortSecretIsRejected(t *testing.T) {
+	t.Setenv("FLEET_AUTH_SECRET", "changeme")
+	t.Setenv("FLEET_AUTH_TTL", "")
+
+	_, err := ConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected an error for a secret shorter than MinSecretLength")
+	}
+	if !strings.Contains(err.Error(), "at least") {
+		t.Errorf("error should state the minimum length, got: %v", err)
+	}
+}
+
 func TestConfigFromEnv_ReadsSecretFile(t *testing.T) {
-	// Write secret to a temp file (simulates K8s Secret volume mount)
-	tmpFile, err := os.CreateTemp("", "fleet-secret-*")
-	if err != nil {
+	// Write secret to a temp file (simulates K8s Secret volume mount).
+	path := filepath.Join(t.TempDir(), "fleet-secret")
+	if err := os.WriteFile(path, []byte(testSecret+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("file-based-secret-value")
-	tmpFile.Close()
 
-	t.Setenv("FLEET_AUTH_SECRET_FILE", tmpFile.Name())
+	t.Setenv("FLEET_AUTH_SECRET_FILE", path)
 	t.Setenv("FLEET_AUTH_SECRET", "") // env var should be overridden by file
+	t.Setenv("FLEET_AUTH_TTL", "")
 
-	cfg := ConfigFromEnv()
-	if cfg.Secret != "file-based-secret-value" {
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Secret != testSecret {
 		t.Errorf("expected secret from file, got %q", cfg.Secret)
 	}
 	if !cfg.Enabled {
@@ -96,12 +130,37 @@ func TestConfigFromEnv_ReadsSecretFile(t *testing.T) {
 	}
 }
 
-func TestConfigFromEnv_SecretFileFallsBackToEnv(t *testing.T) {
+// TestConfigFromEnv_UnreadableSecretFileFailsClosed is the regression guard
+// for a fail-open path: an unreadable FLEET_AUTH_SECRET_FILE used to be
+// ignored, falling back to the env var or to no secret at all, which set
+// Enabled=false and served every request unauthenticated. Setting the
+// variable is an unambiguous statement that auth is wanted, so a bad path
+// must stop startup rather than quietly disable it.
+func TestConfigFromEnv_UnreadableSecretFileFailsClosed(t *testing.T) {
 	t.Setenv("FLEET_AUTH_SECRET_FILE", "/nonexistent/path")
-	t.Setenv("FLEET_AUTH_SECRET", "env-secret")
+	t.Setenv("FLEET_AUTH_SECRET", testSecret)
+	t.Setenv("FLEET_AUTH_TTL", "")
 
-	cfg := ConfigFromEnv()
-	if cfg.Secret != "env-secret" {
-		t.Errorf("expected env var fallback, got %q", cfg.Secret)
+	_, err := ConfigFromEnv()
+	if err == nil {
+		t.Fatal("an unreadable secret file must be an error, not a silent fallback")
+	}
+	if !strings.Contains(err.Error(), "unreadable") {
+		t.Errorf("error should name the cause, got: %v", err)
+	}
+}
+
+func TestConfigFromEnv_EmptySecretFileFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty-secret")
+	if err := os.WriteFile(path, []byte("   \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("FLEET_AUTH_SECRET_FILE", path)
+	t.Setenv("FLEET_AUTH_SECRET", "")
+	t.Setenv("FLEET_AUTH_TTL", "")
+
+	if _, err := ConfigFromEnv(); err == nil {
+		t.Fatal("an empty secret file must be an error, not a silent fallback")
 	}
 }

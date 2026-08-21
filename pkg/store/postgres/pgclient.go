@@ -116,6 +116,9 @@ func (c *PGClient) EnsureSchema(ctx context.Context) error {
 	start := fmt.Sprintf("%d-%02d-01", now.Year(), now.Month())
 	nextMonth := now.AddDate(0, 1, 0)
 	end := fmt.Sprintf("%d-%02d-01", nextMonth.Year(), nextMonth.Month())
+	// #nosec G201 -- partition name and bounds are formatted from the current
+	// date, not from any caller-supplied value. Postgres does not accept bind
+	// parameters in CREATE TABLE, so this cannot be parameterized.
 	partSQL := fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %s PARTITION OF fleet_events FOR VALUES FROM ('%s') TO ('%s')",
 		partName, start, end)
@@ -723,6 +726,8 @@ func (c *PGClient) QueryEvents(ctx context.Context, filter EventFilter) ([]Event
 	query += " ORDER BY created_at"
 
 	if filter.Limit > 0 {
+		// #nosec G202 -- only a "$N" placeholder is concatenated here; the limit
+		// value travels separately in args and is bound by the driver.
 		query += fmt.Sprintf(" LIMIT $%d", argIdx)
 		args = append(args, filter.Limit)
 	}

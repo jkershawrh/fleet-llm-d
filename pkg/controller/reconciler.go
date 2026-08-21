@@ -306,7 +306,7 @@ func (r *Reconciler) WatchEndpoint() http.HandlerFunc {
 			return
 		}
 
-		slog.Info("watch event: type=%s model=%s", event.Type, event.Object.Model.Name)
+		slog.Info("watch event", "type", event.Type, "model", event.Object.Model.Name)
 
 		switch event.Type {
 		case "ADDED", "MODIFIED":

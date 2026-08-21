@@ -196,7 +196,7 @@ func (w *CRDWatcher) pollRoutingPolicy(ctx context.Context) {
 	}
 	var list struct {
 		Items []struct {
-			Metadata k8sMetadata                       `json:"metadata"`
+			Metadata k8sMetadata                     `json:"metadata"`
 			Spec     v1alpha1.FleetRoutingPolicySpec `json:"spec"`
 		} `json:"items"`
 	}
@@ -305,7 +305,7 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 		if !exists {
 			added++
 			if err := w.reconciler.ReconcilePool(ctx, spec); err != nil {
-				slog.Info("reconcile (add) %q failed: %v", name, err)
+				slog.Warn("reconcile failed", "op", "add", "pool", name, "error", err)
 				continue
 			}
 			nextSeen[name] = spec
@@ -314,13 +314,13 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 
 		changed, err := specsChanged(prev, spec)
 		if err != nil {
-			slog.Info("spec comparison for %q failed: %v", name, err)
+			slog.Warn("spec comparison failed", "pool", name, "error", err)
 			continue
 		}
 		if changed {
 			modified++
 			if err := w.reconciler.ReconcilePool(ctx, spec); err != nil {
-				slog.Info("reconcile (modify) %q failed: %v", name, err)
+				slog.Warn("reconcile failed", "op", "modify", "pool", name, "error", err)
 				continue
 			}
 			nextSeen[name] = spec
@@ -332,7 +332,7 @@ func (w *CRDWatcher) pollOnce(ctx context.Context) (err error) {
 		if _, exists := current[name]; !exists {
 			deleted++
 			if err := w.reconciler.DeletePool(ctx, name); err != nil {
-				slog.Info("reconcile (delete) %q failed: %v", name, err)
+				slog.Warn("reconcile failed", "op", "delete", "pool", name, "error", err)
 				continue
 			}
 			delete(nextSeen, name)

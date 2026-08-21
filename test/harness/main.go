@@ -11,13 +11,13 @@ import (
 
 func main() {
 	var (
-		urlFlag            = flag.String("url", "http://localhost:8080", "Base URL of the fleet-controller API")
-		metricsFlag        = flag.String("metrics", "http://localhost:9090", "Metrics endpoint URL")
-		tokenFlag          = flag.String("token", "", "Bearer token for authenticated endpoints")
-		secretFlag         = flag.String("secret", "", "HMAC secret for generating tokens internally")
-		suiteFlag          = flag.String("suite", "smoke", "Test suite(s) to run: smoke|stress|soak|pressure|chaos|chaos-recovery|redteam|latency|throughput|inference|scale|all")
-		durationFlag       = flag.Duration("duration", 5*time.Minute, "Duration for soak tests")
-		outputFlag         = flag.String("output", "test/harness/results/report.json", "Output path for JSON report")
+		urlFlag             = flag.String("url", "http://localhost:8080", "Base URL of the fleet-controller API")
+		metricsFlag         = flag.String("metrics", "http://localhost:9090", "Metrics endpoint URL")
+		tokenFlag           = flag.String("token", "", "Bearer token for authenticated endpoints")
+		secretFlag          = flag.String("secret", "", "HMAC secret for generating tokens internally")
+		suiteFlag           = flag.String("suite", "smoke", "Test suite(s) to run: smoke|stress|soak|pressure|chaos|chaos-recovery|redteam|latency|throughput|inference|scale|all")
+		durationFlag        = flag.Duration("duration", 5*time.Minute, "Duration for soak tests")
+		outputFlag          = flag.String("output", "test/harness/results/report.json", "Output path for JSON report")
 		inferenceModelFlag  = flag.String("inference-model", "", "Model name for inference tests (skips auto-discovery)")
 		inferenceModelsFlag = flag.String("inference-models", "", "Comma-separated models for multi-model/fairness tests")
 	)

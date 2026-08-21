@@ -13,9 +13,9 @@ func benchmarkInitiateTransfer(b *testing.B, n int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = orch.InitiateTransfer(ctx, TransferRequest{
-			SourceCluster: fmt.Sprintf("source-%d", i%n),
-			TargetCluster: fmt.Sprintf("target-%d", i%n),
-			Model:         "granite-3b",
+			SourceCluster:    fmt.Sprintf("source-%d", i%n),
+			TargetCluster:    fmt.Sprintf("target-%d", i%n),
+			Model:            "granite-3b",
 			MaxBandwidthMbps: 1000,
 		})
 	}
@@ -28,9 +28,9 @@ func benchmarkGetTransferStatus(b *testing.B, n int) {
 	jobIDs := make([]string, n)
 	for i := 0; i < n; i++ {
 		job, _ := orch.InitiateTransfer(ctx, TransferRequest{
-			SourceCluster: fmt.Sprintf("source-%d", i),
-			TargetCluster: fmt.Sprintf("target-%d", i),
-			Model:         "granite-3b",
+			SourceCluster:    fmt.Sprintf("source-%d", i),
+			TargetCluster:    fmt.Sprintf("target-%d", i),
+			Model:            "granite-3b",
 			MaxBandwidthMbps: 1000,
 		})
 		if job != nil {

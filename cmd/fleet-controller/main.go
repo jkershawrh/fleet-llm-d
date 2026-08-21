@@ -22,7 +22,7 @@ func main() {
 	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
 	grpcPort := flag.Int("grpc-port", 0, "gRPC (JSON-RPC) server port; 0 disables")
 	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only)")
-	ledgerMode := flag.String("ledger-mode", string(ledger.ModeMemory), "Ledger backend mode: disabled, memory, http (gRPC is canonical upstream but not yet generated in this binary)")
+	ledgerMode := flag.String("ledger-mode", string(ledger.ModeDisabled), "Ledger backend mode: disabled (default), memory (development only -- evidence is fabricated and lost on restart), http (standalone are-immutable-ledger REST compatibility gateway). gRPC is canonical upstream but not yet generated in this binary")
 	ledgerEndpoint := flag.String("ledger-endpoint", "http://localhost:18099", "standalone immutable-ledger REST gateway endpoint (HTTP compatibility mode only)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file")
@@ -38,6 +38,7 @@ func main() {
 	rateLimit := flag.Float64("rate-limit", 100, "Rate limit in requests per second per IP (0 to disable)")
 	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
+	trustProxyHeaders := flag.Bool("trust-proxy-headers", false, "Honour X-Forwarded-For when identifying clients for rate limiting. Enable ONLY when every request arrives through a proxy that overwrites the header; otherwise clients can forge their own rate-limit identity")
 	_ = flag.String("backends", "", "Deprecated: inference routing moved to Praxis")
 	_ = flag.Int("max-inflight", 0, "Deprecated: load shedding moved to Praxis")
 	allowOperatorJSONIntents := flag.Bool("allow-operator-json-intents", false, "Enable unsigned application/json v2 intent input for development/operator compatibility only")
@@ -65,7 +66,21 @@ func main() {
 
 	slog.Info("fleet-controller starting", "mode", *mode, "log_level", *logLevel, "ledger_mode", *ledgerMode, "ledger", *ledgerEndpoint, "grpc_port", *grpcPort)
 
-	authCfg := auth.ConfigFromEnv()
+	if ledger.Mode(*ledgerMode) == ledger.ModeMemory {
+		slog.Warn("ledger mode is 'memory': receipts are fabricated in-process and lost on restart. " +
+			"This is NOT tamper-evident evidence. Use --ledger-mode=http against the standalone " +
+			"are-immutable-ledger for anything that must be auditable.")
+	}
+
+	authCfg, err := auth.ConfigFromEnv()
+	if err != nil {
+		slog.Error("invalid authentication configuration", "error", err)
+		os.Exit(1)
+	}
+	if !authCfg.Enabled {
+		slog.Warn("authentication is DISABLED: every API request will be served unauthenticated. " +
+			"Set FLEET_AUTH_SECRET or FLEET_AUTH_SECRET_FILE before exposing this controller.")
+	}
 	slog.Info("configuration loaded", "auth_enabled", authCfg.Enabled, "tls_enabled", *tlsCert != "" && *tlsKey != "", "kube_api", *kubeAPI, "namespace", *namespace, "postgres", *pgURL != "", "event_endpoint", *eventEndpoint)
 
 	fc, err := server.NewFleetControllerWithLedgerConfig(ledger.Config{
@@ -133,7 +148,11 @@ func main() {
 	var rl *auth.RateLimiter
 	if *rateLimit > 0 {
 		rl = auth.NewRateLimiter(*rateLimit, *rateBurst)
-		slog.Info("rate limiting enabled", "rate", *rateLimit, "burst", *rateBurst)
+		rl.TrustProxyHeaders(*trustProxyHeaders)
+		defer rl.Stop()
+		slog.Info("rate limiting enabled",
+			"rate", *rateLimit, "burst", *rateBurst,
+			"trust_proxy_headers", *trustProxyHeaders)
 	}
 
 	if err := fc.Run(context.Background(), *port, *metricsPort, *grpcPort, authCfg, *tlsCert, *tlsKey, *mode, rl, server.SplitCSV(*rateLimitExempt)); err != nil {

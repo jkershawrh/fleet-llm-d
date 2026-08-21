@@ -3,15 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
-
-
 )
 
 // fleet-llm-d metrics registry.
@@ -24,9 +21,9 @@ type counter struct {
 	val atomic.Int64
 }
 
-func (c *counter) Inc()          { c.val.Add(1) }
-func (c *counter) Add(n int64)   { c.val.Add(n) }
-func (c *counter) Value() int64  { return c.val.Load() }
+func (c *counter) Inc()         { c.val.Add(1) }
+func (c *counter) Add(n int64)  { c.val.Add(n) }
+func (c *counter) Value() int64 { return c.val.Load() }
 
 type labeledCounter struct {
 	mu   sync.RWMutex
@@ -73,18 +70,11 @@ type gauge struct {
 	val atomic.Int64
 }
 
-func (g *gauge) Set(v int64) { g.val.Store(v) }
-func (g *gauge) Inc()        { g.val.Add(1) }
-func (g *gauge) Dec()        { g.val.Add(-1) }
-func (g *gauge) Add(n int64) { g.val.Add(n) }
+func (g *gauge) Set(v int64)  { g.val.Store(v) }
+func (g *gauge) Inc()         { g.val.Add(1) }
+func (g *gauge) Dec()         { g.val.Add(-1) }
+func (g *gauge) Add(n int64)  { g.val.Add(n) }
 func (g *gauge) Value() int64 { return g.val.Load() }
-
-type floatGauge struct {
-	bits atomic.Uint64
-}
-
-func (fg *floatGauge) Set(v float64)  { fg.bits.Store(math.Float64bits(v)) }
-func (fg *floatGauge) Value() float64 { return math.Float64frombits(fg.bits.Load()) }
 
 // --- Histogram ---
 
@@ -174,7 +164,6 @@ var (
 	// Autoscaler actions by type (scale_up, scale_down, migrate)
 	autoscalerActions = newLabeledCounter()
 
-
 	// Resource gauges
 	clustersGauge = &gauge{}
 	poolsGauge    = &gauge{}
@@ -182,11 +171,11 @@ var (
 	rolloutsGauge = &gauge{}
 
 	// Per-cluster agent-reported metrics (Phase 1c: re-exported as Prometheus)
-	agentThroughput    = newLabeledFloatGauge()
-	agentTTFTP50       = newLabeledFloatGauge()
-	agentTTFTP99       = newLabeledFloatGauge()
-	agentQueueDepth    = newLabeledFloatGauge()
-	agentGPUUtil       = newLabeledFloatGauge()
+	agentThroughput     = newLabeledFloatGauge()
+	agentTTFTP50        = newLabeledFloatGauge()
+	agentTTFTP99        = newLabeledFloatGauge()
+	agentQueueDepth     = newLabeledFloatGauge()
+	agentGPUUtil        = newLabeledFloatGauge()
 	agentKVCacheHitRate = newLabeledFloatGauge()
 
 	// EPP (Endpoint Picker) signals from llm-d

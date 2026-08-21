@@ -82,7 +82,7 @@ Client → Praxis AI Gateway (Oberon) → Fleet Controller → Inference Backend
 | Contract tests | 7 contract tests for API boundaries | `test/contracts/capability_contracts_test.go` |
 | Capability soak | Full ecosystem soak exercising 12 capabilities every 30s | `test/soak/capability_soak.py` |
 | Benchmark suite | 6 benchmark files covering all major packages | `*_bench_test.go` across packages |
-| BDD scenarios | 63 scenarios including ModelPack and Ledger | `test/bdd/features/` |
+| BDD scenarios | 49 scenarios including ModelPack and Ledger | `test/bdd/features/` |
 | Production test runner | Unified runner: smoke → security → pressure → chaos → performance → scale → soak | `test/production/run-all.sh` |
 
 ---

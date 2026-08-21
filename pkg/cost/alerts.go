@@ -7,13 +7,13 @@ import (
 
 // BudgetAlert represents a budget threshold breach for a tenant.
 type BudgetAlert struct {
-	TenantID   string  `json:"tenant_id"`
-	AlertLevel string  `json:"alert_level"` // "warning", "critical", "exceeded"
-	Threshold  float64 `json:"threshold"`   // configured threshold (0.8, 0.95, 1.0)
+	TenantID    string  `json:"tenant_id"`
+	AlertLevel  string  `json:"alert_level"` // "warning", "critical", "exceeded"
+	Threshold   float64 `json:"threshold"`   // configured threshold (0.8, 0.95, 1.0)
 	CurrentCost float64 `json:"current_cost"`
-	Budget     float64 `json:"budget"`
-	Percent    float64 `json:"percent"`
-	Message    string  `json:"message"`
+	Budget      float64 `json:"budget"`
+	Percent     float64 `json:"percent"`
+	Message     string  `json:"message"`
 }
 
 // TenantBudgetConfig defines the budget and alert thresholds for a tenant.

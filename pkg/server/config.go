@@ -78,26 +78,26 @@ func (fc *FleetController) WireModelPlane(apiURL, namespace string) {
 	watcher.OnClusterChange(func(clusters []modelplane.InferenceCluster) {
 		for _, c := range clusters {
 			if _, err := bridge.RecordClusterProvisioned(context.Background(), c); err != nil {
-				slog.Info("failed to record cluster provisioned %s: %v", c.Name, err)
+				slog.Warn("failed to record cluster provisioned", "cluster", c.Name, "error", err)
 			}
 		}
 	})
 	watcher.OnDeploymentChange(func(deployments []modelplane.ModelDeployment) {
 		for _, d := range deployments {
 			if _, err := bridge.RecordDeploymentCreated(context.Background(), d); err != nil {
-				slog.Info("failed to record deployment created %s: %v", d.Name, err)
+				slog.Warn("failed to record deployment created", "deployment", d.Name, "error", err)
 			}
 		}
 	})
 	watcher.OnEndpointChange(func(endpoints []modelplane.ModelEndpoint) {
 		for _, e := range endpoints {
 			if _, err := bridge.RecordEndpointReady(context.Background(), e); err != nil {
-				slog.Info("failed to record endpoint ready %s: %v", e.Name, err)
+				slog.Warn("failed to record endpoint ready", "endpoint", e.Name, "error", err)
 			}
 		}
 	})
 
 	fc.ModelPlaneWatcher = watcher
 	fc.ModelPlaneBridge = bridge
-	slog.Info("ModelPlane integration enabled (api=%s, namespace=%s)", apiURL, namespace)
+	slog.Info("ModelPlane integration enabled", "api", apiURL, "namespace", namespace)
 }

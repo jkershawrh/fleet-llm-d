@@ -7,10 +7,10 @@ import (
 
 func TestInitiateTransfer(t *testing.T) {
 	tests := []struct {
-		name    string
-		request TransferRequest
+		name      string
+		request   TransferRequest
 		wantPhase string
-		wantErr bool
+		wantErr   bool
 	}{
 		{
 			name: "initiate transfer between clusters",

@@ -220,11 +220,11 @@ func RunRedTeam(cfg Config) SuiteResult {
 				method string
 				path   string
 			}{
-				{"DELETE", "/api/v1/clusters"},        // DELETE on collection
-				{"PUT", "/api/v1/clusters"},            // PUT not supported
-				{"PATCH", "/api/v1/clusters"},          // PATCH not supported
-				{"POST", "/healthz"},                   // POST on health check
-				{"DELETE", "/api/v1/pools"},             // DELETE on pools
+				{"DELETE", "/api/v1/clusters"}, // DELETE on collection
+				{"PUT", "/api/v1/clusters"},    // PUT not supported
+				{"PATCH", "/api/v1/clusters"},  // PATCH not supported
+				{"POST", "/healthz"},           // POST on health check
+				{"DELETE", "/api/v1/pools"},    // DELETE on pools
 			}
 			allHandled := true
 			for _, wm := range wrongMethods {

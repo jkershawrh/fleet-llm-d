@@ -96,11 +96,11 @@ func TestCompareGPUCosts_SortedByCost(t *testing.T) {
 	pt := DefaultPricingTable()
 
 	throughputs := map[string]float64{
-		"H200":  2000,
-		"A100":  1000,
-		"CPU":   50,
-		"L40":   500,
-		"B200":  2500,
+		"H200":   2000,
+		"A100":   1000,
+		"CPU":    50,
+		"L40":    500,
+		"B200":   2500,
 		"MI300X": 1500,
 	}
 

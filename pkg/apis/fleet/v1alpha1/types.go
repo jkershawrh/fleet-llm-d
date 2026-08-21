@@ -6,7 +6,7 @@ import (
 
 // FleetInferencePoolSpec declares a model's fleet-wide deployment intent.
 type FleetInferencePoolSpec struct {
-	Model     ModelSpec     `json:"model"`
+	Model     ModelSpec    `json:"model"`
 	Placement PlacementRef `json:"placement"`
 	Routing   RoutingRef   `json:"routing,omitempty"`
 	Scaling   ScalingRef   `json:"scaling,omitempty"`
@@ -49,8 +49,8 @@ type InferencePoolTemplate struct {
 }
 
 type InferencePoolTemplateSpec struct {
-	TargetPorts        []int               `json:"targetPorts"`
-	EndpointPickerRef  EndpointPickerRef   `json:"endpointPickerRef,omitempty"`
+	TargetPorts       []int             `json:"targetPorts"`
+	EndpointPickerRef EndpointPickerRef `json:"endpointPickerRef,omitempty"`
 }
 
 type EndpointPickerRef struct {
@@ -70,11 +70,11 @@ type CanarySpec struct {
 // ResolvedModelConfig captures the key fields from a resolved ModelPack
 // manifest, surfaced in the pool status for observability.
 type ResolvedModelConfig struct {
-	ParamSize      string  `json:"paramSize,omitempty"`
-	Precision      string  `json:"precision,omitempty"`
-	Format         string  `json:"format,omitempty"`
-	GPUMemoryGB    float64 `json:"gpuMemoryGB,omitempty"`
-	RecommendedGPUs int    `json:"recommendedGPUs,omitempty"`
+	ParamSize       string  `json:"paramSize,omitempty"`
+	Precision       string  `json:"precision,omitempty"`
+	Format          string  `json:"format,omitempty"`
+	GPUMemoryGB     float64 `json:"gpuMemoryGB,omitempty"`
+	RecommendedGPUs int     `json:"recommendedGPUs,omitempty"`
 }
 
 // FleetInferencePoolStatus is the observed state.
@@ -149,9 +149,9 @@ type TenantProfileSpec struct {
 }
 
 type TenantQuota struct {
-	MaxTokensPerMinute    int64    `json:"maxTokensPerMinute"`
-	MaxConcurrentRequests int      `json:"maxConcurrentRequests"`
-	MaxModels             int      `json:"maxModels"`
+	MaxTokensPerMinute    int64     `json:"maxTokensPerMinute"`
+	MaxConcurrentRequests int       `json:"maxConcurrentRequests"`
+	MaxModels             int       `json:"maxModels"`
 	GPUBudget             GPUBudget `json:"gpuBudget,omitempty"`
 }
 
@@ -187,9 +187,9 @@ type TenantUsage struct {
 
 // FleetRoutingPolicySpec defines cross-cluster traffic routing.
 type FleetRoutingPolicySpec struct {
-	Strategy    string            `json:"strategy"`
-	Rules       []RoutingRule     `json:"rules,omitempty"`
-	HealthCheck *HealthCheckSpec  `json:"healthCheck,omitempty"`
+	Strategy    string           `json:"strategy"`
+	Rules       []RoutingRule    `json:"rules,omitempty"`
+	HealthCheck *HealthCheckSpec `json:"healthCheck,omitempty"`
 }
 
 type RoutingRule struct {
@@ -254,10 +254,10 @@ type ScaleToZeroSpec struct {
 
 // ModelLifecycleSpec defines fleet-wide model deployment lifecycle.
 type ModelLifecycleSpec struct {
-	Model        ModelRef         `json:"model"`
-	FleetPoolRef string           `json:"fleetPoolRef"`
-	Strategy     RolloutStrategy  `json:"strategy"`
-	Clusters     *ClusterOrder    `json:"clusters,omitempty"`
+	Model        ModelRef        `json:"model"`
+	FleetPoolRef string          `json:"fleetPoolRef"`
+	Strategy     RolloutStrategy `json:"strategy"`
+	Clusters     *ClusterOrder   `json:"clusters,omitempty"`
 }
 
 type ModelRef struct {
@@ -266,21 +266,21 @@ type ModelRef struct {
 }
 
 type RolloutStrategy struct {
-	Type    string         `json:"type"`
-	Canary  *CanaryConfig  `json:"canary,omitempty"`
+	Type   string        `json:"type"`
+	Canary *CanaryConfig `json:"canary,omitempty"`
 }
 
 type CanaryConfig struct {
-	InitialWeight   int     `json:"initialWeight"`
-	WeightIncrement int     `json:"weightIncrement"`
-	Interval        string  `json:"interval"`
-	SLOGate         *SLOGate `json:"sloGate,omitempty"`
-	RollbackOnFailure bool  `json:"rollbackOnFailure"`
+	InitialWeight     int      `json:"initialWeight"`
+	WeightIncrement   int      `json:"weightIncrement"`
+	Interval          string   `json:"interval"`
+	SLOGate           *SLOGate `json:"sloGate,omitempty"`
+	RollbackOnFailure bool     `json:"rollbackOnFailure"`
 }
 
 type SLOGate struct {
-	MaxTTFTRegression      string `json:"maxTTFTRegression"`
-	MaxErrorRateIncrease   string `json:"maxErrorRateIncrease"`
+	MaxTTFTRegression    string `json:"maxTTFTRegression"`
+	MaxErrorRateIncrease string `json:"maxErrorRateIncrease"`
 }
 
 type ClusterOrder struct {
@@ -288,9 +288,9 @@ type ClusterOrder struct {
 }
 
 type ModelLifecycleStatus struct {
-	Phase          string                `json:"phase"`
-	CurrentWeight  int                   `json:"currentWeight"`
-	ClusterStatus  []ClusterRolloutStatus `json:"clusterStatus,omitempty"`
+	Phase         string                 `json:"phase"`
+	CurrentWeight int                    `json:"currentWeight"`
+	ClusterStatus []ClusterRolloutStatus `json:"clusterStatus,omitempty"`
 }
 
 type ClusterRolloutStatus struct {
@@ -302,9 +302,9 @@ type ClusterRolloutStatus struct {
 
 // KVCacheTransferPolicySpec defines cross-cluster KV cache migration.
 type KVCacheTransferPolicySpec struct {
-	Triggers  []TransferTrigger  `json:"triggers"`
-	Transport TransportSpec      `json:"transport"`
-	Retention RetentionSpec      `json:"retention,omitempty"`
+	Triggers  []TransferTrigger `json:"triggers"`
+	Transport TransportSpec     `json:"transport"`
+	Retention RetentionSpec     `json:"retention,omitempty"`
 }
 
 type TransferTrigger struct {
@@ -313,8 +313,8 @@ type TransferTrigger struct {
 }
 
 type TransportSpec struct {
-	Protocol        string `json:"protocol"`
-	MaxBandwidthMbps int   `json:"maxBandwidthMbps,omitempty"`
+	Protocol         string `json:"protocol"`
+	MaxBandwidthMbps int    `json:"maxBandwidthMbps,omitempty"`
 }
 
 type RetentionSpec struct {

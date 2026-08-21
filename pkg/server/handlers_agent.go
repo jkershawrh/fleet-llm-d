@@ -36,10 +36,10 @@ type agentMetricsReport struct {
 	KVCacheHitRate float64 `json:"kv_cache_hit_rate"`
 
 	// EPP (Endpoint Picker) signals from llm-d
-	PoolSaturation   float64 `json:"pool_saturation"`
-	ReadyEndpoints   int     `json:"ready_endpoints"`
+	PoolSaturation     float64 `json:"pool_saturation"`
+	ReadyEndpoints     int     `json:"ready_endpoints"`
 	KVCacheUtilization float64 `json:"kv_cache_utilization"`
-	InflightRequests int     `json:"inflight_requests"`
+	InflightRequests   int     `json:"inflight_requests"`
 }
 
 type agentEventReport struct {
@@ -177,21 +177,23 @@ func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	sample := collector.PoolMetrics{
+		PoolName:           agentAggregatePoolName,
+		QueueDepth:         report.QueueDepth,
+		TTFT_P50_Ms:        report.TTFTP50MS,
+		TTFT_P99_Ms:        report.TTFTP99MS,
+		Throughput_TPS:     report.ThroughputTPS,
+		GPUUtilization:     report.GPUUtilization,
+		KVCacheHitRate:     report.KVCacheHitRate,
+		PoolSaturation:     report.PoolSaturation,
+		ReadyEndpoints:     report.ReadyEndpoints,
+		KVCacheUtilization: report.KVCacheUtilization,
+		InflightRequests:   report.InflightRequests,
+	}
+
 	fc.MetricsCollector.Add(collector.ClusterMetrics{
 		ClusterID: report.ClusterID,
-		Pools: []collector.PoolMetrics{{
-			PoolName:           "agent-aggregate",
-			QueueDepth:         report.QueueDepth,
-			TTFT_P50_Ms:        report.TTFTP50MS,
-			TTFT_P99_Ms:        report.TTFTP99MS,
-			Throughput_TPS:     report.ThroughputTPS,
-			GPUUtilization:     report.GPUUtilization,
-			KVCacheHitRate:     report.KVCacheHitRate,
-			PoolSaturation:     report.PoolSaturation,
-			ReadyEndpoints:     report.ReadyEndpoints,
-			KVCacheUtilization: report.KVCacheUtilization,
-			InflightRequests:   report.InflightRequests,
-		}},
+		Pools:     fc.attributeAgentSample(report.ClusterID, sample),
 		Timestamp: time.Now().UTC(),
 	})
 	UpdateAgentMetrics(report.ClusterID, report.ThroughputTPS, report.TTFTP50MS, report.TTFTP99MS,
@@ -292,4 +294,55 @@ func decodeAgentReport(w http.ResponseWriter, r *http.Request, target interface{
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	return nil
+}
+
+// agentAggregatePoolName is the synthetic pool name carrying a cluster-wide
+// agent sample. Per-cluster agents report one aggregate for the whole node
+// rather than a breakdown per inference pool, so this entry preserves the
+// raw reading for cluster-scoped consumers (routing health, the model
+// metrics endpoint) that do not care about pool attribution.
+const agentAggregatePoolName = "agent-aggregate"
+
+// attributeAgentSample expands a cluster-wide agent sample into the pool
+// entries the rest of the control plane reads.
+//
+// Consumers such as the autoscaler select metrics by FleetInferencePool name
+// (see metricsForPool). An agent reports only a cluster aggregate, so without
+// this expansion the sample would be stored under agentAggregatePoolName and
+// would never match any real pool — leaving the autoscaling loop with nothing
+// to act on. Here the sample is copied under the name of every pool currently
+// placed on the reporting cluster, alongside the untouched aggregate entry.
+//
+// The copies are an approximation: every pool on a cluster is credited with
+// that cluster's aggregate load. That is the correct conservative reading for
+// scaling decisions (a saturated cluster saturates everything it hosts), but
+// it is not per-pool telemetry. Replacing it with a real per-pool breakdown
+// from the agent is tracked separately.
+func (fc *FleetController) attributeAgentSample(clusterID string, sample collector.PoolMetrics) []collector.PoolMetrics {
+	pools := []collector.PoolMetrics{sample}
+	if fc.Reconciler == nil {
+		return pools
+	}
+	for _, pool := range fc.Reconciler.ListPools() {
+		if pool.Name == "" || pool.Name == agentAggregatePoolName {
+			continue
+		}
+		if !placedOn(pool.DesiredClusters, clusterID) && !placedOn(pool.ActualClusters, clusterID) {
+			continue
+		}
+		attributed := sample
+		attributed.PoolName = pool.Name
+		attributed.Model = pool.Model
+		pools = append(pools, attributed)
+	}
+	return pools
+}
+
+func placedOn(clusters []string, clusterID string) bool {
+	for _, c := range clusters {
+		if c == clusterID {
+			return true
+		}
+	}
+	return false
 }

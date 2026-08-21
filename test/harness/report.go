@@ -10,13 +10,13 @@ import (
 
 // Report aggregates results from all suites that were run.
 type Report struct {
-	Timestamp   string        `json:"timestamp"`
-	Target      string        `json:"target"`
-	TotalPassed int           `json:"total_passed"`
-	TotalFailed int           `json:"total_failed"`
-	TotalSkipped int          `json:"total_skipped"`
-	Duration    time.Duration `json:"duration_ns"`
-	Suites      []SuiteResult `json:"suites"`
+	Timestamp    string        `json:"timestamp"`
+	Target       string        `json:"target"`
+	TotalPassed  int           `json:"total_passed"`
+	TotalFailed  int           `json:"total_failed"`
+	TotalSkipped int           `json:"total_skipped"`
+	Duration     time.Duration `json:"duration_ns"`
+	Suites       []SuiteResult `json:"suites"`
 }
 
 // GenerateReport creates a Report from a slice of suite results.
