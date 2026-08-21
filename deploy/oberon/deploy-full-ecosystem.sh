@@ -55,7 +55,7 @@ metadata:
 type: Opaque
 stringData:
   password: "${PG_PASS}"
-  pg-url: "postgres://fleet:${PG_PASS}@fleet-postgres.fleet-llm-d.svc:5432/fleet_llm_d?sslmode=prefer"
+  pg-url: "postgres://fleet:${PG_PASS}@fleet-postgres.fleet-llm-d.svc:5432/fleet_llm_d?sslmode=require"
 ---
 apiVersion: v1
 kind: Secret
