@@ -71,6 +71,8 @@ type kubeconfigUser struct {
 // parseKubeconfig reads a JSON-format kubeconfig file and extracts the API
 // server URL and bearer token from the first cluster and user entries.
 func parseKubeconfig(path string) (server, token, caCert string, err error) {
+	// #nosec G304 -- kubeconfig path is operator-supplied configuration,
+	// never derived from request input.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", "", "", fmt.Errorf("reading kubeconfig: %w", err)

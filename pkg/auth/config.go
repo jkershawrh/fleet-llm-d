@@ -34,7 +34,8 @@ func ConfigFromEnv() (Config, error) {
 
 	// FLEET_AUTH_SECRET_FILE takes precedence (for K8s Secret volume mounts).
 	if secretFile := os.Getenv("FLEET_AUTH_SECRET_FILE"); secretFile != "" {
-		// #nosec G703 -- the operator explicitly configures the mounted Secret path.
+		// #nosec G304 G703 -- path comes from FLEET_AUTH_SECRET_FILE, which only
+		// the operator sets; it is deployment configuration, not request input.
 		data, err := os.ReadFile(secretFile)
 		if err != nil {
 			return Config{}, fmt.Errorf("FLEET_AUTH_SECRET_FILE %q is set but unreadable: %w", secretFile, err)
