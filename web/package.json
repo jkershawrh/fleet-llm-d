@@ -6,7 +6,8 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint --config eslint.config.mjs \"src/**/*.{js,jsx,ts,tsx}\""
+    "lint": "eslint --config eslint.config.mjs \"src/**/*.{js,jsx,ts,tsx}\"",
+    "test": "vitest run"
   },
   "dependencies": {
     "next": "16.3.0",
@@ -15,16 +16,21 @@
     "recharts": "^2.12.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^20",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@typescript-eslint/eslint-plugin": "^8.63.0",
     "@typescript-eslint/parser": "^8.63.0",
+    "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.0",
+    "jsdom": "^29.1.1",
     "postcss": "^8",
     "tailwindcss": "^3.4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.11"
   }
 }

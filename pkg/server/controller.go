@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,7 +43,7 @@ type FleetController struct {
 	// Capability components
 	Solver               solver.ConstraintSolver
 	Scorer               *scorer.CompositeScorer
-	RoutingEvaluator     policy.RoutingPolicyEvaluator
+	Routing              *RoutingController
 	LoadBalancer         balancer.LoadBalancer
 	MetricsCollector     collector.MetricsCollector
 	Optimizer            optimizer.FleetOptimizer
@@ -106,17 +105,6 @@ type FleetController struct {
 
 	// SWIMSyncAdapter reads GridSite health status back into FleetCluster records.
 	SWIMSyncAdapter *client.SWIMSyncAdapter
-
-	// Session affinity table for multi-turn conversation routing
-	SessionTable *routing.SessionAffinityTable
-
-	// Semantic classifier for prompt complexity classification
-	ClassifierClient classifier.ClassifierClient
-	ClassifierCache  *classifier.ClassificationCache
-
-	// Per-session tier tracking for escalation detection
-	sessionTierMu sync.RWMutex
-	sessionTiers  map[string]string
 
 	// Routing state — tracks which clusters were healthy to avoid redundant Praxis updates.
 	lastRoutingFingerprint string
@@ -239,7 +227,12 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 			{Scorer: scorer.NewLocalityScorer(), Weight: 0.2},
 			{Scorer: scorer.NewKVCacheAffinityScorer(), Weight: 0.2},
 		}),
-		RoutingEvaluator:     policy.NewRoutingPolicyEvaluator(),
+		Routing: &RoutingController{
+			Evaluator:        policy.NewRoutingPolicyEvaluator(),
+			SessionTable:     routing.NewSessionAffinityTable(30 * time.Minute),
+			ClassifierClient: classifierClient,
+			ClassifierCache:  classifier.NewClassificationCache(30 * time.Minute),
+		},
 		LoadBalancer:         balancer.NewWeightedBalancer(),
 		MetricsCollector:     metricsCollector,
 		Optimizer:            optimizer.NewFleetOptimizer(),
@@ -267,9 +260,6 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		PraxisOverlay:      praxisOverlay,
 		GridCRDTranslator:  gridTranslator,
 		SWIMSyncAdapter:    swimSync,
-		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
-		ClassifierClient:   classifierClient,
-		ClassifierCache:    classifier.NewClassificationCache(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,
 		TenantRepo:         tenantRepo,

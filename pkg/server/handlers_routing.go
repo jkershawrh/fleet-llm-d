@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
-	"github.com/llm-d/fleet-llm-d/pkg/classifier"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
 )
 
@@ -50,7 +48,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 	start := time.Now()
 	ctx := r.Context()
 
-	result, err := fc.classifyPrompt(ctx, req.Text, req.RequestID)
+	result, err := fc.Routing.ClassifyPrompt(ctx, req.Text, req.RequestID)
 	if err != nil {
 		slog.Warn("classification failed, routing without semantic signal", "error", err)
 	}
@@ -73,10 +71,10 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 	// Downgrading never breaks affinity — overspending on a big model is
 	// better than losing coherence.
 	escalated := false
-	if req.SessionID != "" && fc.SessionTable != nil {
-		if boundCluster, found := fc.SessionTable.Lookup(req.SessionID); found {
-			if result != nil && tierRank(result.TopLabel) > fc.sessionTierRank(req.SessionID) {
-				fc.SessionTable.Unbind(req.SessionID)
+	if req.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
+		if boundCluster, found := fc.Routing.SessionTable.Lookup(req.SessionID); found {
+			if result != nil && tierRank(result.TopLabel) > fc.Routing.SessionTierRank(req.SessionID) {
+				fc.Routing.SessionTable.Unbind(req.SessionID)
 				escalated = true
 				slog.Info("session tier escalated",
 					"session", req.SessionID,
@@ -104,17 +102,17 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 	health := fc.BuildClusterHealth(ctx)
 	routingPolicy := fc.getRoutingPolicy(req.Policy)
 
-	decision, err := fc.RoutingEvaluator.Evaluate(ctx, routingReq, health, routingPolicy)
+	decision, err := fc.Routing.Evaluator.Evaluate(ctx, routingReq, health, routingPolicy)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("routing failed: %v", err))
 		return
 	}
 
 	// Bind session to the selected cluster for future turns.
-	if req.SessionID != "" && fc.SessionTable != nil {
-		fc.SessionTable.Bind(req.SessionID, decision.TargetCluster)
+	if req.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
+		fc.Routing.SessionTable.Bind(req.SessionID, decision.TargetCluster)
 		if result != nil {
-			fc.setSessionTier(req.SessionID, result.TopLabel)
+			fc.Routing.SetSessionTier(req.SessionID, result.TopLabel)
 		}
 	}
 
@@ -140,31 +138,6 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (fc *FleetController) classifyPrompt(ctx context.Context, text, requestID string) (*classifier.ClassifyResult, error) {
-	if fc.ClassifierClient == nil {
-		return nil, nil
-	}
-
-	if cached, ok := fc.ClassifierCache.Get(text); ok {
-		return cached, nil
-	}
-
-	if requestID == "" {
-		requestID = fmt.Sprintf("fleet-%d", time.Now().UnixNano())
-	}
-
-	result, err := fc.ClassifierClient.Classify(ctx, text, requestID)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return nil, nil
-	}
-
-	fc.ClassifierCache.Put(text, result)
-	return result, nil
-}
-
 func (fc *FleetController) getRoutingPolicy(name string) v1alpha1.FleetRoutingPolicySpec {
 	if fc.CRDWatcher != nil {
 		if p := fc.CRDWatcher.GetRoutingPolicy(name); p != nil {
@@ -187,27 +160,3 @@ func tierRank(label string) int {
 	return -1
 }
 
-func (fc *FleetController) sessionTierRank(sessionID string) int {
-	fc.sessionTierMu.RLock()
-	defer fc.sessionTierMu.RUnlock()
-	if tier, ok := fc.sessionTiers[sessionID]; ok {
-		return tierRank(tier)
-	}
-	return -1
-}
-
-func (fc *FleetController) setSessionTier(sessionID, tier string) {
-	fc.sessionTierMu.Lock()
-	defer fc.sessionTierMu.Unlock()
-	if fc.sessionTiers == nil {
-		fc.sessionTiers = make(map[string]string)
-	}
-	fc.sessionTiers[sessionID] = tier
-}
-
-func (fc *FleetController) semanticTierDistribution() map[string]float64 {
-	if fc.ClassifierCache == nil {
-		return nil
-	}
-	return fc.ClassifierCache.TierDistribution()
-}

@@ -81,8 +81,8 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if fc.SessionTable != nil {
-		fc.SessionTable.UnbindCluster(clusterID)
+	if fc.Routing != nil && fc.Routing.SessionTable != nil {
+		fc.Routing.SessionTable.UnbindCluster(clusterID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

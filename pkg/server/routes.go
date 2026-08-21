@@ -128,7 +128,7 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 			ClustersFunc:  func() int { return int(clustersGauge.Value()) },
 			PoolsFunc:     func() int { return int(poolsGauge.Value()) },
 			TenantsFunc:   func() int { return int(tenantsGauge.Value()) },
-			SemanticTiers: fc.semanticTierDistribution,
+			SemanticTiers: fc.Routing.SemanticTierDistribution,
 		}
 		mux.HandleFunc("GET /api/v1/metrics/platform", metrics.HandlePlatformMetrics(platformCollector))
 	}
