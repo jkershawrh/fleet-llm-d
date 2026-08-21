@@ -24,16 +24,6 @@ func ConvertFleetInferencePoolFromV1Alpha1(in v1alpha1.FleetInferencePoolSpec, h
 	return out, nil
 }
 
-func ConvertPlacementPolicyFromV1Alpha1(in v1alpha1.PlacementPolicySpec) (PlacementPolicySpec, error) {
-	var out PlacementPolicySpec
-	return out, convertJSON(in, &out)
-}
-
-func ConvertTenantProfileFromV1Alpha1(in v1alpha1.TenantProfileSpec) (TenantProfileSpec, error) {
-	var out TenantProfileSpec
-	return out, convertJSON(in, &out)
-}
-
 func ConvertFleetRoutingPolicyFromV1Alpha1(in v1alpha1.FleetRoutingPolicySpec) (FleetRoutingPolicySpec, error) {
 	var out FleetRoutingPolicySpec
 	if err := convertJSON(in, &out); err != nil {
@@ -41,16 +31,6 @@ func ConvertFleetRoutingPolicyFromV1Alpha1(in v1alpha1.FleetRoutingPolicySpec) (
 	}
 	out.Provider = RoutingProviderPraxisGateway
 	return out, nil
-}
-
-func ConvertFleetScalingPolicyFromV1Alpha1(in v1alpha1.FleetScalingPolicySpec) (FleetScalingPolicySpec, error) {
-	var out FleetScalingPolicySpec
-	return out, convertJSON(in, &out)
-}
-
-func ConvertModelLifecycleFromV1Alpha1(in v1alpha1.ModelLifecycleSpec) (ModelLifecycleSpec, error) {
-	var out ModelLifecycleSpec
-	return out, convertJSON(in, &out)
 }
 
 func ConvertKVCacheTransferPolicyFromV1Alpha1(in v1alpha1.KVCacheTransferPolicySpec) (KVCacheTransferPolicySpec, error) {
@@ -77,28 +57,6 @@ func ConvertFleetInferencePoolToV1Alpha1(in FleetInferencePoolSpec) (v1alpha1.Fl
 	var out v1alpha1.FleetInferencePoolSpec
 	if in.InfrastructureProvider != InfrastructureProviderDirectAgent {
 		return out, fmt.Errorf("cannot down-convert infrastructureProvider %q to v1alpha1", in.InfrastructureProvider)
-	}
-	if err := rejectAuthorization(in.AuthorizationRef); err != nil {
-		return out, err
-	}
-	return out, convertJSON(in, &out)
-}
-
-func ConvertFleetRoutingPolicyToV1Alpha1(in FleetRoutingPolicySpec) (v1alpha1.FleetRoutingPolicySpec, error) {
-	var out v1alpha1.FleetRoutingPolicySpec
-	if in.Provider != RoutingProviderFleetGateway {
-		return out, fmt.Errorf("cannot down-convert routing provider %q to v1alpha1", in.Provider)
-	}
-	if err := rejectAuthorization(in.AuthorizationRef); err != nil {
-		return out, err
-	}
-	return out, convertJSON(in, &out)
-}
-
-func ConvertKVCacheTransferPolicyToV1Alpha1(in KVCacheTransferPolicySpec) (v1alpha1.KVCacheTransferPolicySpec, error) {
-	var out v1alpha1.KVCacheTransferPolicySpec
-	if in.Provider != KVCacheProviderFleetTransfer {
-		return out, fmt.Errorf("cannot down-convert KV provider %q to v1alpha1", in.Provider)
 	}
 	if err := rejectAuthorization(in.AuthorizationRef); err != nil {
 		return out, err
