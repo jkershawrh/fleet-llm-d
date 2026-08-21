@@ -1062,6 +1062,45 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  # ---------- semantic classification + routing ----------
+  /api/v1/route:
+    post:
+      operationId: classifyAndRoute
+      summary: Classify a prompt and select a target cluster
+      description: |
+        Classifies the prompt to derive a complexity tier, then selects a
+        target cluster using the active FleetRoutingPolicy. When a session_id
+        is supplied the binding is sticky: an existing binding is reused
+        unless the new turn classifies into a higher tier, which rebinds the
+        session to a cluster that can serve it.
+
+        Classification is best-effort. If the classifier is unavailable the
+        request is still routed, without a semantic signal.
+      tags: [routing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRequest"
+      responses:
+        "200":
+          description: Selected target cluster and the signals behind the choice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: No healthy cluster is available to serve the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # Note: /v1/chat/completions and /v1/completions are served by Praxis AI
   # (the inference data plane), not the fleet-controller. They are not part
   # of this API specification.
@@ -1200,6 +1239,80 @@ components:
 
   # ---------- schemas ----------
   schemas:
+    RouteRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: Prompt text to classify. Required.
+        request_id:
+          type: string
+          description: Caller-supplied correlation ID, echoed to the classifier.
+        model:
+          type: string
+          description: Requested model name, used to constrain candidate clusters.
+        tenant_id:
+          type: string
+          description: Tenant the request is billed to.
+        session_id:
+          type: string
+          description: |
+            Conversation identifier. When present, routing is sticky for the
+            life of the session unless the tier escalates.
+        policy:
+          type: string
+          description: |
+            Name of a FleetRoutingPolicy to apply. Defaults to the active
+            policy when omitted.
+      example:
+        text: "Prove that every finite integral domain is a field."
+        model: granite-8b
+        tenant_id: research
+        session_id: sess-4417
+
+    RouteResponse:
+      type: object
+      required: [target_cluster, reason, latency_ms]
+      properties:
+        target_cluster:
+          type: string
+          description: Cluster ID selected to serve the request.
+        reason:
+          type: string
+          description: Why this cluster was chosen.
+        semantic_label:
+          type: string
+          description: Complexity tier returned by the classifier.
+        semantic_score:
+          type: number
+          format: double
+          description: Classifier confidence for the top label.
+        semantic_margin:
+          type: number
+          format: double
+          description: Gap between the top and second-ranked label.
+        classifier_id:
+          type: string
+          description: Identifier of the classifier that produced the signal.
+        headers_to_inject:
+          type: object
+          additionalProperties:
+            type: string
+          description: Headers the caller should attach to the upstream request.
+        latency_ms:
+          type: number
+          format: double
+          description: Time spent classifying and routing.
+      example:
+        target_cluster: brutus-h100
+        reason: "tier REASONING requires GPU capacity"
+        semantic_label: REASONING
+        semantic_score: 0.91
+        semantic_margin: 0.44
+        classifier_id: semantic-classifier-v2
+        latency_ms: 12.4
+
     Error:
       type: object
       required: [error]
