@@ -32,14 +32,14 @@ const (
 )
 
 var (
-	gclDigestPattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	gclDigestPattern           = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	gclHMACSignaturePattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 	gclEd25519SignaturePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{86}$`)
-	gclUUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	gclSourcePattern      = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:.+$`)
-	gclSPIFFEPattern      = regexp.MustCompile(`^spiffe://[a-z0-9.-]+(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*$`)
-	gclTrustDomainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
-	gclTraceparentPattern = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
+	gclUUIDPattern             = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	gclSourcePattern           = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:.+$`)
+	gclSPIFFEPattern           = regexp.MustCompile(`^spiffe://[a-z0-9.-]+(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*$`)
+	gclTrustDomainPattern      = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
+	gclTraceparentPattern      = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
 )
 
 var gclActionClasses = map[string]IntentType{
