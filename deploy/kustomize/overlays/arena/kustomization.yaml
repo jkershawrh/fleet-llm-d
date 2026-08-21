@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fleet-llm-d
+resources:
+  - ../../base-spoke
+images:
+  - name: ghcr.io/llm-d/fleet-agent
+    newName: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-agent
+    newTag: latest
+patches:
+  - target:
+      kind: Deployment
+      name: fleet-agent
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: fleet-agent
+      spec:
+        template:
+          spec:
+            containers:
+              - name: fleet-agent
+                imagePullPolicy: Always
+                env:
+                  - name: FLEET_CONTROL_PLANE_URL
+                    value: https://fleet-controller-fleet-llm-d.apps.oberon.fm2aihpcsed.com
+                  - name: FLEET_CLUSTER_ID
+                    value: arena-xeon6
+                  - name: FLEET_TLS_INSECURE_SKIP_VERIFY
+                    value: "true"
+                  - name: FLEET_CLUSTER_HEALTH_URL
+                    value: http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready
+                  - name: FLEET_CLUSTER_INFERENCE_URL
+                    value: http://ovms-granite-2b.fleet-llm-d.svc:8080
+                  - name: FLEET_UPSTREAM_URL
+                    value: http://ovms-granite-2b.fleet-llm-d.svc:8080

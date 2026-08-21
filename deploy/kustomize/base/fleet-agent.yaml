@@ -61,11 +61,7 @@ spec:
             - name: FLEET_CONTROL_PLANE_URL
               value: http://fleet-controller.fleet-llm-d.svc.cluster.local:8080
             - name: FLEET_CLUSTER_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: fleet-cluster-identity
-                  key: cluster-id
-                  optional: false
+              value: FLEET_CLUSTER_ID_PLACEHOLDER
             - name: FLEET_PROXY_PORT
               value: "8090"
           ports:
