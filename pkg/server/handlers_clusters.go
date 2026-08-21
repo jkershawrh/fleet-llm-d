@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
@@ -96,7 +96,7 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := fc.registerCluster(r.Context(), reg); err != nil {
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "conflict") {
+		if errors.Is(err, postgres.ErrClusterAlreadyExists) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			errorsTotal.Inc()

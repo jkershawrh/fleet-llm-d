@@ -168,7 +168,7 @@ func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusServiceUnavailable, "GCL DecisionPackage verification is not configured")
 			return
 		}
-		payload, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		payload, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
 		if readErr != nil {
 			writeError(w, http.StatusBadRequest, "read GCL DecisionPackage CloudEvent: "+readErr.Error())
 			return
@@ -183,7 +183,7 @@ func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusUnsupportedMediaType, "application/json operator compatibility is disabled; submit a verified GCL DecisionPackage CloudEvent")
 			return
 		}
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&intent); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())

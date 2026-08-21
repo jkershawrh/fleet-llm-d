@@ -38,7 +38,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 	var req routeRequest
 	// Bounded like every other request body on this server: prompt text is
 	// caller-supplied and must not be able to exhaust memory.
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}

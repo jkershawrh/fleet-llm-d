@@ -12,6 +12,16 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
 )
 
+const MaxRequestBodyBytes int64 = 1 << 20
+
+func readServiceAccountToken() string {
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

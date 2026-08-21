@@ -136,21 +136,7 @@ impl PolicyEnforcerImpl {
     ) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting policy enforcer sync");
 
-        let mut builder = reqwest::Client::builder();
-        if let Some(ca_path) = tls_ca_cert {
-            if let Ok(pem_bytes) = std::fs::read(ca_path) {
-                if let Ok(cert) = reqwest::Certificate::from_pem(&pem_bytes) {
-                    builder = builder.add_root_certificate(cert);
-                    tracing::info!(path = %ca_path, "enforcer: loaded CA certificate for TLS verification");
-                }
-            }
-        } else if tls_insecure {
-            builder = builder.danger_accept_invalid_certs(true);
-        }
-        let client = builder.build().unwrap_or_else(|e| {
-            tracing::error!(error = %e, "enforcer: failed to build HTTP client, falling back to defaults");
-            reqwest::Client::default()
-        });
+        let client = crate::reporter::MetricsReporter::build_http_client(tls_insecure, tls_ca_cert);
         let url = format!(
             "{}/api/v1/agent/policies/{}",
             control_plane_url.trim_end_matches('/'),

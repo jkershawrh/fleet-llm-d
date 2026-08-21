@@ -72,7 +72,7 @@ impl MetricsReporter {
     /// When a CA cert path is provided, the certificate is loaded and added
     /// as a trusted root. Otherwise, if `insecure` is true, invalid
     /// certificates are accepted.
-    fn build_http_client(insecure: bool, ca_cert_path: Option<&str>) -> reqwest::Client {
+    pub(crate) fn build_http_client(insecure: bool, ca_cert_path: Option<&str>) -> reqwest::Client {
         let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5));
 
         if let Some(path) = ca_cert_path {

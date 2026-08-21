@@ -288,7 +288,7 @@ func (fc *FleetController) handleAgentPolicies(w http.ResponseWriter, r *http.Re
 }
 
 func decodeAgentReport(w http.ResponseWriter, r *http.Request, target interface{}) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)

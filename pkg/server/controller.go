@@ -194,11 +194,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		if namespace == "" {
 			namespace = "default"
 		}
-		// Read service account token for in-cluster auth.
-		token := ""
-		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-			token = strings.TrimSpace(string(data))
-		}
+		token := readServiceAccountToken()
 		crdWatcher = controller.NewCRDWatcher(kubeAPI, namespace, token, reconciler)
 		intentRepository = intents.NewKubernetesRepository(kubeAPI, namespace, token, nil)
 		autoscalingActuator = actuator.NewModelPlaneActuator(kubeAPI, token)
@@ -410,10 +406,7 @@ func writePraxisConfigMap(kubeAPI, namespace, configYAML string) error {
 	if kubeAPI == "" {
 		return nil
 	}
-	token := ""
-	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-		token = strings.TrimSpace(string(data))
-	}
+	token := readServiceAccountToken()
 
 	payload := fmt.Sprintf(`{"data":{"praxis-ai-config.yaml":%q}}`, configYAML)
 	url := fmt.Sprintf("%s/api/v1/namespaces/%s/configmaps/praxis-ai-config",

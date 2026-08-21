@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cluster/client"
 	"github.com/llm-d/fleet-llm-d/pkg/controller"
@@ -68,10 +67,7 @@ func (fc *FleetController) rewireRepositories(
 
 // WireModelPlane sets up ModelPlane integration with ledger recording callbacks.
 func (fc *FleetController) WireModelPlane(apiURL, namespace string) {
-	mpToken := ""
-	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-		mpToken = string(data)
-	}
+	mpToken := readServiceAccountToken()
 	watcher := modelplane.NewModelPlaneWatcher(apiURL, namespace, mpToken)
 	bridge := modelplane.NewComplianceBridge(fc.FleetRecorder)
 

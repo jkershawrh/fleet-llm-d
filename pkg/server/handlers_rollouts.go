@@ -1,10 +1,11 @@
 package server
 
 import (
+	"errors"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
@@ -73,7 +74,7 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 	state, err := fc.RolloutController.AdvanceRollout(r.Context(), id)
 	if err != nil {
 		errorsTotal.Inc()
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, rollout.ErrRolloutNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
 			writeError(w, http.StatusInternalServerError, err.Error())

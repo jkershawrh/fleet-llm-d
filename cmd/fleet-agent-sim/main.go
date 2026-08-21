@@ -1,9 +1,6 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
 	"sync"
 	"time"
 )
@@ -157,27 +156,12 @@ func (s *AgentSim) register() {
 }
 
 func generateSimToken(secret, subject string) (string, error) {
-	type claims struct {
-		Sub  string    `json:"sub"`
-		Role string    `json:"role"`
-		Iat  time.Time `json:"iat"`
-		Exp  time.Time `json:"exp"`
-	}
-	c := claims{
-		Sub:  subject,
-		Role: "operator",
-		Iat:  time.Now(),
-		Exp:  time.Now().Add(24 * time.Hour),
-	}
-	claimsJSON, _ := json.Marshal(c)
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(claimsJSON)
-	sig := mac.Sum(nil)
-	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
-
-	return claimsB64 + "." + sigB64, nil
+	return auth.GenerateToken(secret, auth.Claims{
+		Subject:   subject,
+		Role:      "operator",
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	})
 }
 
 func (s *AgentSim) updateMetricsLoop() {

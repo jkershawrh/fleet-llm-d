@@ -12,7 +12,7 @@ import (
 )
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target interface{}) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
 	return decoder.Decode(target)
 }
 
