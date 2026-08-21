@@ -26,13 +26,27 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Wrap the API server mux with auth middleware, rate limiting, and
-	// request logging. The logging middleware is outermost so it captures
-	// the final status code after all other middleware has run.
+	// Wrap the API server mux with rate limiting, authentication,
+	// authorization, and request logging. The logging middleware is outermost
+	// so it captures the final status code after all other middleware runs.
+	//
+	// Rate limiting is two-tier, and the order matters.
+	//
+	// The outer tier is keyed on client address and runs before
+	// authentication, because it is the only thing protecting the token
+	// verification path from an unauthenticated flood. The inner tier is
+	// keyed on the verified subject and runs after authentication, so one
+	// principal cannot exhaust the budget of another by changing source
+	// address. Neither tier keys on anything the caller can choose.
 	mux := fc.SetupRoutes(mode)
 	exempt := defaultExemptPaths(rateLimitExempt)
-	var handler http.Handler = fc.leaderGate(mux)
+	handler := http.Handler(fc.leaderGate(mux))
 	handler = auth.AuthorizationMiddleware(exempt, handler)
+	if rateLimiter != nil && authCfg.Enabled {
+		subjectLimiter := rateLimiter.Derive()
+		defer subjectLimiter.Stop()
+		handler = auth.SubjectRateLimitMiddleware(subjectLimiter, exempt, handler)
+	}
 	handler = auth.AuthMiddleware(authCfg, exempt, handler)
 	if rateLimiter != nil {
 		handler = auth.RateLimitMiddlewareWithExemptions(rateLimiter, exempt, handler)
