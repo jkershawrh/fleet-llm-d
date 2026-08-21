@@ -283,7 +283,6 @@ func TestSetupAPIServer_ModeAll_MountsBothControlAndInference(t *testing.T) {
 
 	// Inference proxy routes should be present.
 
-
 	// Health probes should always be present.
 	if !routeExists(mux, "GET", "/healthz") {
 		t.Error("mode=all: expected /healthz to be mounted")
@@ -312,7 +311,6 @@ func TestSetupAPIServer_ModeControl_OnlyMountsControlRoutes(t *testing.T) {
 	}
 
 	// Inference proxy routes should NOT be present.
-
 
 	// Health probes should always be present.
 	if !routeExists(mux, "GET", "/healthz") {
@@ -354,4 +352,3 @@ func TestSetupAPIServer_HealthAlwaysMounted(t *testing.T) {
 		}
 	}
 }
-

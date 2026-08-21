@@ -121,13 +121,13 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 			ledgerURL = fc.LedgerGatewayURL
 		}
 		platformCollector := &metrics.PlatformCollector{
-			GCLURL:       gclURL,
-			DeepfieldURL: deepfieldURL,
-			LedgerURL:    ledgerURL,
-			LedgerToken:  fc.LedgerGatewayToken,
-			ClustersFunc: func() int { return int(clustersGauge.Value()) },
-			PoolsFunc:    func() int { return int(poolsGauge.Value()) },
-			TenantsFunc:  func() int { return int(tenantsGauge.Value()) },
+			GCLURL:        gclURL,
+			DeepfieldURL:  deepfieldURL,
+			LedgerURL:     ledgerURL,
+			LedgerToken:   fc.LedgerGatewayToken,
+			ClustersFunc:  func() int { return int(clustersGauge.Value()) },
+			PoolsFunc:     func() int { return int(poolsGauge.Value()) },
+			TenantsFunc:   func() int { return int(tenantsGauge.Value()) },
 			SemanticTiers: fc.semanticTierDistribution,
 		}
 		mux.HandleFunc("GET /api/v1/metrics/platform", metrics.HandlePlatformMetrics(platformCollector))

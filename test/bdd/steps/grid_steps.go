@@ -28,11 +28,11 @@ type GridTestState struct {
 	FleetPools    []routing.FleetPoolInfo
 
 	// Track CRD applies received by the mock K8s API.
-	mu                 sync.Mutex
-	AppliedGridSites   map[string]routing.GridSiteSpec
-	AppliedProviders   map[string]routing.InferenceProviderSpec
-	GridSiteResponses  []GridSiteResponseItem
-	ClusterUpdates     int
+	mu                sync.Mutex
+	AppliedGridSites  map[string]routing.GridSiteSpec
+	AppliedProviders  map[string]routing.InferenceProviderSpec
+	GridSiteResponses []GridSiteResponseItem
+	ClusterUpdates    int
 }
 
 // GridSiteResponseItem mirrors the structure the SWIM adapter expects from the
@@ -375,4 +375,3 @@ func (w *World) AssertNoClusterUpdates() error {
 	}
 	return nil
 }
-

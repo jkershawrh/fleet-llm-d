@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-
 type AgentSim struct {
 	ClusterID   string
 	Region      string

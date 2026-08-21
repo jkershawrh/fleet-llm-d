@@ -163,4 +163,3 @@ func (r *failingClusterRepo) Get(context.Context, string) (*postgres.ClusterReco
 func (r *failingClusterRepo) List(context.Context) ([]postgres.ClusterRecord, error) { return nil, nil }
 func (r *failingClusterRepo) Update(context.Context, postgres.ClusterRecord) error   { return nil }
 func (r *failingClusterRepo) Delete(context.Context, string) error                   { return nil }
-

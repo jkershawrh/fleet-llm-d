@@ -17,11 +17,11 @@ func RunLatency(cfg Config) SuiteResult {
 	iterations := 1000
 
 	type category struct {
-		Name     string
-		Method   string
-		Path     string
-		Auth     bool
-		HasBody  bool
+		Name    string
+		Method  string
+		Path    string
+		Auth    bool
+		HasBody bool
 	}
 
 	categories := []category{
