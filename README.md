@@ -10,8 +10,8 @@ fleet-llm-d is the operations control plane for enterprise AI inference fleets. 
 [![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/Tests-340%2B_passing-brightgreen.svg)](#testing)
 [![Architecture](https://img.shields.io/badge/Architecture-10_CRDs%2C_42_APIs-blue.svg)](#architecture)
-[![BDD](https://img.shields.io/badge/BDD-63_scenarios-blue.svg)](#testing)
-[![Rust](https://img.shields.io/badge/Rust_Tests-73_passing-blue.svg)](#testing)
+[![BDD](https://img.shields.io/badge/BDD-49_scenarios-blue.svg)](#testing)
+[![Rust](https://img.shields.io/badge/Rust_Tests-57_passing-blue.svg)](#testing)
 
 ---
 
@@ -431,7 +431,7 @@ fleet-llm-d/
 │   └── local-dev.sh             # Kind multi-cluster dev setup
 └── test/
     ├── architecture/            # 50 architectural proof tests
-    ├── bdd/                     # 63 BDD scenario tests
+    ├── bdd/                     # 49 BDD scenario tests
     ├── compliance/              # Audit trail completeness
     ├── contracts/               # Proto + OpenAPI validation
     ├── security/                # Auth integration tests
