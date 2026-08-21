@@ -159,4 +159,3 @@ func tierRank(label string) int {
 	}
 	return -1
 }
-

@@ -11,10 +11,10 @@ import (
 )
 
 type CostConfig struct {
-	DefaultThroughput    float64
-	DefaultBudget        float64
-	DefaultTokensPerDay  int64
-	DefaultGPUType       string
+	DefaultThroughput   float64
+	DefaultBudget       float64
+	DefaultTokensPerDay int64
+	DefaultGPUType      string
 }
 
 func DefaultCostConfig() CostConfig {
