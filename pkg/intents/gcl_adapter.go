@@ -57,15 +57,32 @@ var gclActionClasses = map[string]IntentType{
 // copied on construction so a decoder can be shared safely by HTTP handlers.
 // The signature proves GCL authorship; Fleet remains the authorization owner.
 type GCLDecisionPackageDecoder struct {
-	keyring map[string][]byte
+	keyring         map[string][]byte
+	allowLegacyHMAC bool
 }
 
 func NewGCLDecisionPackageDecoder(keyring map[string][]byte) *GCLDecisionPackageDecoder {
+	return NewGCLDecisionPackageDecoderWithPolicy(keyring, false)
+}
+
+// NewGCLDecisionPackageDecoderWithPolicy builds a decoder with an explicit
+// signature-algorithm policy.
+//
+// Ed25519 is asymmetric: GCL holds the private key and Fleet holds only the
+// public half, so a valid signature is evidence that GCL authored the package
+// and nobody else could have. HMAC-SHA256 is symmetric, so Fleet holds the
+// same key GCL signs with and can mint packages indistinguishable from real
+// ones. Accepting HMAC therefore forfeits the authorship property the signed
+// DecisionPackage exists to provide.
+//
+// allowLegacyHMAC re-enables it for the window where a fleet is upgraded
+// before its GCL. It should be false everywhere else.
+func NewGCLDecisionPackageDecoderWithPolicy(keyring map[string][]byte, allowLegacyHMAC bool) *GCLDecisionPackageDecoder {
 	copyOfKeyring := make(map[string][]byte, len(keyring))
 	for keyID, key := range keyring {
 		copyOfKeyring[keyID] = append([]byte(nil), key...)
 	}
-	return &GCLDecisionPackageDecoder{keyring: copyOfKeyring}
+	return &GCLDecisionPackageDecoder{keyring: copyOfKeyring, allowLegacyHMAC: allowLegacyHMAC}
 }
 
 // Decode verifies a structured DecisionPackage CloudEvent at the current time.
@@ -78,14 +95,19 @@ func (d *GCLDecisionPackageDecoder) DecodeAt(contentType string, payload []byte,
 	if d == nil {
 		return FleetIntent{}, fmt.Errorf("GCL decision package decoder is nil")
 	}
-	return decodeGCLDecisionPackageCloudEvent(contentType, payload, d.keyring, now)
+	return decodeGCLDecisionPackageCloudEvent(contentType, payload, d.keyring, d.allowLegacyHMAC, now)
 }
 
 // DecodeGCLDecisionPackageCloudEvent is a convenience entry point for callers
 // that manage key rotation outside the decoder. Long-lived handlers should use
 // NewGCLDecisionPackageDecoder and swap the decoder atomically when keys rotate.
+//
+// It requires Ed25519. Callers that still need to accept legacy HMAC-SHA256
+// packages during a migration must construct a decoder with
+// NewGCLDecisionPackageDecoderWithPolicy, which makes the choice explicit at
+// the call site rather than implicit in a shared helper.
 func DecodeGCLDecisionPackageCloudEvent(contentType string, payload []byte, keyring map[string][]byte, now time.Time) (FleetIntent, error) {
-	return decodeGCLDecisionPackageCloudEvent(contentType, payload, keyring, now)
+	return decodeGCLDecisionPackageCloudEvent(contentType, payload, keyring, false, now)
 }
 
 type gclDecisionPackageCloudEvent struct {
@@ -188,7 +210,7 @@ type gclAgentPromotionAttestation struct {
 	ExpiresAt        time.Time `json:"expires_at"`
 }
 
-func decodeGCLDecisionPackageCloudEvent(contentType string, payload []byte, keyring map[string][]byte, now time.Time) (FleetIntent, error) {
+func decodeGCLDecisionPackageCloudEvent(contentType string, payload []byte, keyring map[string][]byte, allowLegacyHMAC bool, now time.Time) (FleetIntent, error) {
 	if err := validateGCLContentType(contentType); err != nil {
 		return FleetIntent{}, err
 	}
@@ -210,7 +232,7 @@ func decodeGCLDecisionPackageCloudEvent(contentType string, payload []byte, keyr
 	if err != nil {
 		return FleetIntent{}, fmt.Errorf("canonicalize GCL DecisionPackage: %w", err)
 	}
-	if err := verifyGCLSignedPackage(event.Data, canonical, keyring); err != nil {
+	if err := verifyGCLSignedPackage(event.Data, canonical, keyring, allowLegacyHMAC); err != nil {
 		return FleetIntent{}, err
 	}
 	if err := validateGCLEnvelope(event, decision); err != nil {
@@ -488,7 +510,7 @@ func validateGCLNestedEvidence(refs []string, knownEvidence map[string]struct{})
 	return nil
 }
 
-func verifyGCLSignedPackage(signed gclSignedDecisionPackage, canonical []byte, keyring map[string][]byte) error {
+func verifyGCLSignedPackage(signed gclSignedDecisionPackage, canonical []byte, keyring map[string][]byte, allowLegacyHMAC bool) error {
 	if !gclDigestPattern.MatchString(signed.Digest) {
 		return fmt.Errorf("GCL DecisionPackage digest must be sha256:<64 lowercase hex>")
 	}
@@ -521,6 +543,12 @@ func verifyGCLSignedPackage(signed gclSignedDecisionPackage, canonical []byte, k
 			return fmt.Errorf("GCL DecisionPackage signature verification failed")
 		}
 	case "HMAC-SHA256":
+		if !allowLegacyHMAC {
+			return fmt.Errorf(
+				"GCL DecisionPackage algorithm HMAC-SHA256 is refused: it is a shared secret, " +
+					"so it cannot prove GCL authorship. Re-sign with Ed25519, or set " +
+					"FLEET_ALLOW_HMAC_DECISION_PACKAGES=true for a migration window")
+		}
 		if !gclHMACSignaturePattern.MatchString(signed.Signature) {
 			return fmt.Errorf("GCL DecisionPackage HMAC signature must be 43-char unpadded base64url")
 		}

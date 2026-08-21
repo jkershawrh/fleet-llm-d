@@ -45,7 +45,7 @@ DeepField owns observations, findings, and forecasts. GCL owns signed and falsif
 
 - **ModelPack (CNCF model-spec)**: OCI-based model metadata resolution. `pkg/modelpack/` resolves GPU requirements, precision, and format for placement.
 - **deepfield-fleet**: canonical producer of observation, finding, forecast, and advisory-remediation CloudEvents.
-- **governed-cognitive-loop**: submits signed, expiry-bounded `DecisionPackage` CloudEvents to `POST /api/v2/intents`; it never actuates infrastructure.
+- **governed-cognitive-loop**: submits signed, expiry-bounded `DecisionPackage` CloudEvents to `POST /api/v2/intents`; it never actuates infrastructure. Signatures must be Ed25519: GCL holds the private key and this controller holds only the public half, so a valid signature is evidence of GCL authorship. Legacy symmetric HMAC-SHA256 is refused unless `FLEET_ALLOW_HMAC_DECISION_PACKAGES=true` is set for a migration window; a shared secret cannot prove authorship because this controller could mint the same signature. `GCL_DECISION_SIGNING_KEYS_JSON` maps key IDs to Ed25519 **public** keys (`base64:` prefixed, 32 bytes).
 - **are-immutable-ledger**: independent evidence infrastructure with its own database and compute. The ledger-owned gRPC service is canonical. `pkg/ledger/` currently supports memory/disabled modes and the optional authenticated REST compatibility gateway. A configured ledger error must fail closed, never fall back to fabricated memory evidence.
 
 ## Dependencies

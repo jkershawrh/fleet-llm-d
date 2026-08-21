@@ -3,7 +3,6 @@ package intents
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -15,15 +14,27 @@ import (
 
 var gclFixtureKey = []byte("a-secure-test-key-with-at-least-thirty-two-bytes")
 
+// Ed25519 is the production signing algorithm: GCL holds the seed, Fleet holds
+// only the public half. The fixtures below let the adapter tests exercise that
+// path rather than the legacy shared-secret one.
+var gclFixtureSeed = []byte("gcl-adapter-test-ed25519-seed!!!")
+
+var gclFixtureEd25519Private = ed25519.NewKeyFromSeed(gclFixtureSeed)
+
+var gclFixtureEd25519Public = []byte(gclFixtureEd25519Private.Public().(ed25519.PublicKey))
+
 const gclFixtureKeyID = "test-key-v1"
 
 func TestGCLDecisionPackageDecoderMapsVerifiedProposal(t *testing.T) {
 	payload, decision, digest := buildGCLDecisionEvent(t, nil)
 	now := decision.CreatedAt.Add(time.Minute)
-	decoder := NewGCLDecisionPackageDecoder(map[string][]byte{gclFixtureKeyID: gclFixtureKey})
+	decoder := NewGCLDecisionPackageDecoder(map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public})
+	// The digest pins Go's canonical JSON to Python's byte for byte. The
+	// signature pins the Ed25519 output over those same bytes, which is
+	// deterministic, so a drift in either language fails here.
 	if digest != "sha256:fc9fb9540f206152bb4e399011fa95a1ba8727ae8ddb818b3d6a6f91117e9024" ||
-		!bytes.Contains(payload, []byte(`"signature":"fdzA3rcwPTzathMVXw_udlyW3RN-zhLWt8UYpvtrhuw"`)) {
-		t.Fatalf("fixture no longer matches Python canonical_json/HMAC output: digest=%s", digest)
+		!bytes.Contains(payload, []byte(`"signature":"pyQ7b0DWwKYFpcUYYwPWXPrNU1ld3gkG2hvk8MEGK_NprDI9EAkk3B-Rw3cb_5o8t2gyXccXS9a0y9KrJK5JDQ"`)) {
+		t.Fatalf("fixture no longer matches Python canonical_json output: digest=%s", digest)
 	}
 
 	intent, err := decoder.DecodeAt(GCLDecisionPackageCloudEventContentType, payload, now)
@@ -134,7 +145,7 @@ func TestGCLDecisionPackageDecoderRejectsIntegrityFailures(t *testing.T) {
 
 	t.Run("tampered package", func(t *testing.T) {
 		tampered := bytes.ReplaceAll(payload, []byte(`"tenant":"tenant-a"`), []byte(`"tenant":"tenant-b"`))
-		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, tampered, map[string][]byte{gclFixtureKeyID: gclFixtureKey}, now)
+		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, tampered, map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public}, now)
 		if err == nil || !strings.Contains(err.Error(), "digest does not match") {
 			t.Fatalf("expected digest rejection, got %v", err)
 		}
@@ -149,30 +160,30 @@ func TestGCLDecisionPackageDecoderRejectsIntegrityFailures(t *testing.T) {
 
 	t.Run("short key", func(t *testing.T) {
 		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, payload, map[string][]byte{gclFixtureKeyID: []byte("short")}, now)
-		if err == nil || !strings.Contains(err.Error(), "at least 32 bytes") {
+		if err == nil || !strings.Contains(err.Error(), "32 bytes") {
 			t.Fatalf("expected short-key rejection, got %v", err)
 		}
 	})
 
 	t.Run("invalid signature", func(t *testing.T) {
 		invalid := rewriteGCLCloudEvent(t, payload, func(event map[string]any) {
-			event["data"].(map[string]any)["signature"] = strings.Repeat("A", 43)
+			event["data"].(map[string]any)["signature"] = strings.Repeat("A", 86)
 		})
-		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, invalid, map[string][]byte{gclFixtureKeyID: gclFixtureKey}, now)
+		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, invalid, map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public}, now)
 		if err == nil || !strings.Contains(err.Error(), "signature verification failed") {
 			t.Fatalf("expected signature rejection, got %v", err)
 		}
 	})
 
 	t.Run("expired", func(t *testing.T) {
-		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, payload, map[string][]byte{gclFixtureKeyID: gclFixtureKey}, decision.ExpiresAt)
+		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, payload, map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public}, decision.ExpiresAt)
 		if err == nil || !strings.Contains(err.Error(), "expired") {
 			t.Fatalf("expected expiry rejection, got %v", err)
 		}
 	})
 
 	t.Run("not yet valid", func(t *testing.T) {
-		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, payload, map[string][]byte{gclFixtureKeyID: gclFixtureKey}, decision.CreatedAt.Add(-time.Nanosecond))
+		_, err := DecodeGCLDecisionPackageCloudEvent(GCLDecisionPackageCloudEventContentType, payload, map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public}, decision.CreatedAt.Add(-time.Nanosecond))
 		if err == nil || !strings.Contains(err.Error(), "not yet valid") {
 			t.Fatalf("expected future-package rejection, got %v", err)
 		}
@@ -182,7 +193,7 @@ func TestGCLDecisionPackageDecoderRejectsIntegrityFailures(t *testing.T) {
 func TestGCLDecisionPackageDecoderEnforcesExactCloudEventContract(t *testing.T) {
 	payload, decision, _ := buildGCLDecisionEvent(t, nil)
 	now := decision.CreatedAt.Add(time.Minute)
-	keys := map[string][]byte{gclFixtureKeyID: gclFixtureKey}
+	keys := map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public}
 
 	for name, contentType := range map[string]string{
 		"plain json":   "application/json",
@@ -233,7 +244,7 @@ func TestGCLDecisionPackageDecoderEnforcesExactCloudEventContract(t *testing.T) 
 }
 
 func TestGCLDecisionPackageDecoderValidatesEvidenceConsistencyAndPool(t *testing.T) {
-	keys := map[string][]byte{gclFixtureKeyID: gclFixtureKey}
+	keys := map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public}
 
 	t.Run("package schema version is exact", func(t *testing.T) {
 		payload, decision, _ := buildGCLDecisionEvent(t, func(decision *gclDecisionPackage) {
@@ -361,7 +372,7 @@ func TestGCLDecisionPackageDecoderMapsEveryCanonicalActionClass(t *testing.T) {
 			intent, err := DecodeGCLDecisionPackageCloudEvent(
 				GCLDecisionPackageCloudEventContentType,
 				payload,
-				map[string][]byte{gclFixtureKeyID: gclFixtureKey},
+				map[string][]byte{gclFixtureKeyID: gclFixtureEd25519Public},
 				validationTime,
 			)
 			if err != nil {
@@ -489,12 +500,11 @@ func buildGCLDecisionEvent(t *testing.T, mutate func(*gclDecisionPackage)) ([]by
 	}
 	digestBytes := sha256.Sum256(canonical)
 	digest := "sha256:" + hex.EncodeToString(digestBytes[:])
-	mac := hmac.New(sha256.New, gclFixtureKey)
-	_, _ = mac.Write(canonical)
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	signature := base64.RawURLEncoding.EncodeToString(
+		ed25519.Sign(gclFixtureEd25519Private, canonical))
 	signed := gclSignedDecisionPackage{
 		Package: packageJSON, Digest: digest, Signature: signature,
-		Algorithm: "HMAC-SHA256", KeyID: gclFixtureKeyID,
+		Algorithm: "Ed25519", KeyID: gclFixtureKeyID,
 	}
 	fingerprint := sha256.Sum256([]byte(decision.PackageID + ":" + digest + ":" + GCLDecisionPackageCloudEventType))
 	event := gclDecisionPackageCloudEvent{
