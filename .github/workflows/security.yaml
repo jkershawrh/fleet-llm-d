@@ -98,7 +98,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
       - name: Run Trivy scan on ${{ matrix.image.name }}
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ matrix.image.name }}:scan
           format: table
