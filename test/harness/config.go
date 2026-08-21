@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
 )
 
 // Config holds the connection parameters for the fleet-controller under test.
@@ -56,85 +58,47 @@ type LatencyStats struct {
 	Mean float64 `json:"mean_ms"`
 }
 
-// Claims mirrors the token claims structure without importing pkg/auth.
-type Claims struct {
-	Subject   string `json:"sub"`
-	Role      string `json:"role"`
-	IssuedAt  string `json:"iat"`
-	ExpiresAt string `json:"exp"`
-}
-
-// generateToken creates an HMAC-SHA256 signed token from the given claims.
-// Reimplements the logic from pkg/auth/token.go without importing it.
 func generateToken(secret string, sub, role string, duration time.Duration) (string, error) {
-	if secret == "" {
-		return "", fmt.Errorf("secret must not be empty")
-	}
-	now := time.Now().UTC()
-	claims := Claims{
+	return auth.GenerateToken(secret, auth.Claims{
 		Subject:   sub,
 		Role:      role,
-		IssuedAt:  now.Format(time.RFC3339),
-		ExpiresAt: now.Add(duration).Format(time.RFC3339),
-	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("marshal claims: %w", err)
-	}
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(claimsJSON)
-	sig := mac.Sum(nil)
-	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
-	return claimsB64 + "." + sigB64, nil
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(duration),
+	})
 }
 
-// generateExpiredToken creates a token that has already expired.
 func generateExpiredToken(secret string) (string, error) {
-	now := time.Now().UTC()
-	claims := Claims{
+	return auth.GenerateToken(secret, auth.Claims{
 		Subject:   "expired-user",
 		Role:      "admin",
-		IssuedAt:  now.Add(-2 * time.Hour).Format(time.RFC3339),
-		ExpiresAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
-	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("marshal claims: %w", err)
-	}
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(claimsJSON)
-	sig := mac.Sum(nil)
-	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
-	return claimsB64 + "." + sigB64, nil
+		IssuedAt:  time.Now().Add(-2 * time.Hour),
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	})
 }
 
 // generateTamperedToken creates a token where the claims have been altered
 // after signing (signature mismatch).
 func generateTamperedToken(secret string) (string, error) {
 	now := time.Now().UTC()
-	origClaims := Claims{
+	origClaims := auth.Claims{
 		Subject:   "original-user",
 		Role:      "viewer",
-		IssuedAt:  now.Format(time.RFC3339),
-		ExpiresAt: now.Add(1 * time.Hour).Format(time.RFC3339),
+		IssuedAt:  now,
+		ExpiresAt: now.Add(1 * time.Hour),
 	}
 	origJSON, err := json.Marshal(origClaims)
 	if err != nil {
 		return "", fmt.Errorf("marshal original claims: %w", err)
 	}
-	// Sign original claims.
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(origJSON)
 	sig := mac.Sum(nil)
 	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
-	// Tamper the claims: change role to admin.
-	tampered := Claims{
+	tampered := auth.Claims{
 		Subject:   "original-user",
 		Role:      "admin",
-		IssuedAt:  now.Format(time.RFC3339),
-		ExpiresAt: now.Add(1 * time.Hour).Format(time.RFC3339),
+		IssuedAt:  now,
+		ExpiresAt: now.Add(1 * time.Hour),
 	}
 	tamperedJSON, err := json.Marshal(tampered)
 	if err != nil {

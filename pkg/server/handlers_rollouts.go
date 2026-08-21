@@ -1,10 +1,11 @@
 package server
 
 import (
+	"errors"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/lifecycle/rollout"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
@@ -19,6 +20,7 @@ type rolloutCreateRequest struct {
 // handleListRollouts returns all rollouts.
 func (fc *FleetController) handleListRollouts(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	rollouts, err := fc.RolloutRepo.List(r.Context())
 	if err != nil {
 		errorsTotal.Inc()
@@ -31,6 +33,7 @@ func (fc *FleetController) handleListRollouts(w http.ResponseWriter, r *http.Req
 // handleCreateRollout creates a new rollout.
 func (fc *FleetController) handleCreateRollout(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var req rolloutCreateRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		errorsTotal.Inc()
@@ -65,6 +68,7 @@ func (fc *FleetController) handleCreateRollout(w http.ResponseWriter, r *http.Re
 // handlePromoteRollout promotes a canary rollout.
 func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "rollout id is required")
@@ -73,7 +77,7 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 	state, err := fc.RolloutController.AdvanceRollout(r.Context(), id)
 	if err != nil {
 		errorsTotal.Inc()
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, rollout.ErrRolloutNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -90,6 +94,7 @@ func (fc *FleetController) handlePromoteRollout(w http.ResponseWriter, r *http.R
 // handleRollbackRollout rolls back a rollout.
 func (fc *FleetController) handleRollbackRollout(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "rollout id is required")

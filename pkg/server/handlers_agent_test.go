@@ -14,7 +14,7 @@ import (
 )
 
 func TestAgentIngestionRoutes(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	mux := fc.SetupRoutes("control")
 
 	// Pre-register the cluster so agent status reports are accepted.
@@ -72,7 +72,7 @@ func TestAgentIngestionRoutes(t *testing.T) {
 }
 
 func TestAgentStatusDoesNotCreateAfterRepositoryReadFailure(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	repo := &failingClusterRepo{getErr: errors.New("database unavailable")}
 	fc.ClusterRepo = repo
 
@@ -89,7 +89,7 @@ func TestAgentStatusDoesNotCreateAfterRepositoryReadFailure(t *testing.T) {
 }
 
 func TestAgentStatusRejectsUnregisteredCluster(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 
 	response := postAgentJSON(t, fc.SetupRoutes("control"), "/api/v1/agent/status", `{
 		"cluster_id":"unregistered-1","name":"rogue","phase":"Running",
@@ -101,7 +101,7 @@ func TestAgentStatusRejectsUnregisteredCluster(t *testing.T) {
 }
 
 func TestLeaderGateRejectsAgentWritesOnStandby(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	fc.ConfigureLeaderElection(controller.NewLeaderElector("http://127.0.0.1:1", "test", "standby"))
 
 	response := postAgentJSON(t, fc.leaderGate(fc.SetupRoutes("control")), "/api/v1/agent/status", `{
@@ -114,7 +114,7 @@ func TestLeaderGateRejectsAgentWritesOnStandby(t *testing.T) {
 }
 
 func TestAgentEventPublishesStructuredPayload(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	received := make(chan events.FleetEvent, 1)
 	if err := fc.EventPublisher.Subscribe(context.Background(), []string{"fleet.agent.event"}, func(_ context.Context, event events.FleetEvent) error {
 		received <- event

@@ -111,8 +111,15 @@ func main() {
 		os.Exit(1)
 	}
 	if len(decisionKeys) > 0 {
-		fc.DecisionPackageDecoder = intents.NewGCLDecisionPackageDecoder(decisionKeys)
-		slog.Info("GCL DecisionPackage verification enabled", "trusted_keys", len(decisionKeys))
+		allowLegacyHMAC := os.Getenv("FLEET_ALLOW_HMAC_DECISION_PACKAGES") == "true"
+		fc.DecisionPackageDecoder = intents.NewGCLDecisionPackageDecoderWithPolicy(decisionKeys, allowLegacyHMAC)
+		slog.Info("GCL DecisionPackage verification enabled",
+			"trusted_keys", len(decisionKeys), "allow_legacy_hmac", allowLegacyHMAC)
+		if allowLegacyHMAC {
+			slog.Warn("legacy HMAC-SHA256 DecisionPackages are accepted: the signing key is shared with GCL, " +
+				"so a signature no longer proves GCL authorship. Unset " +
+				"FLEET_ALLOW_HMAC_DECISION_PACKAGES once GCL signs with Ed25519.")
+		}
 	}
 	fc.AllowOperatorJSONIntents = server.OperatorJSONIntentsEnabled(*allowOperatorJSONIntents)
 	if fc.AllowOperatorJSONIntents {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -9,22 +10,53 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/metering"
 )
 
+type CostConfig struct {
+	DefaultThroughput   float64
+	DefaultBudget       float64
+	DefaultTokensPerDay int64
+	DefaultGPUType      string
+}
+
+func DefaultCostConfig() CostConfig {
+	cfg := CostConfig{
+		DefaultThroughput:   1000.0,
+		DefaultBudget:       10000.0,
+		DefaultTokensPerDay: 10_000_000,
+		DefaultGPUType:      "H200",
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("FLEET_COST_DEFAULT_THROUGHPUT"), 64); err == nil && v > 0 {
+		cfg.DefaultThroughput = v
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("FLEET_COST_DEFAULT_BUDGET"), 64); err == nil && v > 0 {
+		cfg.DefaultBudget = v
+	}
+	if v, err := strconv.ParseInt(os.Getenv("FLEET_COST_DEFAULT_TOKENS_PER_DAY"), 10, 64); err == nil && v > 0 {
+		cfg.DefaultTokensPerDay = v
+	}
+	if v := os.Getenv("FLEET_COST_DEFAULT_GPU_TYPE"); v != "" {
+		cfg.DefaultGPUType = v
+	}
+	return cfg
+}
+
 // handleCostPricing returns the full GPU pricing table as JSON.
 func (fc *FleetController) handleCostPricing(w http.ResponseWriter, _ *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	writeJSON(w, http.StatusOK, fc.PricingTable.AllPrices())
 }
 
 // handleCostTokenomics computes token costs for a model across all GPU types.
 func (fc *FleetController) handleCostTokenomics(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	model := r.PathValue("model")
 	if model == "" {
 		writeError(w, http.StatusBadRequest, "model name is required")
 		return
 	}
 
-	throughput := 1000.0
+	throughput := fc.CostConfig.DefaultThroughput
 	if tpStr := r.URL.Query().Get("throughput"); tpStr != "" {
 		tp, err := strconv.ParseFloat(tpStr, 64)
 		if err != nil || tp <= 0 {
@@ -51,13 +83,14 @@ func (fc *FleetController) handleCostTokenomics(w http.ResponseWriter, r *http.R
 // handleCostChargeback generates a chargeback report for a tenant.
 func (fc *FleetController) handleCostChargeback(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	tenant := r.PathValue("tenant")
 	if tenant == "" {
 		writeError(w, http.StatusBadRequest, "tenant id is required")
 		return
 	}
 
-	budget := 10000.0
+	budget := fc.CostConfig.DefaultBudget
 	if bStr := r.URL.Query().Get("budget"); bStr != "" {
 		b, err := strconv.ParseFloat(bStr, 64)
 		if err == nil && b > 0 {
@@ -79,7 +112,7 @@ func (fc *FleetController) handleCostChargeback(w http.ResponseWriter, r *http.R
 			TenantID:  tenant,
 			Model:     "aggregate",
 			Cluster:   "fleet",
-			GPUType:   "H200",
+			GPUType:   fc.CostConfig.DefaultGPUType,
 			Tokens:    meterUsage.TokensConsumed,
 			Duration:  time.Duration(meterUsage.RequestCount) * time.Second,
 			Timestamp: now,
@@ -93,8 +126,9 @@ func (fc *FleetController) handleCostChargeback(w http.ResponseWriter, r *http.R
 // handleCostProjection projects monthly cost based on current usage rates.
 func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 
-	tokensPerDay := int64(10_000_000) // default
+	tokensPerDay := fc.CostConfig.DefaultTokensPerDay
 	if tdStr := r.URL.Query().Get("tokens_per_day"); tdStr != "" {
 		td, err := strconv.ParseInt(tdStr, 10, 64)
 		if err != nil || td <= 0 {
@@ -106,7 +140,7 @@ func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.R
 
 	gpuType := r.URL.Query().Get("gpu_type")
 	if gpuType == "" {
-		gpuType = "H200"
+		gpuType = fc.CostConfig.DefaultGPUType
 	}
 	tier := r.URL.Query().Get("tier")
 	if tier == "" {
@@ -117,7 +151,7 @@ func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.R
 		model = "default"
 	}
 
-	tc, err := cost.ComputeTokenCost(model, gpuType, tier, 1000, fc.PricingTable)
+	tc, err := cost.ComputeTokenCost(model, gpuType, tier, fc.CostConfig.DefaultThroughput, fc.PricingTable)
 	if err != nil {
 		errorsTotal.Inc()
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -138,6 +172,7 @@ func (fc *FleetController) handleCostProjection(w http.ResponseWriter, r *http.R
 // handleCostSavings compares current cost versus optimized placement cost.
 func (fc *FleetController) handleCostSavings(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 
 	currentMonthly := 5000.0
 	if cmStr := r.URL.Query().Get("current"); cmStr != "" {
@@ -166,6 +201,7 @@ func (fc *FleetController) handleCostSavings(w http.ResponseWriter, r *http.Requ
 // handleCostAlerts checks all tenant budgets and returns active alerts.
 func (fc *FleetController) handleCostAlerts(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 
 	tenants, err := fc.TenantRepo.List(r.Context())
 	if err != nil {
@@ -178,8 +214,7 @@ func (fc *FleetController) handleCostAlerts(w http.ResponseWriter, r *http.Reque
 	currentCosts := make(map[string]float64)
 
 	for _, t := range tenants {
-		// Extract budget from CostControl if available; default to $10,000.
-		budget := 10000.0
+		budget := fc.CostConfig.DefaultBudget
 		if t.CostControl != nil {
 			if b, ok := t.CostControl["monthly_budget"]; ok {
 				if bf, ok := b.(float64); ok {

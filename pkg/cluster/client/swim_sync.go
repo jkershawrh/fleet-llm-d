@@ -64,8 +64,12 @@ type SWIMSyncAdapter struct {
 func NewSWIMSyncAdapter(apiServer, token string, clusterRepo postgres.ClusterRepository) *SWIMSyncAdapter {
 	tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
 	if err != nil {
-		slog.Warn("SWIM sync: failed to load Kubernetes CA", "error", err)
-		tlsConfig, _ = tlsutil.NewTLSConfig(tlsutil.TLSOptions{})
+		slog.Warn("SWIM sync: failed to load Kubernetes CA, falling back to system CA", "error", err)
+		var fallbackErr error
+		tlsConfig, fallbackErr = tlsutil.NewTLSConfig(tlsutil.TLSOptions{})
+		if fallbackErr != nil {
+			slog.Error("SWIM sync: system CA fallback also failed", "error", fallbackErr)
+		}
 	}
 	return &SWIMSyncAdapter{
 		apiServer:   strings.TrimRight(apiServer, "/"),

@@ -14,12 +14,12 @@ import (
 // When the ledger is configured in HTTP mode (LedgerGatewayURL is set), write
 // failures return an error so the caller can fail closed -- a configured
 // ledger error must never be silently ignored.
-func (fc *FleetController) recordToLedger(entryType, clusterID string) error {
+func (fc *FleetController) recordToLedger(ctx context.Context, entryType, clusterID string) error {
 	if fc.FleetRecorder == nil {
 		return nil
 	}
 	if _, err := fc.FleetRecorder.RecordPlacement(
-		context.Background(), entryType, clusterID, 0, "", entryType,
+		ctx, entryType, clusterID, 0, "", entryType,
 	); err != nil {
 		if fc.LedgerGatewayURL != "" {
 			// Fail closed: configured ledger must not be bypassed.
@@ -71,7 +71,7 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := fc.recordToLedger("fleet.cluster.drain_started", clusterID); err != nil {
+	if err := fc.recordToLedger(r.Context(), "fleet.cluster.drain_started", clusterID); err != nil {
 		errorsTotal.Inc()
 		if rollbackErr := fc.ClusterRepo.Update(r.Context(), original); rollbackErr != nil {
 			writeError(w, http.StatusInternalServerError, "ledger write failed and drain compensation failed: "+rollbackErr.Error()+": "+err.Error())
@@ -81,8 +81,8 @@ func (fc *FleetController) handleDrainCluster(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if fc.SessionTable != nil {
-		fc.SessionTable.UnbindCluster(clusterID)
+	if fc.Routing != nil && fc.Routing.SessionTable != nil {
+		fc.Routing.SessionTable.UnbindCluster(clusterID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -128,7 +128,7 @@ func (fc *FleetController) handleActivateCluster(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if err := fc.recordToLedger("fleet.cluster.activated", clusterID); err != nil {
+	if err := fc.recordToLedger(r.Context(), "fleet.cluster.activated", clusterID); err != nil {
 		errorsTotal.Inc()
 		if rollbackErr := fc.ClusterRepo.Update(r.Context(), original); rollbackErr != nil {
 			writeError(w, http.StatusInternalServerError, "ledger write failed and activation compensation failed: "+rollbackErr.Error()+": "+err.Error())

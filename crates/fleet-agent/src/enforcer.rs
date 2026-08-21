@@ -136,18 +136,7 @@ impl PolicyEnforcerImpl {
     ) -> anyhow::Result<()> {
         tracing::info!(cluster_id = %self.cluster_id, "starting policy enforcer sync");
 
-        let mut builder = reqwest::Client::builder();
-        if let Some(ca_path) = tls_ca_cert {
-            if let Ok(pem_bytes) = std::fs::read(ca_path) {
-                if let Ok(cert) = reqwest::Certificate::from_pem(&pem_bytes) {
-                    builder = builder.add_root_certificate(cert);
-                    tracing::info!(path = %ca_path, "enforcer: loaded CA certificate for TLS verification");
-                }
-            }
-        } else if tls_insecure {
-            builder = builder.danger_accept_invalid_certs(true);
-        }
-        let client = builder.build().unwrap_or_default();
+        let client = crate::reporter::MetricsReporter::build_http_client(tls_insecure, tls_ca_cert);
         let url = format!(
             "{}/api/v1/agent/policies/{}",
             control_plane_url.trim_end_matches('/'),
@@ -347,5 +336,95 @@ mod tests {
             .await
             .unwrap();
         assert!(allowed);
+    }
+
+    #[tokio::test]
+    async fn quota_exceeded_rps() {
+        let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
+        let tid = TenantId("t1".to_string());
+        enforcer
+            .set_quota(tid.clone(), TenantQuota { max_rps: 10.0, max_concurrent: 100, max_tokens_per_minute: 1_000_000 })
+            .await;
+        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
+            current_rps: 15.0,
+            current_concurrent: 0,
+            tokens_this_minute: 0,
+        });
+
+        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
+        assert!(result.is_err(), "should deny when RPS exceeds quota");
+    }
+
+    #[tokio::test]
+    async fn quota_exceeded_concurrent() {
+        let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
+        let tid = TenantId("t1".to_string());
+        enforcer
+            .set_quota(tid.clone(), TenantQuota { max_rps: 100.0, max_concurrent: 5, max_tokens_per_minute: 1_000_000 })
+            .await;
+        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
+            current_rps: 1.0,
+            current_concurrent: 5,
+            tokens_this_minute: 0,
+        });
+
+        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
+        assert!(result.is_err(), "should deny when concurrent requests reach quota");
+    }
+
+    #[tokio::test]
+    async fn quota_exceeded_tokens_per_minute() {
+        let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
+        let tid = TenantId("t1".to_string());
+        enforcer
+            .set_quota(tid.clone(), TenantQuota { max_rps: 100.0, max_concurrent: 100, max_tokens_per_minute: 500 })
+            .await;
+        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
+            current_rps: 1.0,
+            current_concurrent: 1,
+            tokens_this_minute: 501,
+        });
+
+        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
+        assert!(result.is_err(), "should deny when tokens-per-minute exceeds quota");
+    }
+
+    #[tokio::test]
+    async fn quota_allows_when_under_all_limits() {
+        let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
+        let tid = TenantId("t1".to_string());
+        enforcer
+            .set_quota(tid.clone(), TenantQuota { max_rps: 100.0, max_concurrent: 50, max_tokens_per_minute: 1_000_000 })
+            .await;
+        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
+            current_rps: 50.0,
+            current_concurrent: 25,
+            tokens_this_minute: 500_000,
+        });
+
+        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
+        assert!(result.is_ok(), "should allow when all usage is under quota");
+        assert!(result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn placement_allow_list_rejects_unlisted_model() {
+        let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
+        enforcer
+            .set_placement(PlacementConstraint {
+                allowed_models: vec![ModelId("allowed-model".to_string())],
+                denied_models: Vec::new(),
+            })
+            .await;
+
+        let result = enforcer
+            .enforce_placement_constraints(&ModelId("other-model".to_string()), &ClusterId("c1".to_string()))
+            .await;
+        assert!(result.is_err(), "model not on allow list should be rejected");
+
+        let result = enforcer
+            .enforce_placement_constraints(&ModelId("allowed-model".to_string()), &ClusterId("c1".to_string()))
+            .await;
+        assert!(result.is_ok(), "model on allow list should be accepted");
     }
 }

@@ -61,7 +61,10 @@ impl MetricsReporter {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "reporter: failed to build default HTTP client");
+                    reqwest::Client::default()
+                }),
         }
     }
 
@@ -69,7 +72,7 @@ impl MetricsReporter {
     /// When a CA cert path is provided, the certificate is loaded and added
     /// as a trusted root. Otherwise, if `insecure` is true, invalid
     /// certificates are accepted.
-    fn build_http_client(insecure: bool, ca_cert_path: Option<&str>) -> reqwest::Client {
+    pub(crate) fn build_http_client(insecure: bool, ca_cert_path: Option<&str>) -> reqwest::Client {
         let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5));
 
         if let Some(path) = ca_cert_path {
@@ -91,7 +94,10 @@ impl MetricsReporter {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
-        builder.build().unwrap_or_default()
+        builder.build().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "reporter: failed to build HTTP client, falling back to defaults");
+            reqwest::Client::default()
+        })
     }
 
     /// Override the default collection interval.

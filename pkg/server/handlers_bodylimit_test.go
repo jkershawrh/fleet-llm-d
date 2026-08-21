@@ -9,7 +9,7 @@ import (
 )
 
 func TestRegisterCluster_RejectsOversizeBody(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	mux := fc.SetupRoutes("control")
 
 	oversized := `{"name":"` + strings.Repeat("x", 2<<20) + `"}`
@@ -24,7 +24,7 @@ func TestRegisterCluster_RejectsOversizeBody(t *testing.T) {
 }
 
 func TestRegisterCluster_AcceptsNormalBody(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	mux := fc.SetupRoutes("control")
 
 	body := `{"name":"test-cluster","region":"us-east-1"}`
@@ -39,7 +39,7 @@ func TestRegisterCluster_AcceptsNormalBody(t *testing.T) {
 }
 
 func TestCreateRollout_RejectsOversizeBody(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	mux := fc.SetupRoutes("control")
 
 	oversized := `{"pool_id":"` + strings.Repeat("x", 2<<20) + `"}`
@@ -54,7 +54,7 @@ func TestCreateRollout_RejectsOversizeBody(t *testing.T) {
 }
 
 func TestHandleIntentV1_RejectsOversizeBody(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	mux := fc.SetupRoutes("control")
 
 	oversized := `{"action":"` + strings.Repeat("x", 2<<20) + `"}`

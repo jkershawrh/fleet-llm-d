@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,7 +43,7 @@ type FleetController struct {
 	// Capability components
 	Solver               solver.ConstraintSolver
 	Scorer               *scorer.CompositeScorer
-	RoutingEvaluator     policy.RoutingPolicyEvaluator
+	Routing              *RoutingController
 	LoadBalancer         balancer.LoadBalancer
 	MetricsCollector     collector.MetricsCollector
 	Optimizer            optimizer.FleetOptimizer
@@ -107,20 +106,12 @@ type FleetController struct {
 	// SWIMSyncAdapter reads GridSite health status back into FleetCluster records.
 	SWIMSyncAdapter *client.SWIMSyncAdapter
 
-	// Session affinity table for multi-turn conversation routing
-	SessionTable *routing.SessionAffinityTable
-
-	// Semantic classifier for prompt complexity classification
-	ClassifierClient classifier.ClassifierClient
-	ClassifierCache  *classifier.ClassificationCache
-
-	// Per-session tier tracking for escalation detection
-	sessionTierMu sync.RWMutex
-	sessionTiers  map[string]string
-
 	// Routing state — tracks which clusters were healthy to avoid redundant Praxis updates.
 	lastRoutingFingerprint string
 	KubeAPI                string
+
+	// Cost configuration
+	CostConfig CostConfig
 
 	// Auth secret for token refresh
 	AuthSecret string
@@ -135,12 +126,8 @@ type FleetController struct {
 // kubeAPI and namespace parameters are optional; when kubeAPI is non-empty a
 // CRDWatcher polls FleetInferencePool resources and FleetIntent/FleetOperation
 // CRDs become the authoritative intent repository.
-func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
-	controller, err := NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
-	if err != nil {
-		panic(err)
-	}
-	return controller
+func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) (*FleetController, error) {
+	return NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
 }
 
 // NewFleetControllerWithLedgerConfig creates a FleetController with an
@@ -198,11 +185,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		if namespace == "" {
 			namespace = "default"
 		}
-		// Read service account token for in-cluster auth.
-		token := ""
-		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-			token = strings.TrimSpace(string(data))
-		}
+		token := readServiceAccountToken()
 		crdWatcher = controller.NewCRDWatcher(kubeAPI, namespace, token, reconciler)
 		intentRepository = intents.NewKubernetesRepository(kubeAPI, namespace, token, nil)
 		autoscalingActuator = actuator.NewModelPlaneActuator(kubeAPI, token)
@@ -244,7 +227,12 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 			{Scorer: scorer.NewLocalityScorer(), Weight: 0.2},
 			{Scorer: scorer.NewKVCacheAffinityScorer(), Weight: 0.2},
 		}),
-		RoutingEvaluator:     policy.NewRoutingPolicyEvaluator(),
+		Routing: &RoutingController{
+			Evaluator:        policy.NewRoutingPolicyEvaluator(),
+			SessionTable:     routing.NewSessionAffinityTable(30 * time.Minute),
+			ClassifierClient: classifierClient,
+			ClassifierCache:  classifier.NewClassificationCache(30 * time.Minute),
+		},
 		LoadBalancer:         balancer.NewWeightedBalancer(),
 		MetricsCollector:     metricsCollector,
 		Optimizer:            optimizer.NewFleetOptimizer(),
@@ -256,6 +244,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		ClusterClient:        clusterClient,
 		EventPublisher:       eventPublisher,
 		PricingTable:         cost.DefaultPricingTable(),
+		CostConfig:           DefaultCostConfig(),
 		Reconciler:           reconciler,
 		CRDWatcher:           crdWatcher,
 		Actuator:             autoscalingActuator,
@@ -271,9 +260,6 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		PraxisOverlay:      praxisOverlay,
 		GridCRDTranslator:  gridTranslator,
 		SWIMSyncAdapter:    swimSync,
-		SessionTable:       routing.NewSessionAffinityTable(30 * time.Minute),
-		ClassifierClient:   classifierClient,
-		ClassifierCache:    classifier.NewClassificationCache(30 * time.Minute),
 		ClusterRepo:        clusterRepo,
 		PoolRepo:           poolRepo,
 		TenantRepo:         tenantRepo,
@@ -414,10 +400,7 @@ func writePraxisConfigMap(kubeAPI, namespace, configYAML string) error {
 	if kubeAPI == "" {
 		return nil
 	}
-	token := ""
-	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-		token = strings.TrimSpace(string(data))
-	}
+	token := readServiceAccountToken()
 
 	payload := fmt.Sprintf(`{"data":{"praxis-ai-config.yaml":%q}}`, configYAML)
 	url := fmt.Sprintf("%s/api/v1/namespaces/%s/configmaps/praxis-ai-config",

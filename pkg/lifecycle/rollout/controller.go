@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -53,6 +54,8 @@ type rolloutRecord struct {
 	state     *RolloutState
 	lifecycle v1alpha1.ModelLifecycleSpec
 }
+
+var ErrRolloutNotFound = errors.New("rollout not found")
 
 type persistedRolloutSnapshot struct {
 	Lifecycle     v1alpha1.ModelLifecycleSpec `json:"lifecycle"`
@@ -271,7 +274,7 @@ func (c *defaultRolloutController) AdvanceRollout(ctx context.Context, rolloutID
 		record, ok = c.loadFromRepo(ctx, rolloutID)
 	}
 	if !ok {
-		return nil, fmt.Errorf("rollout %q not found", rolloutID)
+		return nil, fmt.Errorf("%w: %q", ErrRolloutNotFound, rolloutID)
 	}
 
 	state := cloneRolloutState(record.state)
@@ -340,7 +343,7 @@ func (c *defaultRolloutController) RollbackRollout(ctx context.Context, rolloutI
 		record, ok = c.loadFromRepo(ctx, rolloutID)
 	}
 	if !ok {
-		return nil, fmt.Errorf("rollout %q not found", rolloutID)
+		return nil, fmt.Errorf("%w: %q", ErrRolloutNotFound, rolloutID)
 	}
 
 	state := cloneRolloutState(record.state)
@@ -369,7 +372,7 @@ func (c *defaultRolloutController) GetRolloutState(ctx context.Context, rolloutI
 		record, ok = c.loadFromRepo(ctx, rolloutID)
 	}
 	if !ok {
-		return nil, fmt.Errorf("rollout %q not found", rolloutID)
+		return nil, fmt.Errorf("%w: %q", ErrRolloutNotFound, rolloutID)
 	}
 
 	return cloneRolloutState(record.state), nil

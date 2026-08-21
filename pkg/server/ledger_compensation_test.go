@@ -34,7 +34,7 @@ func (failingLedgerClient) VerifyProof(context.Context, string, string) (*ledger
 
 func controllerWithFailingConfiguredLedger(t *testing.T) *FleetController {
 	t.Helper()
-	fc := NewFleetController("", "", "", "", "")
+	fc := newTestFleetController(t)
 	fc.FleetRecorder = ledger.NewFleetRecorder(failingLedgerClient{}, "test", "test")
 	fc.LedgerGatewayURL = "https://ledger.example.test"
 	return fc

@@ -12,6 +12,7 @@ import (
 // an authenticated caller. The original bearer token must still be valid.
 func (fc *FleetController) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	claims := auth.GetClaims(r)
 	if claims == nil {
 		writeError(w, http.StatusUnauthorized, "valid token required for refresh")

@@ -100,7 +100,6 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 docker-build:
 	docker build -t $(REGISTRY)/fleet-controller:$(VERSION) -f deploy/docker/Dockerfile.controller .
 	docker build -t $(REGISTRY)/fleet-agent:$(VERSION) -f deploy/docker/Dockerfile.agent .
-	docker build -t $(REGISTRY)/fleet-gateway:$(VERSION) -f deploy/docker/Dockerfile.gateway .
 
 # ──────────────────────────────────────────────
 # Benchmarks
