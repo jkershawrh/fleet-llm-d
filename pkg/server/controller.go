@@ -214,13 +214,26 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		}
 	}
 
+	// Classification carries prompt text, so the channel is TLS by default.
+	// SEMANTIC_CLASSIFIER_INSECURE opts into plaintext for local development.
 	classifierEndpoint := os.Getenv("SEMANTIC_CLASSIFIER_URL")
-	classifierClient, err := classifier.NewClassifierClient(classifierEndpoint)
+	classifierInsecure := os.Getenv("SEMANTIC_CLASSIFIER_INSECURE") == "true"
+
+	var classifierClient classifier.ClassifierClient
+	if classifierInsecure {
+		classifierClient, err = classifier.NewInsecureClassifierClient(classifierEndpoint)
+	} else {
+		classifierClient, err = classifier.NewClassifierClient(classifierEndpoint, os.Getenv("SEMANTIC_CLASSIFIER_CA"))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("initialize semantic classifier client: %w", err)
 	}
 	if classifierEndpoint != "" {
-		slog.Info("semantic classifier enabled", "endpoint", classifierEndpoint)
+		slog.Info("semantic classifier enabled", "endpoint", classifierEndpoint, "tls", !classifierInsecure)
+		if classifierInsecure {
+			slog.Warn("semantic classifier connection is PLAINTEXT: prompt text crosses the network unencrypted. " +
+				"Unset SEMANTIC_CLASSIFIER_INSECURE outside local development.")
+		}
 	}
 
 	fc := &FleetController{

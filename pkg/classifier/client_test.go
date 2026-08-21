@@ -7,7 +7,7 @@ import (
 )
 
 func TestDisabledClientReturnsNil(t *testing.T) {
-	client, err := NewClassifierClient("")
+	client, err := NewClassifierClient("", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
