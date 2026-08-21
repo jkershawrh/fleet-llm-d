@@ -162,6 +162,7 @@ func validateAgentURL(field, value string) error {
 
 func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var report agentMetricsReport
 	if err := decodeAgentReport(w, r, &report); err != nil {
 		errorsTotal.Inc()
@@ -204,6 +205,7 @@ func (fc *FleetController) handleAgentMetrics(w http.ResponseWriter, r *http.Req
 
 func (fc *FleetController) handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var report agentEventReport
 	if err := decodeAgentReport(w, r, &report); err != nil {
 		errorsTotal.Inc()

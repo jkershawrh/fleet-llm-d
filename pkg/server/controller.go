@@ -122,6 +122,9 @@ type FleetController struct {
 	lastRoutingFingerprint string
 	KubeAPI                string
 
+	// Cost configuration
+	CostConfig CostConfig
+
 	// Auth secret for token refresh
 	AuthSecret string
 
@@ -248,6 +251,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		ClusterClient:        clusterClient,
 		EventPublisher:       eventPublisher,
 		PricingTable:         cost.DefaultPricingTable(),
+		CostConfig:           DefaultCostConfig(),
 		Reconciler:           reconciler,
 		CRDWatcher:           crdWatcher,
 		Actuator:             autoscalingActuator,

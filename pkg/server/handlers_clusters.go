@@ -56,6 +56,7 @@ func (fc *FleetController) registerCluster(ctx context.Context, reg client.Clust
 // handleListClusters returns all registered clusters.
 func (fc *FleetController) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	clusters, err := fc.ClusterClient.ListClusters(r.Context())
 	if err != nil {
 		errorsTotal.Inc()
@@ -68,6 +69,7 @@ func (fc *FleetController) handleListClusters(w http.ResponseWriter, r *http.Req
 // handleRegisterCluster registers a new cluster.
 func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var req clusterRegistrationRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		errorsTotal.Inc()
@@ -110,6 +112,7 @@ func (fc *FleetController) handleRegisterCluster(w http.ResponseWriter, r *http.
 // handleDeregisterCluster removes a cluster by ID.
 func (fc *FleetController) handleDeregisterCluster(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "cluster id is required")

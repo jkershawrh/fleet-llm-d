@@ -19,6 +19,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target interface{}) erro
 // handleListTenants returns all tenants.
 func (fc *FleetController) handleListTenants(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	tenants, err := fc.TenantRepo.List(r.Context())
 	if err != nil {
 		errorsTotal.Inc()
@@ -90,6 +91,7 @@ func (fc *FleetController) handleCreateTenant(w http.ResponseWriter, r *http.Req
 // handleTenantUsage returns usage for a specific tenant.
 func (fc *FleetController) handleTenantUsage(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "tenant id is required")

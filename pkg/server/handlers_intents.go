@@ -21,6 +21,7 @@ import (
 // as deferred; "executed" is reserved for a verified SUCCEEDED operation.
 func (fc *FleetController) handleIntent(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var intent intents.FleetIntent
 	if err := decodeJSON(w, r, &intent); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid intent JSON: "+err.Error())
@@ -152,6 +153,7 @@ func (fc *FleetController) submitIntent(ctx context.Context, intent intents.Flee
 
 func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	var intent intents.FleetIntent
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
@@ -212,6 +214,7 @@ func (fc *FleetController) handleSubmitIntentV2(w http.ResponseWriter, r *http.R
 }
 
 func (fc *FleetController) handleGetIntentV2(w http.ResponseWriter, r *http.Request) {
+	defer ObserveRequest(time.Now())
 	intent, err := fc.IntentService.GetIntent(r.Context(), r.PathValue("id"))
 	if errors.Is(err, intents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "intent not found")
@@ -225,6 +228,7 @@ func (fc *FleetController) handleGetIntentV2(w http.ResponseWriter, r *http.Requ
 }
 
 func (fc *FleetController) handleGetOperationV2(w http.ResponseWriter, r *http.Request) {
+	defer ObserveRequest(time.Now())
 	operation, err := fc.IntentService.GetOperation(r.Context(), r.PathValue("id"))
 	if errors.Is(err, intents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "operation not found")
@@ -238,6 +242,7 @@ func (fc *FleetController) handleGetOperationV2(w http.ResponseWriter, r *http.R
 }
 
 func (fc *FleetController) handleApproveOperationV2(w http.ResponseWriter, r *http.Request) {
+	defer ObserveRequest(time.Now())
 	operation, err := fc.IntentService.Approve(r.Context(), r.PathValue("id"), RequestActor(r))
 	if errors.Is(err, intents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "operation not found")
@@ -255,6 +260,7 @@ func (fc *FleetController) handleApproveOperationV2(w http.ResponseWriter, r *ht
 }
 
 func (fc *FleetController) handleCancelOperationV2(w http.ResponseWriter, r *http.Request) {
+	defer ObserveRequest(time.Now())
 	operation, err := fc.IntentService.Cancel(r.Context(), r.PathValue("id"), RequestActor(r))
 	if errors.Is(err, intents.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "operation not found")

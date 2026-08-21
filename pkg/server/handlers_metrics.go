@@ -2,11 +2,13 @@ package server
 
 import (
 	"net/http"
+	"time"
 )
 
 // handleFleetMetrics returns fleet-wide aggregated metrics.
 func (fc *FleetController) handleFleetMetrics(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	clusters, err := fc.ClusterClient.ListClusters(r.Context())
 	if err != nil {
 		errorsTotal.Inc()
@@ -29,6 +31,7 @@ func (fc *FleetController) handleFleetMetrics(w http.ResponseWriter, r *http.Req
 // handleModelMetrics returns metrics for a specific model.
 func (fc *FleetController) handleModelMetrics(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	model := r.PathValue("model")
 	if model == "" {
 		writeError(w, http.StatusBadRequest, "model name is required")

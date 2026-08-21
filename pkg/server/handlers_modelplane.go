@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/cost"
 	"github.com/llm-d/fleet-llm-d/pkg/modelplane"
@@ -11,6 +12,7 @@ import (
 // handleModelPlaneClusters returns the most recently watched ModelPlane clusters.
 func (fc *FleetController) handleModelPlaneClusters(w http.ResponseWriter, _ *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	if fc.ModelPlaneWatcher == nil {
 		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
 		return
@@ -21,6 +23,7 @@ func (fc *FleetController) handleModelPlaneClusters(w http.ResponseWriter, _ *ht
 // handleModelPlaneDeployments returns the most recently watched ModelPlane deployments.
 func (fc *FleetController) handleModelPlaneDeployments(w http.ResponseWriter, _ *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	if fc.ModelPlaneWatcher == nil {
 		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
 		return
@@ -31,6 +34,7 @@ func (fc *FleetController) handleModelPlaneDeployments(w http.ResponseWriter, _ 
 // handleModelPlaneDeploymentCost returns the hourly cost of a ModelPlane deployment.
 func (fc *FleetController) handleModelPlaneDeploymentCost(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
+	defer ObserveRequest(time.Now())
 	if fc.ModelPlaneWatcher == nil {
 		writeError(w, http.StatusServiceUnavailable, "ModelPlane integration not configured")
 		return
