@@ -11,7 +11,7 @@ import (
 
 func TestRewireRepositoriesReplacesAllPersistenceConsumers(t *testing.T) {
 	ctx := context.Background()
-	fc := NewFleetController("", "", "", "", "")
+	fc := newTestFleetController(t)
 	oldClusterRepo := fc.ClusterRepo
 	newClusterRepo := postgres.NewInMemoryClusterRepository()
 	newPoolRepo := postgres.NewInMemoryFleetPoolRepository()

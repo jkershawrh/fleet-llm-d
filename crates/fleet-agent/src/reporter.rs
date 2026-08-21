@@ -61,7 +61,10 @@ impl MetricsReporter {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
-                .unwrap_or_default(),
+                .unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "reporter: failed to build default HTTP client");
+                    reqwest::Client::default()
+                }),
         }
     }
 
@@ -91,7 +94,10 @@ impl MetricsReporter {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
-        builder.build().unwrap_or_default()
+        builder.build().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "reporter: failed to build HTTP client, falling back to defaults");
+            reqwest::Client::default()
+        })
     }
 
     /// Override the default collection interval.

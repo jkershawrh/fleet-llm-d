@@ -15,7 +15,7 @@ import (
 )
 
 func TestGridSyncLoop_NilTranslator_ReturnsImmediately(t *testing.T) {
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	fc.GridCRDTranslator = nil
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -35,7 +35,7 @@ func TestGridSyncLoop_TranslatesAllClusters(t *testing.T) {
 	}))
 	defer mockAPI.Close()
 
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	fc.GridCRDTranslator = routing.NewGridCRDTranslator(mockAPI.URL, "fleet-llm-d", "", "test-grid")
 	fc.SWIMSyncAdapter = nil
 
@@ -65,7 +65,7 @@ func TestGridSyncLoop_TranslatesAllPools(t *testing.T) {
 	}))
 	defer mockAPI.Close()
 
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	fc.GridCRDTranslator = routing.NewGridCRDTranslator(mockAPI.URL, "fleet-llm-d", "", "test-grid")
 	fc.SWIMSyncAdapter = nil
 
@@ -99,7 +99,7 @@ func TestGridSyncLoop_SWIMSyncUpdatesClusterStatus(t *testing.T) {
 	}))
 	defer mockAPI.Close()
 
-	fc := NewFleetController("", "http://vllm", "http://ovms", "", "")
+	fc := newTestFleetController(t)
 	fc.GridCRDTranslator = routing.NewGridCRDTranslator(mockAPI.URL, "fleet-llm-d", "", "test-grid")
 	fc.SWIMSyncAdapter = client.NewSWIMSyncAdapter(mockAPI.URL, "", fc.ClusterRepo)
 
@@ -165,7 +165,7 @@ func TestGridSyncLoop_DoesNotPublishSuccessAfterApplyFailure(t *testing.T) {
 	}))
 	defer mockAPI.Close()
 
-	fc := NewFleetController("", "", "", "", "")
+	fc := newTestFleetController(t)
 	fc.GridCRDTranslator = routing.NewGridCRDTranslator(mockAPI.URL, "fleet-llm-d", "", "test-grid")
 	fc.SWIMSyncAdapter = nil
 	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "arena", Name: "arena", Status: "Running"}); err != nil {

@@ -29,8 +29,12 @@ type GridCRDTranslator struct {
 func NewGridCRDTranslator(apiServer, namespace, token, gridNetwork string) *GridCRDTranslator {
 	tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
 	if err != nil {
-		slog.Warn("grid translator: failed to load Kubernetes CA", "error", err)
-		tlsConfig, _ = tlsutil.NewTLSConfig(tlsutil.TLSOptions{})
+		slog.Warn("grid translator: failed to load Kubernetes CA, falling back to system CA", "error", err)
+		var fallbackErr error
+		tlsConfig, fallbackErr = tlsutil.NewTLSConfig(tlsutil.TLSOptions{})
+		if fallbackErr != nil {
+			slog.Error("grid translator: system CA fallback also failed", "error", fallbackErr)
+		}
 	}
 	return &GridCRDTranslator{
 		apiServer:   strings.TrimRight(apiServer, "/"),

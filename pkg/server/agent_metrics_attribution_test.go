@@ -30,7 +30,7 @@ func TestAgentMetricsReachTheAutoscaler(t *testing.T) {
 		poolName  = "llama-70b"
 	)
 
-	fc := NewFleetController("", "", "", "", "")
+	fc := newTestFleetController(t)
 
 	reconciler := controller.NewReconciler(
 		solver.NewConstraintSolver(),
@@ -117,7 +117,7 @@ func TestAgentMetricsReachTheAutoscaler(t *testing.T) {
 // TestAttributeAgentSampleSkipsUnplacedPools asserts a cluster's load is only
 // credited to pools actually placed on it.
 func TestAttributeAgentSampleSkipsUnplacedPools(t *testing.T) {
-	fc := NewFleetController("", "", "", "", "")
+	fc := newTestFleetController(t)
 
 	reconciler := controller.NewReconciler(
 		solver.NewConstraintSolver(),
@@ -157,7 +157,7 @@ func TestAttributeAgentSampleSkipsUnplacedPools(t *testing.T) {
 // TestAttributeAgentSampleWithoutReconciler covers inference-mode and test
 // wiring where no reconciler is attached.
 func TestAttributeAgentSampleWithoutReconciler(t *testing.T) {
-	fc := NewFleetController("", "", "", "", "")
+	fc := newTestFleetController(t)
 	fc.Reconciler = nil
 
 	got := fc.attributeAgentSample("anywhere", collectorSample())

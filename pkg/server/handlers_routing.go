@@ -34,6 +34,7 @@ type routeResponse struct {
 }
 
 func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http.Request) {
+	defer ObserveRequest(time.Now())
 	var req routeRequest
 	// Bounded like every other request body on this server: prompt text is
 	// caller-supplied and must not be able to exhaust memory.
@@ -105,7 +106,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 
 	decision, err := fc.RoutingEvaluator.Evaluate(ctx, routingReq, health, routingPolicy)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("routing failed: %v", err), http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("routing failed: %v", err))
 		return
 	}
 

@@ -147,7 +147,10 @@ impl PolicyEnforcerImpl {
         } else if tls_insecure {
             builder = builder.danger_accept_invalid_certs(true);
         }
-        let client = builder.build().unwrap_or_default();
+        let client = builder.build().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "enforcer: failed to build HTTP client, falling back to defaults");
+            reqwest::Client::default()
+        });
         let url = format!(
             "{}/api/v1/agent/policies/{}",
             control_plane_url.trim_end_matches('/'),

@@ -135,12 +135,8 @@ type FleetController struct {
 // kubeAPI and namespace parameters are optional; when kubeAPI is non-empty a
 // CRDWatcher polls FleetInferencePool resources and FleetIntent/FleetOperation
 // CRDs become the authoritative intent repository.
-func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) *FleetController {
-	controller, err := NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
-	if err != nil {
-		panic(err)
-	}
-	return controller
+func NewFleetController(ledgerEndpoint, backendVLLM, backendOVMS, kubeAPI, namespace string) (*FleetController, error) {
+	return NewFleetControllerWithLedgerConfig(ledger.Config{Mode: ledger.ModeMemory, Endpoint: ledgerEndpoint}, backendVLLM, backendOVMS, kubeAPI, namespace)
 }
 
 // NewFleetControllerWithLedgerConfig creates a FleetController with an
