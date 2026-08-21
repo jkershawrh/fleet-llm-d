@@ -26,10 +26,10 @@ type PoolMetrics struct {
 	InferenceLatencyP99Ms float64
 
 	// EPP (Endpoint Picker) signals from llm-d
-	PoolSaturation   float64
-	ReadyEndpoints   int
+	PoolSaturation     float64
+	ReadyEndpoints     int
 	KVCacheUtilization float64
-	InflightRequests int
+	InflightRequests   int
 }
 
 // ClusterMetrics aggregates pool-level metrics for a cluster.
@@ -55,26 +55,14 @@ type InMemoryCollector struct {
 // NewMetricsCollector returns a new MetricsCollector pre-seeded with
 // default cluster data so it is usable out of the box.
 func NewMetricsCollector() MetricsCollector {
+	// Deliberately empty. A seeded placeholder row would be indistinguishable
+	// from a real reading to every downstream consumer -- the autoscaler, the
+	// routing health builder, the metrics federation -- and would persist for
+	// the lifetime of the process. An empty collector correctly reports that
+	// no cluster has reported yet.
 	c := &InMemoryCollector{
 		metrics: make(map[string]ClusterMetrics),
 	}
-	// Seed with a default cluster so CollectAll returns data immediately.
-	c.Add(ClusterMetrics{
-		ClusterID: "default-cluster",
-		Pools: []PoolMetrics{
-			{
-				PoolName:       "default-pool",
-				Model:          "default-model",
-				Replicas:       1,
-				QueueDepth:     0,
-				TTFT_P99_Ms:    50.0,
-				Throughput_TPS: 10.0,
-				GPUUtilization: 0.50,
-				KVCacheHitRate: 0.80,
-			},
-		},
-		Timestamp: time.Now(),
-	})
 	return c
 }
 

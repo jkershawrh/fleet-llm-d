@@ -6,37 +6,72 @@ import (
 	"time"
 )
 
+// TestNewMetricsCollectorStartsEmpty is the regression guard for a collector
+// that used to seed itself with an invented "default-cluster" reading. That
+// row was indistinguishable from real telemetry to every consumer and never
+// expired, so a fresh collector must report exactly what it has: nothing.
+func TestNewMetricsCollectorStartsEmpty(t *testing.T) {
+	mc := NewMetricsCollector()
+
+	clusters, err := mc.CollectAll(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(clusters) != 0 {
+		t.Fatalf("a new collector reported %d clusters (%+v); it must start empty", len(clusters), clusters)
+	}
+}
+
 func TestCollectAll(t *testing.T) {
 	tests := []struct {
 		name         string
+		seed         []ClusterMetrics
+		wantClusters int
 		wantMinPools int
-		wantErr      bool
 	}{
 		{
-			name:         "returns cluster metrics with pool data",
+			name: "returns cluster metrics with pool data",
+			seed: []ClusterMetrics{{
+				ClusterID: "east",
+				Pools: []PoolMetrics{{
+					PoolName:       "llama-70b",
+					Model:          "llama-70b",
+					Replicas:       2,
+					TTFT_P99_Ms:    50.0,
+					Throughput_TPS: 10.0,
+					GPUUtilization: 0.50,
+					KVCacheHitRate: 0.80,
+				}},
+				Timestamp: time.Now(),
+			}},
+			wantClusters: 1,
 			wantMinPools: 1,
-			wantErr:      false,
+		},
+		{
+			name: "reports every cluster that has sent a sample",
+			seed: []ClusterMetrics{
+				{ClusterID: "east", Pools: []PoolMetrics{{PoolName: "a"}}, Timestamp: time.Now()},
+				{ClusterID: "west", Pools: []PoolMetrics{{PoolName: "a"}}, Timestamp: time.Now()},
+			},
+			wantClusters: 2,
+			wantMinPools: 1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mc := NewMetricsCollector()
-			clusters, err := mc.CollectAll(context.Background())
-
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
+			for _, sample := range tt.seed {
+				mc.Add(sample)
 			}
 
+			clusters, err := mc.CollectAll(context.Background())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if len(clusters) == 0 {
-				t.Fatal("expected at least one cluster, got none")
+			if len(clusters) != tt.wantClusters {
+				t.Fatalf("got %d clusters, want %d", len(clusters), tt.wantClusters)
 			}
 
 			for _, cluster := range clusters {
