@@ -1145,6 +1145,15 @@ paths:
         "503": {description: No compatible healthy provider is available}
         "504": {description: Inference deadline exceeded}
 
+  /api/v1/capabilities:
+    get:
+      operationId: listInferenceCapabilities
+      summary: Report model availability and HA status
+      tags: [inference]
+      responses:
+        "200":
+          description: Capability status with healthy providers and required HA count
+
 components:
   # ---------- security schemes ----------
   securitySchemes:

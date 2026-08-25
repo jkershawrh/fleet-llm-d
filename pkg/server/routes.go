@@ -111,6 +111,7 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 	if mode == "all" || mode == "inference" {
 		mux.HandleFunc("POST /v1/chat/completions", fc.handleChatCompletions)
 		mux.HandleFunc("POST /v1/completions", fc.handleCompletions)
+		mux.HandleFunc("GET /api/v1/capabilities", fc.handleCapabilities)
 	}
 
 	// Platform metrics (unified view across all systems)

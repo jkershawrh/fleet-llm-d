@@ -186,6 +186,7 @@ var (
 	agentReadyEndpoints   = newLabeledFloatGauge()
 	agentKVCacheUtil      = newLabeledFloatGauge()
 	agentInflightRequests = newLabeledFloatGauge()
+	agentLastSeen         = newLabeledFloatGauge()
 )
 
 // ObserveRequest records a request's duration. Call with defer.
@@ -220,6 +221,7 @@ func UpdateAgentMetrics(clusterID string, throughput, ttftP50, ttftP99, queueDep
 	agentReadyEndpoints.Set(clusterID, readyEndpoints)
 	agentKVCacheUtil.Set(clusterID, kvCacheUtil)
 	agentInflightRequests.Set(clusterID, inflightRequests)
+	agentLastSeen.Set(clusterID, float64(time.Now().Unix()))
 }
 
 // InitGauges initializes metric gauges from existing persistent data.
@@ -277,6 +279,7 @@ func handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 	writeGaugeVecFloat(w, "fleet_ready_endpoints", "Ready inference endpoints from EPP by cluster", "cluster", agentReadyEndpoints.snapshot())
 	writeGaugeVecFloat(w, "fleet_kv_cache_utilization", "KV cache utilization (0-1) from EPP by cluster", "cluster", agentKVCacheUtil.snapshot())
 	writeGaugeVecFloat(w, "fleet_inflight_requests", "Inflight requests from EPP by cluster", "cluster", agentInflightRequests.snapshot())
+	writeGaugeVecFloat(w, "fleet_agent_last_seen_timestamp_seconds", "Unix timestamp of the latest agent metrics by cluster", "cluster", agentLastSeen.snapshot())
 
 	// Process metrics
 	var ms runtime.MemStats

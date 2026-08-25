@@ -60,6 +60,7 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "cluster_id is required")
 		return
 	}
+	agentLastSeen.Set(report.ClusterID, float64(time.Now().Unix()))
 	if report.Name == "" {
 		report.Name = report.ClusterID
 	}

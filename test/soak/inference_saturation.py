@@ -6,7 +6,7 @@ Stops when error rate exceeds 5% or latency exceeds 30s.
 
 Usage:
     python3 test/soak/inference_saturation.py \
-        --praxis-url https://praxis-ai-fleet-llm-d.apps.oberon.fm2aihpcsed.com \
+        --fleet-url https://fleet-inference-gateway-fleet-llm-d.apps.oberon.fm2aihpcsed.com \
         --model granite-2b-cpu \
         --max-concurrency 50 \
         --duration-per-level 30
@@ -107,14 +107,17 @@ async def run_level(client, url, model, concurrency, duration):
 
 async def main():
     parser = argparse.ArgumentParser(description="Inference saturation test")
-    parser.add_argument("--praxis-url", required=True)
+    parser.add_argument("--fleet-url", required=True)
+    parser.add_argument("--token", default="", help="Fleet bearer token")
+    parser.add_argument("--insecure", action="store_true", help="Disable TLS verification for development only")
     parser.add_argument("--model", default="granite-2b-cpu")
     parser.add_argument("--max-concurrency", type=int, default=50)
     parser.add_argument("--duration-per-level", type=int, default=30)
     parser.add_argument("--step", type=int, default=5)
     args = parser.parse_args()
 
-    url = f"{args.praxis_url.rstrip('/')}/v1/chat/completions"
+    url = f"{args.fleet_url.rstrip('/')}/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
 
     print(f"\n{'='*70}", file=sys.stderr)
     print(f"INFERENCE SATURATION TEST", file=sys.stderr)
@@ -134,7 +137,7 @@ async def main():
     all_results = []
     broke = False
 
-    async with httpx.AsyncClient(verify=False, http2=True) as client:
+    async with httpx.AsyncClient(verify=not args.insecure, http2=True, headers=headers) as client:
         levels = [1, 2, 3] + list(range(args.step, args.max_concurrency + 1, args.step))
         for conc in levels:
             result = await run_level(client, url, args.model, conc, args.duration_per_level)
