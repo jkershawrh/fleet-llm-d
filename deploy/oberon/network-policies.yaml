@@ -209,6 +209,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: fleet-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-inference-gateway
       ports:
         - port: 5432
           protocol: TCP

@@ -42,15 +42,15 @@ data:
               # public callers from reaching this listener directly.
               - path_prefix: "/"
                 headers:
-                  x-fleet-target-cluster: "oberon"
+                  x-fleet-target-cluster: "oberon-cpu"
                 cluster: oberon-cpu
               - path_prefix: "/"
                 headers:
-                  x-fleet-target-cluster: "arena"
+                  x-fleet-target-cluster: "arena-xeon6"
                 cluster: arena-cpu
               - path_prefix: "/"
                 headers:
-                  x-fleet-target-cluster: "brutus"
+                  x-fleet-target-cluster: "brutus-h100"
                 cluster: brutus-gpu
               # --- Oberon-local backends (cluster DNS) ---
 
@@ -100,6 +100,26 @@ data:
               - path_prefix: "/"
                 cluster: ovms-granite-2b
 
+          # The deployed Praxis release predates per-cluster HTTP authority.
+          # Set the OpenShift Route Host conditionally while TLS SNI and CA
+          # verification remain owned by the selected upstream cluster.
+          - filter: headers
+            request_set:
+              - name: host
+                value: ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com
+            conditions:
+              - when:
+                  headers:
+                    x-fleet-target-cluster: arena-xeon6
+          - filter: headers
+            request_set:
+              - name: host
+                value: vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com
+            conditions:
+              - when:
+                  headers:
+                    x-fleet-target-cluster: brutus-h100
+
           - filter: token_count
             provider: openai
 
@@ -128,6 +148,8 @@ data:
                 tls:
                   sni: "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com"
                   verify: true
+                  ca:
+                    ca_path: /etc/praxis/route-ca/ca-bundle.crt
                 total_connection_timeout_ms: 5000
                 read_timeout_ms: 180000
                 max_connections: 100
@@ -146,6 +168,8 @@ data:
                 tls:
                   sni: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
                   verify: true
+                  ca:
+                    ca_path: /etc/praxis/route-ca/ca-bundle.crt
                 total_connection_timeout_ms: 5000
                 read_timeout_ms: 180000
                 max_connections: 32
@@ -178,6 +202,8 @@ data:
                 tls:
                   sni: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
                   verify: true
+                  ca:
+                    ca_path: /etc/praxis/route-ca/ca-bundle.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -210,7 +236,7 @@ spec:
               app.kubernetes.io/name: praxis-ai
       containers:
         - name: praxis-ai
-          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/praxis-ai:latest
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/praxis-ai@sha256:fc33e12166005d5ad57216a35f5162dab6711cb947f89b47392bd299a657c33c
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -246,10 +272,16 @@ spec:
             - name: config
               mountPath: /etc/praxis
               readOnly: true
+            - name: route-ca
+              mountPath: /etc/praxis/route-ca
+              readOnly: true
       volumes:
         - name: config
           configMap:
             name: praxis-ai-config
+        - name: route-ca
+          configMap:
+            name: fleet-route-ca
 ---
 apiVersion: v1
 kind: Service

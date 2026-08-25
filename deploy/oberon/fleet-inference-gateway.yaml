@@ -62,6 +62,10 @@ spec:
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
           livenessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 15
@@ -109,3 +113,56 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: fleet-inference-gateway
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fleet-inference-gateway-egress
+  namespace: fleet-llm-d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-inference-gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+        - ipBlock:
+            cidr: 172.30.0.10/32
+        - ipBlock:
+            cidr: 10.128.0.0/14
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+          podSelector:
+            matchLabels:
+              dns.operator.openshift.io/daemonset-dns: default
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+        - {protocol: UDP, port: 5353}
+        - {protocol: TCP, port: 5353}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: fleet-postgres
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: praxis-ai
+      ports:
+        - {protocol: TCP, port: 8080}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llm-d-semantic-classifier
+      ports:
+        - {protocol: TCP, port: 50051}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: immutable-ledger
+      ports:
+        - {protocol: TCP, port: 28099}

@@ -79,7 +79,7 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	if physicalModel == "" {
 		physicalModel = defaultCPUModel
 	}
-	if decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || decision.TargetCluster == "brutus" {
+	if decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || strings.HasPrefix(decision.TargetCluster, "brutus") {
 		physicalModel = fc.GPUPhysicalModel
 		if physicalModel == "" {
 			physicalModel = defaultGPUModel

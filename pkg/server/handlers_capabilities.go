@@ -21,8 +21,8 @@ func (fc *FleetController) handleCapabilities(w http.ResponseWriter, r *http.Req
 		healthy[site.ClusterID] = site.Healthy
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"capabilities": []capabilityStatus{
-		capabilityFor(defaultCPUModel, []string{"oberon", "arena"}, healthy),
-		capabilityFor(defaultGPUModel, []string{"brutus"}, healthy),
+		capabilityFor(defaultCPUModel, []string{"oberon-cpu", "arena-xeon6"}, healthy),
+		capabilityFor(defaultGPUModel, []string{"brutus-h100"}, healthy),
 	}})
 }
 
