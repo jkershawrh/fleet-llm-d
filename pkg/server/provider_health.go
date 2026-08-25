@@ -14,9 +14,16 @@ import (
 )
 
 type providerHealthEntry struct {
-	healthy   bool
-	checkedAt time.Time
+	healthy              bool
+	checkedAt            time.Time
+	consecutiveSuccesses int
+	consecutiveFailures  int
 }
+
+const (
+	providerHealthyThreshold   = 2
+	providerUnhealthyThreshold = 3
+)
 
 // ProviderHealthCache actively verifies inference endpoints. Configured
 // providers fail closed: repository or agent health cannot override a failed
@@ -69,19 +76,66 @@ func (p *ProviderHealthCache) Healthy(ctx context.Context, clusterID string) (bo
 	}
 	p.mu.Unlock()
 
+	return p.probe(ctx, clusterID, url), true
+}
+
+func (p *ProviderHealthCache) probe(ctx context.Context, clusterID, url string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	healthy := false
+	probeSucceeded := false
 	if err == nil {
 		resp, requestErr := p.client.Do(req)
 		if requestErr == nil {
-			healthy = resp.StatusCode >= 200 && resp.StatusCode < 300
+			probeSucceeded = resp.StatusCode >= 200 && resp.StatusCode < 300
 			_ = resp.Body.Close()
 		}
 	}
 	p.mu.Lock()
-	p.entries[clusterID] = providerHealthEntry{healthy: healthy, checkedAt: now}
+	entry := p.entries[clusterID]
+	entry.checkedAt = p.now()
+	if probeSucceeded {
+		entry.consecutiveSuccesses++
+		entry.consecutiveFailures = 0
+		if entry.consecutiveSuccesses >= providerHealthyThreshold {
+			entry.healthy = true
+		}
+	} else {
+		entry.consecutiveFailures++
+		entry.consecutiveSuccesses = 0
+		if entry.consecutiveFailures >= providerUnhealthyThreshold {
+			entry.healthy = false
+		}
+	}
+	p.entries[clusterID] = entry
 	p.mu.Unlock()
-	return healthy, true
+	return entry.healthy
+}
+
+// Start continuously probes every configured provider. Routing therefore
+// converges even when no client requests are arriving.
+func (p *ProviderHealthCache) Start(ctx context.Context) {
+	if p == nil {
+		return
+	}
+	go func() {
+		probeAll := func() {
+			for clusterID, url := range p.urls {
+				probeCtx, cancel := context.WithTimeout(ctx, p.client.Timeout)
+				p.probe(probeCtx, clusterID, url)
+				cancel()
+			}
+		}
+		probeAll()
+		ticker := time.NewTicker(p.ttl)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				probeAll()
+			}
+		}
+	}()
 }
 
 func (fc *FleetController) BuildInferenceClusterHealth(ctx context.Context) []policy.ClusterHealth {

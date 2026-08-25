@@ -32,11 +32,28 @@ func TestProviderHealthCacheFailsClosedAndCaches(t *testing.T) {
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1 cached probe", requests)
 	}
-	cache.mu.Lock()
-	cache.entries["arena-xeon6"] = providerHealthEntry{healthy: false, checkedAt: time.Now().Add(-2 * time.Minute)}
-	cache.mu.Unlock()
+	for i := 0; i < providerHealthyThreshold; i++ {
+		cache.mu.Lock()
+		entry := cache.entries["arena-xeon6"]
+		entry.checkedAt = time.Now().Add(-2 * time.Minute)
+		cache.entries["arena-xeon6"] = entry
+		cache.mu.Unlock()
+		cache.Healthy(context.Background(), "arena-xeon6")
+	}
 	if healthy, _ := cache.Healthy(context.Background(), "arena-xeon6"); !healthy {
 		t.Fatal("provider did not recover after successful probe")
+	}
+	status = http.StatusServiceUnavailable
+	for i := 0; i < providerUnhealthyThreshold; i++ {
+		cache.mu.Lock()
+		entry := cache.entries["arena-xeon6"]
+		entry.checkedAt = time.Now().Add(-2 * time.Minute)
+		cache.entries["arena-xeon6"] = entry
+		cache.mu.Unlock()
+		cache.Healthy(context.Background(), "arena-xeon6")
+	}
+	if healthy, _ := cache.Healthy(context.Background(), "arena-xeon6"); healthy {
+		t.Fatal("provider remained healthy after consecutive failed probes")
 	}
 }
 

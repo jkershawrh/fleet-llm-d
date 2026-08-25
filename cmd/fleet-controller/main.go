@@ -158,6 +158,7 @@ func main() {
 			os.Exit(1)
 		}
 		fc.ProviderHealth = providerHealth
+		providerHealth.Start(context.Background())
 		slog.Info("active provider health probes enabled", "providers", len(providerURLs))
 	}
 	if *inferenceMaxInflight > 0 {
