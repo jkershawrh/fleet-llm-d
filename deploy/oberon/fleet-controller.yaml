@@ -88,7 +88,10 @@ spec:
               value: fleet-llm-d-grid
           readinessProbe:
             httpGet:
-              path: /readyz
+              # Service membership is controlled by the elected-leader pod
+              # label, so standby process readiness must not depend on CRD
+              # watcher ownership.
+              path: /healthz
               port: 8080
             initialDelaySeconds: 3
             periodSeconds: 10
