@@ -98,3 +98,5 @@ spec:
       ports:
         - port: 8080
           protocol: TCP
+        - port: 8443
+          protocol: TCP

@@ -14,7 +14,28 @@ spec:
     kind: Service
     name: ovms-granite-2b
   port:
-    targetPort: http
+    targetPort: https
   tls:
-    termination: edge
+    termination: reencrypt
     insecureEdgeTerminationPolicy: Redirect
+    destinationCACertificate: |-
+      -----BEGIN CERTIFICATE-----
+      MIIDUTCCAjmgAwIBAgIIDJAmXSm4a0kwDQYJKoZIhvcNAQELBQAwNjE0MDIGA1UE
+      Awwrb3BlbnNoaWZ0LXNlcnZpY2Utc2VydmluZy1zaWduZXJAMTc4NDE3MTgyODAe
+      Fw0yNjA3MTYwMzE3MDdaFw0yODA5MTMwMzE3MDhaMDYxNDAyBgNVBAMMK29wZW5z
+      aGlmdC1zZXJ2aWNlLXNlcnZpbmctc2lnbmVyQDE3ODQxNzE4MjgwggEiMA0GCSqG
+      SIb3DQEBAQUAA4IBDwAwggEKAoIBAQC9Lv6Hxlhm/kT25SmnwQBziqOXR+TloiKQ
+      FJ614hICr6hkg5sruXPEu3x8q26aDq9EylSv7ZKok0d+IGX9PvnN2DZuTHguwiW9
+      iaKRwm1OC+Lg3yfoag27SdxrkQTj9nX6Dc6S3QHRQpciFJAuex2IN0/6fqx/x6y4
+      bi1WeyFNBcB+WP9/VKWmqjD6VKBl6ZhPY7+VI4Dxk0s4T4JULHCOTInc8ySkqvMw
+      vr6cQwjmCzY7XOgNF4CBYOyRkgYxW5yGMqYMsXUMHu+TS3iz26T9lxEHi8MREf7S
+      E29w4PqgDRl8N4YsHWeMI8qaKLB6sgaGleQ4TmD3obywVbFFtVelAgMBAAGjYzBh
+      MA4GA1UdDwEB/wQEAwICpDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR7iBuY
+      3gS4yuFmF2JA5m4nCRH3KTAfBgNVHSMEGDAWgBR7iBuY3gS4yuFmF2JA5m4nCRH3
+      KTANBgkqhkiG9w0BAQsFAAOCAQEAWktu0OEgy/iKATyUSn/buWk03hj6h3jYQ9v3
+      zHTRpx3ECAEdlzwXXJ2NMvZErsiBexlBnuKv62GmgI9rTpXsxNiV9xLex2u5kLxl
+      BqDPmpzcc8GnOcl7aT66WFf3Undz4D26Z7qA5iukGe+7U4D0mU9LXTFMlqS9vD7W
+      HIfga/AyTgd90x3tiLbbF5ZfvRoUCLwwuqFe6vBnxSdlseD/N5K+0/R2r8NkLk8i
+      9PMDwqrERQi7N4C4/0rkCfjOZK6jz+jKsaYn8HytHsSJZ9N1XO/9Uhk3XXYHoRJg
+      dhtgAeDbzghrP/CagItF6HjgtXNxNW+pULa3KLpWWzU9NPkNrQ==
+      -----END CERTIFICATE-----
