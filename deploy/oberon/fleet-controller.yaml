@@ -43,7 +43,7 @@ spec:
             - "--port=8080"
             - "--metrics-port=9091"
             - "--ledger-mode=http"
-            - "--ledger-endpoint=http://ledger-gateway.immutable-ledger.svc:28099"
+            - "--ledger-endpoint=https://ledger-gateway.immutable-ledger.svc:443"
             - "--modelplane-api=http://modelplane-mock.fleet-llm-d.svc:8090"
             - "--modelplane-namespace=default"
             - "--rate-limit=100"
@@ -78,7 +78,14 @@ spec:
             - name: DEEPFIELD_URL
               value: http://deepfield-fleet.fleet-llm-d.svc:8000
             - name: LEDGER_GATEWAY_URL
-              value: http://ledger-gateway.immutable-ledger.svc:28099
+              value: https://ledger-gateway.immutable-ledger.svc:443
+            - name: LEDGER_GATEWAY_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-gateway-auth
+                  key: api-token
+            - name: SSL_CERT_FILE
+              value: /var/run/configmaps/ledger-service-ca/service-ca.crt
             - name: PG_URL
               valueFrom:
                 secretKeyRef:
@@ -108,6 +115,14 @@ spec:
             limits:
               cpu: 1000m
               memory: 512Mi
+          volumeMounts:
+            - name: ledger-service-ca
+              mountPath: /var/run/configmaps/ledger-service-ca
+              readOnly: true
+      volumes:
+        - name: ledger-service-ca
+          configMap:
+            name: openshift-service-ca.crt
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

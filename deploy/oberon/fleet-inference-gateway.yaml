@@ -37,7 +37,7 @@ spec:
             - --metrics-port=9091
             - --praxis-url=http://praxis-ai.fleet-llm-d.svc:8080
             - --ledger-mode=http
-            - --ledger-endpoint=http://ledger-gateway.immutable-ledger.svc:28099
+            - --ledger-endpoint=https://ledger-gateway.immutable-ledger.svc:443
             - --inference-max-inflight=100
             - --rate-limit=50
             - --rate-burst=100
@@ -60,6 +60,11 @@ spec:
               value: '{"oberon-cpu":"http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready","arena-xeon6":"https://ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com/v2/health/ready","brutus-h100":"https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com/health"}'
             - name: FLEET_PROVIDER_CA_FILE
               value: /etc/fleet/route-ca/ca-bundle.crt
+            - name: LEDGER_GATEWAY_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: ledger-gateway-auth, key: api-token}
+            - name: SSL_CERT_FILE
+              value: /var/run/configmaps/ledger-service-ca/service-ca.crt
           ports:
             - {name: http, containerPort: 8080}
             - {name: metrics, containerPort: 9091}
@@ -84,10 +89,16 @@ spec:
             - name: route-ca
               mountPath: /etc/fleet/route-ca
               readOnly: true
+            - name: ledger-service-ca
+              mountPath: /var/run/configmaps/ledger-service-ca
+              readOnly: true
       volumes:
         - name: route-ca
           configMap:
             name: fleet-route-ca
+        - name: ledger-service-ca
+          configMap:
+            name: openshift-service-ca.crt
 ---
 apiVersion: v1
 kind: Service
@@ -188,4 +199,4 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: immutable-ledger
       ports:
-        - {protocol: TCP, port: 28099}
+        - {protocol: TCP, port: 443}

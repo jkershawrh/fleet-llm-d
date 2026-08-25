@@ -126,6 +126,39 @@ func TestInferenceGatewayExactGPUModelUnavailableIsStructured503(t *testing.T) {
 	}
 }
 
+func TestInferenceGatewayGPUAliasCannotDowngradeToCPU(t *testing.T) {
+	var gotCluster, gotModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCluster = r.Header.Get("X-Fleet-Target-Cluster")
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotModel, _ = body["model"].(string)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	fc := newTestFleetController(t)
+	fc.PraxisURL = upstream.URL
+	for _, cluster := range []string{"oberon-cpu", brutusGPUCluster} {
+		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-8b-gpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if gotCluster != brutusGPUCluster || gotModel != defaultGPUModel {
+		t.Fatalf("GPU alias downgraded: cluster=%q model=%q", gotCluster, gotModel)
+	}
+}
+
 func TestInferenceGatewayExactCPUModelCannotEscalateToGPU(t *testing.T) {
 	fc := newTestFleetController(t)
 	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: brutusGPUCluster, Name: brutusGPUCluster, Status: "Running"}); err != nil {

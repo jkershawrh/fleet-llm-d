@@ -21,6 +21,7 @@ import (
 const (
 	defaultCPUModel  = "granite-2b-cpu"
 	defaultGPUModel  = "ibm-granite/granite-3.1-8b-instruct"
+	defaultGPUAlias  = "granite-8b-gpu"
 	brutusGPUCluster = "brutus-h100"
 )
 
@@ -75,6 +76,7 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	requestID := requestID(r)
+	modelClass := fc.requestedModelClass(envelope.Model)
 	tenantID := envelope.TenantID
 	if claims := auth.GetClaims(r); claims != nil {
 		if claims.Role == auth.RoleTenant || tenantID == "" {
@@ -94,7 +96,7 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", err.Error(), requestID)
 		return
 	}
-	if fc.requiresGPUModel(envelope.Model) {
+	if modelClass == "gpu" {
 		if !fc.clusterIsHealthy(r.Context(), brutusGPUCluster) {
 			inferenceErrors.Inc("no_eligible_provider")
 			writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the requested GPU model has no compatible healthy provider", requestID)
@@ -111,7 +113,7 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	if physicalModel == "" {
 		physicalModel = defaultCPUModel
 	}
-	if decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || strings.HasPrefix(decision.TargetCluster, "brutus") {
+	if modelClass == "gpu" || (modelClass == "" && (decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || strings.HasPrefix(decision.TargetCluster, "brutus"))) {
 		physicalModel = fc.GPUPhysicalModel
 		if physicalModel == "" {
 			physicalModel = defaultGPUModel
@@ -224,11 +226,24 @@ func isTimeout(err error) bool {
 }
 
 func (fc *FleetController) requiresGPUModel(requested string) bool {
+	return fc.requestedModelClass(requested) == "gpu"
+}
+
+func (fc *FleetController) requestedModelClass(requested string) string {
+	if requested == "" {
+		return ""
+	}
+	if requested == fc.cpuPhysicalModel() || requested == defaultCPUModel {
+		return "cpu"
+	}
 	gpuModel := fc.GPUPhysicalModel
 	if gpuModel == "" {
 		gpuModel = defaultGPUModel
 	}
-	return requested == gpuModel || requested == defaultGPUModel
+	if requested == gpuModel || requested == defaultGPUModel || requested == defaultGPUAlias {
+		return "gpu"
+	}
+	return ""
 }
 
 func (fc *FleetController) cpuPhysicalModel() string {
