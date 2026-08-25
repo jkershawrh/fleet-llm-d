@@ -30,7 +30,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: fleet-controller
-          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:bbaf44942be6e0980ee9fe129ffd14697c14c9fe037f44b05b5ba6643b669e0f
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:823fd097988addda98dc31b6b9132546618ead9dc3b2d790945b6dc767bba7fb
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -75,6 +75,8 @@ spec:
               value: http://gcl-app.governed-cognitive-loop.svc:8000
             - name: SEMANTIC_CLASSIFIER_URL
               value: "llm-d-semantic-classifier.fleet-llm-d.svc:50051"
+            - name: SEMANTIC_CLASSIFIER_INSECURE
+              value: "true"
             - name: DEEPFIELD_URL
               value: http://deepfield-fleet.fleet-llm-d.svc:8000
             - name: LEDGER_GATEWAY_URL

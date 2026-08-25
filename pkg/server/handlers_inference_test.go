@@ -11,8 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/llm-d/fleet-llm-d/pkg/classifier"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
+
+type staticClassifier struct{ label string }
+
+func (s staticClassifier) Classify(context.Context, string, string) (*classifier.ClassifyResult, error) {
+	return &classifier.ClassifyResult{TopLabel: s.label, TopScore: 0.99, Margin: 0.9}, nil
+}
+
+func (staticClassifier) Close() error { return nil }
 
 func TestInferenceGatewayRoutesRewritesAndSanitizes(t *testing.T) {
 	var gotHeader, gotModel string
@@ -156,6 +165,43 @@ func TestInferenceGatewayGPUAliasCannotDowngradeToCPU(t *testing.T) {
 	}
 	if gotCluster != brutusGPUCluster || gotModel != defaultGPUModel {
 		t.Fatalf("GPU alias downgraded: cluster=%q model=%q", gotCluster, gotModel)
+	}
+}
+
+func TestInferenceGatewaySemanticEscalationPinsGPUToBrutus(t *testing.T) {
+	var gotCluster, gotModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCluster = r.Header.Get("X-Fleet-Target-Cluster")
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotModel, _ = body["model"].(string)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	fc := newTestFleetController(t)
+	fc.PraxisURL = upstream.URL
+	fc.Routing.ClassifierClient = staticClassifier{label: "REASONING"}
+	for _, cluster := range []string{"oberon-cpu", brutusGPUCluster} {
+		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"messages":[{"role":"user","content":"reason carefully"}],"session_id":"session-1"}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if gotCluster != brutusGPUCluster || gotModel != defaultGPUModel {
+		t.Fatalf("semantic GPU escalation mismatched: cluster=%q model=%q", gotCluster, gotModel)
+	}
+	if got := rr.Header().Get("X-Fleet-Routing-Reason"); got != "semantic-escalation" {
+		t.Fatalf("routing reason = %q", got)
 	}
 }
 

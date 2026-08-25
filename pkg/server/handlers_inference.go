@@ -119,6 +119,21 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 			physicalModel = defaultGPUModel
 		}
 	}
+	if physicalModel != fc.cpuPhysicalModel() {
+		if !fc.clusterIsHealthy(r.Context(), brutusGPUCluster) {
+			inferenceErrors.Inc("no_eligible_provider")
+			writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the selected GPU model has no compatible healthy provider", requestID)
+			return
+		}
+		decision.TargetCluster = brutusGPUCluster
+		if modelClass == "" {
+			decision.Reason = "semantic-escalation"
+		}
+		if envelope.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
+			fc.Routing.SessionTable.Unbind(envelope.SessionID)
+			fc.Routing.SessionTable.Bind(envelope.SessionID, brutusGPUCluster)
+		}
+	}
 	if physicalModel == fc.cpuPhysicalModel() && decision.Reason != "session-affinity" {
 		if selected := fc.nextHealthyCPUProvider(r.Context()); selected != "" {
 			decision.TargetCluster = selected
