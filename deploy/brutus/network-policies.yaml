@@ -23,15 +23,23 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-dns
-      ports:
+    - ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+        - ipBlock:
+            cidr: 172.30.0.10/32
+        - ipBlock:
+            cidr: 10.128.0.0/14
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -86,6 +94,8 @@ spec:
               network.openshift.io/policy-group: ingress
       ports:
         - port: 8000
+          protocol: TCP
+        - port: 8443
           protocol: TCP
   egress:
     - to:

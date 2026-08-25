@@ -14,7 +14,28 @@ spec:
     kind: Service
     name: vllm-granite-8b-gpu
   port:
-    targetPort: http
+    targetPort: https
   tls:
-    termination: edge
+    termination: reencrypt
     insecureEdgeTerminationPolicy: Redirect
+    destinationCACertificate: |-
+      -----BEGIN CERTIFICATE-----
+      MIIDUTCCAjmgAwIBAgIIDbAPLRDrSsswDQYJKoZIhvcNAQELBQAwNjE0MDIGA1UE
+      Awwrb3BlbnNoaWZ0LXNlcnZpY2Utc2VydmluZy1zaWduZXJAMTc4NTk2NzQwMzAe
+      Fw0yNjA4MDUyMjAzMjJaFw0yODEwMDMyMjAzMjNaMDYxNDAyBgNVBAMMK29wZW5z
+      aGlmdC1zZXJ2aWNlLXNlcnZpbmctc2lnbmVyQDE3ODU5Njc0MDMwggEiMA0GCSqG
+      SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDhL3UO/jxju5fzUwySCXGY2UXkFGhm0jKl
+      nb9X1PLnYA2Ni4RR2dQOlgGeKtVHmKc8LGK8cmQnzppimIpRoGUl5PYCTKnCxKhP
+      zFDOc7eHjyitoZX1YpHOeguJ8TcH3RCPTzrIj3ckSR6AE/yMgQZR6tGlShNxhYHY
+      Hbb6i8xa8BsmNCgvOIFmf+cYoZzOPcnf/vTPWmVYagLVCKzquoJuTs87CjID0GWE
+      4DvbvPIDY8jVkMk9NsQ2Ub6hzY013sLhn677OB+AHTcsdufu0FviC9a0NHHRRE/9
+      iOi42iEJdsP7AwlJF3bZOXiHywTa+I8746SYLZd0YmXQA2gBwfj7AgMBAAGjYzBh
+      MA4GA1UdDwEB/wQEAwICpDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBThJp+K
+      aGbrcNr3aSDP8IBQRWU1gTAfBgNVHSMEGDAWgBThJp+KaGbrcNr3aSDP8IBQRWU1
+      gTANBgkqhkiG9w0BAQsFAAOCAQEAfSB/ksjZciAmqwRnL00j1UV5cbwrNG/JbU7e
+      shs3KqqCIfa3C+gHc/hQGGuCf4gjLQFKHJaLTmcpJShWFyVIoRF1BXpvWUjIHgny
+      yg1PU4iGrkqFIMBWdMOGbdqzQvyjO+93hsvEt5k9BgoaeO0j9mzd55A7xnI2z3/5
+      6xfMOBrcJDTPC3l41C3x5BPRVawVrxIsJw+8YGOwwLuB34lV37M6UGq6PcECYJvT
+      9lNIqixXpuHI84L0QYIY9XTF/hlgnXbuyYMrU8QIx4KYWwDBEbEMNxlwvi7d4zk6
+      3IDYLdvMFpwDnu2z1aSyQvCOC5PGy92bCEIa9QLKsN2spFoOmQ==
+      -----END CERTIFICATE-----
