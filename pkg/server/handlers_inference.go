@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	defaultCPUModel = "granite-2b-cpu"
-	defaultGPUModel = "ibm-granite/granite-3.1-8b-instruct"
+	defaultCPUModel  = "granite-2b-cpu"
+	defaultGPUModel  = "ibm-granite/granite-3.1-8b-instruct"
+	brutusGPUCluster = "brutus-h100"
 )
 
 type inferenceEnvelope struct {
@@ -75,6 +77,19 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", err.Error(), requestID)
 		return
 	}
+	if fc.requiresGPUModel(envelope.Model) {
+		if !fc.clusterIsHealthy(r.Context(), brutusGPUCluster) {
+			inferenceErrors.Inc("no_eligible_provider")
+			writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the requested GPU model has no compatible healthy provider", requestID)
+			return
+		}
+		decision.TargetCluster = brutusGPUCluster
+		decision.Reason = "explicit-model"
+		if envelope.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
+			fc.Routing.SessionTable.Unbind(envelope.SessionID)
+			fc.Routing.SessionTable.Bind(envelope.SessionID, brutusGPUCluster)
+		}
+	}
 	physicalModel := fc.CPUPhysicalModel
 	if physicalModel == "" {
 		physicalModel = defaultCPUModel
@@ -135,6 +150,23 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		inferenceErrors.Inc("stream_interrupted")
 	}
 	inferenceRequests.Inc(decision.TargetCluster + ":" + physicalModel)
+}
+
+func (fc *FleetController) requiresGPUModel(requested string) bool {
+	gpuModel := fc.GPUPhysicalModel
+	if gpuModel == "" {
+		gpuModel = defaultGPUModel
+	}
+	return requested == gpuModel || requested == defaultGPUModel
+}
+
+func (fc *FleetController) clusterIsHealthy(ctx context.Context, clusterID string) bool {
+	for _, cluster := range fc.BuildClusterHealth(ctx) {
+		if cluster.ClusterID == clusterID {
+			return cluster.Healthy
+		}
+	}
+	return false
 }
 
 func inferenceText(req inferenceEnvelope, chat bool) (string, error) {
