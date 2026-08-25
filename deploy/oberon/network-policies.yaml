@@ -247,6 +247,13 @@ spec:
       ports:
         - port: 8080
           protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-inference-gateway
+      ports:
+        - port: 8080
+          protocol: TCP
 ---
 # Grafana — ingress from Routes
 apiVersion: networking.k8s.io/v1

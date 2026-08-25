@@ -126,6 +126,20 @@ func TestInferenceGatewayExactGPUModelUnavailableIsStructured503(t *testing.T) {
 	}
 }
 
+func TestInferenceGatewayExactCPUModelCannotEscalateToGPU(t *testing.T) {
+	fc := newTestFleetController(t)
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: brutusGPUCluster, Name: brutusGPUCluster, Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "no_compatible_capacity") {
+		t.Fatalf("expected CPU-only structured 503, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestInferenceGatewayRejectsInvalidPayloads(t *testing.T) {
 	fc := newTestFleetController(t)
 	tests := []struct{ path, body string }{
