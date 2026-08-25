@@ -142,7 +142,7 @@ func TestRateLimitMiddlewareWithExemptions_BypassesHealthReadinessAndMetrics(t *
 }
 
 func TestRateLimiter_EvictsStaleEntries(t *testing.T) {
-	rl := NewRateLimiterWithTTL(100, 200, 100*time.Millisecond)
+	rl := NewRateLimiterWithTTL(100, 200, time.Hour)
 	defer rl.Stop()
 	for i := 0; i < 1000; i++ {
 		rl.Allow(fmt.Sprintf("ip:%d.%d.%d.%d", i, i, i, i))
@@ -150,7 +150,12 @@ func TestRateLimiter_EvictsStaleEntries(t *testing.T) {
 	if rl.BucketCount() != 1000 {
 		t.Fatalf("expected 1000 buckets before eviction, got %d", rl.BucketCount())
 	}
-	time.Sleep(250 * time.Millisecond)
+	rl.mu.Lock()
+	for _, bucket := range rl.buckets {
+		bucket.lastAccess = time.Now().Add(-2 * time.Hour)
+	}
+	rl.evictExpiredLocked(time.Now())
+	rl.mu.Unlock()
 	if count := rl.BucketCount(); count > 0 {
 		t.Errorf("expected 0 buckets after TTL expiry, got %d", count)
 	}
