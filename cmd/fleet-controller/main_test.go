@@ -39,6 +39,45 @@ func TestValidateProductionConfigDevelopmentBypass(t *testing.T) {
 	}
 }
 
+func TestProductionPostgresURLValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "verified postgres", url: "postgres://fleet@db.example/fleet?sslmode=verify-full", want: true},
+		{name: "verified postgresql", url: "postgresql://fleet@db.example/fleet?sslmode=verify-full", want: true},
+		{name: "encryption without identity verification", url: "postgres://fleet@db.example/fleet?sslmode=require", want: false},
+		{name: "disabled TLS", url: "postgres://fleet@db.example/fleet?sslmode=disable", want: false},
+		{name: "missing host", url: "postgres:///fleet?sslmode=verify-full", want: false},
+		{name: "wrong scheme", url: "https://db.example/fleet?sslmode=verify-full", want: false},
+		{name: "malformed", url: "://not-a-url?sslmode=verify-full", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := productionPostgresURLValid(tt.url); got != tt.want {
+				t.Fatalf("productionPostgresURLValid(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProductionHTTPSURLValidation(t *testing.T) {
+	for _, tt := range []struct {
+		url  string
+		want bool
+	}{
+		{url: "https://ledger.example/api", want: true},
+		{url: "http://ledger.example/api", want: false},
+		{url: "https:///api", want: false},
+		{url: "://bad", want: false},
+	} {
+		if got := productionHTTPSURLValid(tt.url); got != tt.want {
+			t.Errorf("productionHTTPSURLValid(%q) = %v, want %v", tt.url, got, tt.want)
+		}
+	}
+}
+
 // newTestController creates a minimal FleetController for testing route setup.
 func newTestController(t *testing.T) *server.FleetController {
 	t.Helper()

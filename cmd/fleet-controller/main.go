@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -214,10 +215,10 @@ func validateProductionConfig(production bool, mode, pgURL string, ledgerMode le
 	if !authEnabled {
 		missing = append(missing, "authentication")
 	}
-	if pgURL == "" || !strings.Contains(pgURL, "sslmode=") || strings.Contains(pgURL, "sslmode=disable") {
+	if !productionPostgresURLValid(pgURL) {
 		missing = append(missing, "TLS PostgreSQL")
 	}
-	if ledgerMode != ledger.ModeHTTP || !strings.HasPrefix(ledgerEndpoint, "https://") || os.Getenv("LEDGER_GATEWAY_API_TOKEN") == "" {
+	if ledgerMode != ledger.ModeHTTP || !productionHTTPSURLValid(ledgerEndpoint) || os.Getenv("LEDGER_GATEWAY_API_TOKEN") == "" {
 		missing = append(missing, "authenticated HTTPS immutable ledger")
 	}
 	if tlsCert == "" || tlsKey == "" {
@@ -236,4 +237,17 @@ func validateProductionConfig(production bool, mode, pgURL string, ledgerMode le
 		return fmt.Errorf("invalid server mode %q", mode)
 	}
 	return nil
+}
+
+func productionPostgresURLValid(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Hostname() == "" {
+		return false
+	}
+	return parsed.Query().Get("sslmode") == "verify-full"
+}
+
+func productionHTTPSURLValid(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme == "https" && parsed.Hostname() != ""
 }
