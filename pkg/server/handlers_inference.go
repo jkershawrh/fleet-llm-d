@@ -131,7 +131,16 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		check := quota.QuotaCheckRequest{TokensRequested: requestedTokens, Model: physicalModel, ClusterID: decision.TargetCluster}
 		var result quota.QuotaCheckResult
 		if consumer, ok := fc.QuotaEnforcer.(*quota.DefaultQuotaEnforcer); ok {
-			result, err = consumer.ConsumeQuota(r.Context(), tenantID, check)
+			result, err = consumer.ReserveQuota(r.Context(), tenantID, check)
+			if err == nil && result.Allowed {
+				defer func() {
+					releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					if releaseErr := consumer.ReleaseQuota(releaseCtx, tenantID); releaseErr != nil {
+						slog.Error("release tenant quota reservation", "tenant_id", tenantID, "error", releaseErr)
+					}
+				}()
+			}
 		} else {
 			result, err = fc.QuotaEnforcer.CheckQuota(r.Context(), tenantID, check)
 		}

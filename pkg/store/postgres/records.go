@@ -64,6 +64,14 @@ type TenantUsageRecord struct {
 	PeriodEnd      time.Time
 }
 
+// QuotaReservation is the shared state after an atomic quota reservation.
+type QuotaReservation struct {
+	Allowed        bool
+	TokensReserved int64
+	ActiveRequests int64
+	BudgetSpent    int64
+}
+
 // RolloutRecord matches the rollouts table.
 type RolloutRecord struct {
 	ID            string

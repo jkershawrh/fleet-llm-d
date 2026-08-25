@@ -42,6 +42,14 @@ type TenantRepository interface {
 	GetUsage(ctx context.Context, tenantID string, start, end time.Time) ([]TenantUsageRecord, error)
 }
 
+// TenantQuotaRepository atomically coordinates inference reservations across
+// all gateway replicas. Implementations must treat ReserveQuota as one atomic
+// operation so concurrent replicas cannot oversubscribe a tenant limit.
+type TenantQuotaRepository interface {
+	ReserveQuota(ctx context.Context, tenantID string, windowStart time.Time, tokens, tokenLimit, concurrentLimit, budgetCost, budgetLimit int64) (QuotaReservation, error)
+	ReleaseQuota(ctx context.Context, tenantID string, windowStart time.Time) error
+}
+
 // RolloutRepository manages rollout records.
 type RolloutRepository interface {
 	Create(ctx context.Context, rollout RolloutRecord) error

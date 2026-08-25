@@ -2,8 +2,63 @@ package quota
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
+
+type sharedQuotaTestRepository struct {
+	postgres.TenantRepository
+	mu         sync.Mutex
+	tokens     int64
+	concurrent int64
+	budget     int64
+	tokenLimit float64
+	budgetUSD  float64
+}
+
+func (r *sharedQuotaTestRepository) Get(_ context.Context, id string) (*postgres.TenantRecord, error) {
+	tokenLimit := r.tokenLimit
+	if tokenLimit == 0 {
+		tokenLimit = 10
+	}
+	budgetUSD := r.budgetUSD
+	if budgetUSD == 0 {
+		budgetUSD = 10
+	}
+	return &postgres.TenantRecord{ID: id, Quotas: map[string]interface{}{
+		"maxTokensPerMinute":    tokenLimit,
+		"maxConcurrentRequests": float64(1),
+	}, CostControl: map[string]interface{}{"monthlyBudget": budgetUSD}}, nil
+}
+
+func (r *sharedQuotaTestRepository) ReserveQuota(_ context.Context, _ string, _ time.Time, tokens, tokenLimit, concurrentLimit, budgetCost, budgetLimit int64) (postgres.QuotaReservation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := postgres.QuotaReservation{TokensReserved: r.tokens, ActiveRequests: r.concurrent, BudgetSpent: r.budget}
+	if r.tokens+tokens > tokenLimit || r.concurrent >= concurrentLimit || r.budget+budgetCost > budgetLimit {
+		return result, nil
+	}
+	r.tokens += tokens
+	r.concurrent++
+	r.budget += budgetCost
+	result.Allowed = true
+	result.TokensReserved = r.tokens
+	result.ActiveRequests = r.concurrent
+	result.BudgetSpent = r.budget
+	return result, nil
+}
+
+func (r *sharedQuotaTestRepository) ReleaseQuota(_ context.Context, _ string, _ time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.concurrent > 0 {
+		r.concurrent--
+	}
+	return nil
+}
 
 func newTestEnforcer() QuotaEnforcer {
 	e := NewQuotaEnforcer().(*DefaultQuotaEnforcer)
@@ -13,6 +68,41 @@ func newTestEnforcer() QuotaEnforcer {
 	e.profiles["tenant-3"] = &tenantProfile{tokenLimit: 1000, tokensUsed: 1000, budgetCents: 0}
 	e.mu.Unlock()
 	return e
+}
+
+func TestDistributedReservationSharedAcrossEnforcers(t *testing.T) {
+	repo := &sharedQuotaTestRepository{}
+	first := NewQuotaEnforcer(repo).(*DefaultQuotaEnforcer)
+	second := NewQuotaEnforcer(repo).(*DefaultQuotaEnforcer)
+
+	result, err := first.ReserveQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 6})
+	if err != nil || !result.Allowed {
+		t.Fatalf("first reservation = (%+v, %v), want allowed", result, err)
+	}
+	result, err = second.ReserveQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 1})
+	if err != nil || result.Allowed || result.Reason != "concurrent request limit exceeded" {
+		t.Fatalf("concurrent reservation = (%+v, %v), want concurrency denial", result, err)
+	}
+	if err := first.ReleaseQuota(context.Background(), "tenant-1"); err != nil {
+		t.Fatal(err)
+	}
+	result, err = second.ReserveQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 5})
+	if err != nil || result.Allowed {
+		t.Fatalf("over-limit reservation = (%+v, %v), want token denial", result, err)
+	}
+	result, err = second.ReserveQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 4})
+	if err != nil || !result.Allowed || result.RemainingTokens != 0 {
+		t.Fatalf("final reservation = (%+v, %v), want allowed with zero remaining", result, err)
+	}
+}
+
+func TestDistributedReservationEnforcesSharedBudget(t *testing.T) {
+	repo := &sharedQuotaTestRepository{tokenLimit: 100, budgetUSD: 0.05}
+	enforcer := NewQuotaEnforcer(repo).(*DefaultQuotaEnforcer)
+	result, err := enforcer.ReserveQuota(context.Background(), "tenant-1", QuotaCheckRequest{TokensRequested: 6})
+	if err != nil || result.Allowed || result.Reason != "budget exceeded: tenant has no remaining budget" {
+		t.Fatalf("budget reservation = (%+v, %v), want budget denial", result, err)
+	}
 }
 
 func TestCheckQuota_Allowed(t *testing.T) {

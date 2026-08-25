@@ -91,6 +91,19 @@ func (c *PGClient) EnsureSchema(ctx context.Context) error {
 			cost_usd NUMERIC NOT NULL DEFAULT 0,
 			request_count BIGINT NOT NULL DEFAULT 0,
 			period_start TIMESTAMPTZ NOT NULL, period_end TIMESTAMPTZ NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS tenant_quota_windows (
+			tenant_id TEXT NOT NULL,
+			window_start TIMESTAMPTZ NOT NULL,
+			tokens_reserved BIGINT NOT NULL DEFAULT 0,
+			PRIMARY KEY (tenant_id, window_start))`,
+		`CREATE TABLE IF NOT EXISTS tenant_quota_concurrency (
+			tenant_id TEXT PRIMARY KEY,
+			active_requests BIGINT NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS tenant_quota_budgets (
+			tenant_id TEXT NOT NULL,
+			month_start TIMESTAMPTZ NOT NULL,
+			budget_spent BIGINT NOT NULL DEFAULT 0,
+			PRIMARY KEY (tenant_id, month_start))`,
 		`CREATE TABLE IF NOT EXISTS rollouts (
 			id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			pool_id TEXT NOT NULL, model_version TEXT NOT NULL,
@@ -840,7 +853,68 @@ func (r *PGTenantRepository) GetUsage(ctx context.Context, tenantID string, star
 	return r.pg.GetUsage(ctx, tenantID, start, end)
 }
 
+func (r *PGTenantRepository) ReserveQuota(ctx context.Context, tenantID string, windowStart time.Time, tokens, tokenLimit, concurrentLimit, budgetCost, budgetLimit int64) (QuotaReservation, error) {
+	tx, err := r.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return QuotaReservation{}, fmt.Errorf("begin tenant quota reservation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	windowStart = windowStart.UTC()
+	monthStart := time.Date(windowStart.Year(), windowStart.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_quota_windows (tenant_id, window_start) VALUES ($1, $2) ON CONFLICT DO NOTHING`, tenantID, windowStart); err != nil {
+		return QuotaReservation{}, fmt.Errorf("initialize tenant quota window: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_quota_concurrency (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING`, tenantID); err != nil {
+		return QuotaReservation{}, fmt.Errorf("initialize tenant quota concurrency: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_quota_budgets (tenant_id, month_start) VALUES ($1, $2) ON CONFLICT DO NOTHING`, tenantID, monthStart); err != nil {
+		return QuotaReservation{}, fmt.Errorf("initialize tenant quota budget: %w", err)
+	}
+	var result QuotaReservation
+	if err := tx.QueryRowContext(ctx, `SELECT tokens_reserved FROM tenant_quota_windows WHERE tenant_id = $1 AND window_start = $2 FOR UPDATE`, tenantID, windowStart).Scan(&result.TokensReserved); err != nil {
+		return QuotaReservation{}, fmt.Errorf("lock tenant quota window: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT active_requests FROM tenant_quota_concurrency WHERE tenant_id = $1 FOR UPDATE`, tenantID).Scan(&result.ActiveRequests); err != nil {
+		return QuotaReservation{}, fmt.Errorf("lock tenant quota concurrency: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT budget_spent FROM tenant_quota_budgets WHERE tenant_id = $1 AND month_start = $2 FOR UPDATE`, tenantID, monthStart).Scan(&result.BudgetSpent); err != nil {
+		return QuotaReservation{}, fmt.Errorf("lock tenant quota budget: %w", err)
+	}
+	if result.TokensReserved+tokens > tokenLimit || result.ActiveRequests >= concurrentLimit || result.BudgetSpent+budgetCost > budgetLimit {
+		if err := tx.Commit(); err != nil {
+			return QuotaReservation{}, fmt.Errorf("commit denied tenant quota reservation: %w", err)
+		}
+		return result, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tenant_quota_windows SET tokens_reserved = tokens_reserved + $3 WHERE tenant_id = $1 AND window_start = $2`, tenantID, windowStart, tokens); err != nil {
+		return QuotaReservation{}, fmt.Errorf("reserve tenant tokens: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tenant_quota_concurrency SET active_requests = active_requests + 1 WHERE tenant_id = $1`, tenantID); err != nil {
+		return QuotaReservation{}, fmt.Errorf("reserve tenant concurrency: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tenant_quota_budgets SET budget_spent = budget_spent + $3 WHERE tenant_id = $1 AND month_start = $2`, tenantID, monthStart, budgetCost); err != nil {
+		return QuotaReservation{}, fmt.Errorf("reserve tenant budget: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return QuotaReservation{}, fmt.Errorf("commit tenant quota reservation: %w", err)
+	}
+	result.Allowed = true
+	result.TokensReserved += tokens
+	result.ActiveRequests++
+	result.BudgetSpent += budgetCost
+	return result, nil
+}
+
+func (r *PGTenantRepository) ReleaseQuota(ctx context.Context, tenantID string, _ time.Time) error {
+	const release = `UPDATE tenant_quota_concurrency SET active_requests = GREATEST(active_requests - 1, 0) WHERE tenant_id = $1`
+	if _, err := r.pg.db.ExecContext(ctx, release, tenantID); err != nil {
+		return fmt.Errorf("release tenant quota: %w", err)
+	}
+	return nil
+}
+
 var _ TenantRepository = (*PGTenantRepository)(nil)
+var _ TenantQuotaRepository = (*PGTenantRepository)(nil)
 
 // ---------------------------------------------------------------------------
 // Adapter: PGRolloutRepository

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
@@ -40,10 +41,11 @@ type QuotaEnforcer interface {
 
 // tenantProfile holds the quota limits and current usage for a tenant.
 type tenantProfile struct {
-	tokenLimit  int64
-	tokensUsed  int64
-	budgetCents int64 // total budget in cents
-	budgetSpent int64 // spent budget in cents
+	tokenLimit      int64
+	tokensUsed      int64
+	concurrentLimit int64
+	budgetCents     int64 // total budget in cents
+	budgetSpent     int64 // spent budget in cents
 }
 
 // costPerToken is the cost in cents per token.
@@ -86,12 +88,16 @@ func (e *DefaultQuotaEnforcer) loadFromRepo(tenantID string) *tenantProfile {
 		return nil
 	}
 	profile := &tenantProfile{
-		tokenLimit:  1000,
-		budgetCents: 1000,
+		tokenLimit:      1000,
+		concurrentLimit: 100,
+		budgetCents:     1000,
 	}
 	if quotas := tenant.Quotas; quotas != nil {
 		if v, ok := quotas["maxTokensPerMinute"].(float64); ok {
 			profile.tokenLimit = int64(v)
+		}
+		if v, ok := quotas["maxConcurrentRequests"].(float64); ok {
+			profile.concurrentLimit = int64(v)
 		}
 	}
 	if cc := tenant.CostControl; cc != nil {
@@ -160,21 +166,45 @@ func (e *DefaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, re
 
 // ConsumeQuota checks quota and deducts tokens and budget if allowed.
 // Unlike CheckQuota (which is read-only), this method mutates tenant state.
-func (e *DefaultQuotaEnforcer) ConsumeQuota(_ context.Context, tenantID string, request QuotaCheckRequest) (QuotaCheckResult, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *DefaultQuotaEnforcer) ConsumeQuota(ctx context.Context, tenantID string, request QuotaCheckRequest) (QuotaCheckResult, error) {
+	return e.ReserveQuota(ctx, tenantID, request)
+}
 
+// ReserveQuota atomically reserves a minute-window token allowance and one
+// active request when the repository supports distributed quota coordination.
+func (e *DefaultQuotaEnforcer) ReserveQuota(ctx context.Context, tenantID string, request QuotaCheckRequest) (QuotaCheckResult, error) {
+	e.mu.Lock()
 	profile, ok := e.profiles[tenantID]
 	if !ok {
 		profile = e.loadFromRepo(tenantID)
 	}
 	if profile == nil {
-		profile = &tenantProfile{
-			tokenLimit:  1000,
-			budgetCents: 1000,
-		}
+		profile = &tenantProfile{tokenLimit: 1000, concurrentLimit: 100, budgetCents: 1000}
 		e.profiles[tenantID] = profile
 	}
+	if shared, ok := e.repo.(postgres.TenantQuotaRepository); ok {
+		tokenLimit, concurrentLimit := profile.tokenLimit, profile.concurrentLimit
+		e.mu.Unlock()
+		windowStart := time.Now().UTC().Truncate(time.Minute)
+		budgetCost, budgetLimit := request.TokensRequested*costPerToken, profile.budgetCents
+		reservation, err := shared.ReserveQuota(ctx, tenantID, windowStart, request.TokensRequested, tokenLimit, concurrentLimit, budgetCost, budgetLimit)
+		if err != nil {
+			return QuotaCheckResult{}, err
+		}
+		remaining := tokenLimit - reservation.TokensReserved
+		remainingBudget := budgetLimit - reservation.BudgetSpent
+		if !reservation.Allowed {
+			reason := "concurrent request limit exceeded"
+			if reservation.TokensReserved+request.TokensRequested > tokenLimit {
+				reason = fmt.Sprintf("token limit exceeded: requested %d but only %d remaining", request.TokensRequested, remaining)
+			} else if reservation.BudgetSpent+budgetCost > budgetLimit {
+				reason = "budget exceeded: tenant has no remaining budget"
+			}
+			return QuotaCheckResult{Allowed: false, RemainingTokens: remaining, RemainingBudget: formatBudget(remainingBudget), Reason: reason}, nil
+		}
+		return QuotaCheckResult{Allowed: true, RemainingTokens: remaining, RemainingBudget: formatBudget(remainingBudget)}, nil
+	}
+	defer e.mu.Unlock()
 
 	remainingTokens := profile.tokenLimit - profile.tokensUsed
 	remainingBudgetCents := profile.budgetCents - profile.budgetSpent
@@ -210,6 +240,16 @@ func (e *DefaultQuotaEnforcer) ConsumeQuota(_ context.Context, tenantID string, 
 		RemainingBudget: formatBudget(newRemainingBudgetCents),
 		Reason:          "",
 	}, nil
+}
+
+// ReleaseQuota releases the active-request reservation. Token reservations
+// remain until the minute window expires.
+func (e *DefaultQuotaEnforcer) ReleaseQuota(ctx context.Context, tenantID string) error {
+	shared, ok := e.repo.(postgres.TenantQuotaRepository)
+	if !ok {
+		return nil
+	}
+	return shared.ReleaseQuota(ctx, tenantID, time.Now().UTC().Truncate(time.Minute))
 }
 
 func (e *DefaultQuotaEnforcer) RecordUsage(_ context.Context, tenantID string, usage UsageRecord) error {
