@@ -15,6 +15,14 @@ data:
     #   Arena  (CPU/OVMS) — cross-cluster via OpenShift Route
     #   Brutus (GPU/vLLM) — cross-cluster via OpenShift Route
 
+    admin:
+      address: "0.0.0.0:9901"
+
+    # Admin is pod-local in practice: port 9901 is absent from the Service and
+    # denied by NetworkPolicy. Non-loopback binding is required for kubelet probes.
+    insecure_options:
+      allow_public_admin: true
+
     listeners:
       - name: fleet-inference-gateway
         address: "0.0.0.0:8080"
@@ -117,8 +125,6 @@ data:
               - name: arena-cpu
                 endpoints:
                   - "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com:443"
-                http:
-                  authority: "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com"
                 tls:
                   sni: "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com"
                   verify: true
@@ -137,8 +143,6 @@ data:
               - name: brutus-gpu
                 endpoints:
                   - "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com:443"
-                http:
-                  authority: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
                 tls:
                   sni: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
                   verify: true
@@ -171,8 +175,6 @@ data:
               - name: brutus-granite-8b-gpu
                 endpoints:
                   - "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com:443"
-                http:
-                  authority: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
                 tls:
                   sni: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
                   verify: true
@@ -219,16 +221,18 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 9901
+              name: admin
           readinessProbe:
             httpGet:
               path: /ready
-              port: 8080
+              port: admin
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthy
-              port: 8080
+              port: admin
             initialDelaySeconds: 5
             periodSeconds: 15
           resources:

@@ -85,7 +85,6 @@ func (o *PraxisOverlay) RenderConfig(placements []PoolPlacement) (string, error)
 				if err != nil {
 					return "", fmt.Errorf("invalid TLS endpoint %q: %w", ep.Endpoint, err)
 				}
-				cluster["http"] = map[string]string{"authority": host}
 				cluster["tls"] = map[string]interface{}{"sni": host, "verify": true}
 				cluster["total_connection_timeout_ms"] = 5000
 			}
