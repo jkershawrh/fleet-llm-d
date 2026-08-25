@@ -14,6 +14,13 @@ metadata:
     app.kubernetes.io/part-of: fleet-llm-d
 spec:
   replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Standbys intentionally fail readiness so the Service only targets the
+      # elected leader. One ready leader is therefore the availability target.
+      maxUnavailable: 2
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: fleet-controller
