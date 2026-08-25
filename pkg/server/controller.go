@@ -116,6 +116,15 @@ type FleetController struct {
 	// Auth secret for token refresh
 	AuthSecret string
 
+	// Inference gateway configuration. PraxisURL is intentionally internal;
+	// callers must enter through the authenticated fleet gateway.
+	PraxisURL        string
+	PraxisToken      string
+	InferenceClient  *http.Client
+	CPUPhysicalModel string
+	GPUPhysicalModel string
+	InferenceSlots   chan struct{}
+
 	// Server state
 	ready atomic.Bool
 }

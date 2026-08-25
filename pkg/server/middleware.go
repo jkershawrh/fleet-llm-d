@@ -35,6 +35,12 @@ func (sr *statusRecorder) WriteHeader(code int) {
 	sr.ResponseWriter.WriteHeader(code)
 }
 
+func (sr *statusRecorder) Flush() {
+	if flusher, ok := sr.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 // RequestLoggingMiddleware logs each request with safe operational metadata
 // only: method, path, status, and latency. It MUST NOT log request or
 // response bodies, query parameters, or header values.

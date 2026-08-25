@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	_ "github.com/lib/pq"
 
@@ -21,7 +25,8 @@ func main() {
 	port := flag.Int("port", 8080, "API server port")
 	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
 	grpcPort := flag.Int("grpc-port", 0, "gRPC (JSON-RPC) server port; 0 disables")
-	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only)")
+	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only), inference (OpenAI gateway only)")
+	production := flag.Bool("production", false, "Require production-safe authentication, persistence, ledger, TLS, and signing configuration")
 	ledgerMode := flag.String("ledger-mode", string(ledger.ModeDisabled), "Ledger backend mode: disabled (default), memory (development only -- evidence is fabricated and lost on restart), http (standalone are-immutable-ledger REST compatibility gateway). gRPC is canonical upstream but not yet generated in this binary")
 	ledgerEndpoint := flag.String("ledger-endpoint", "http://localhost:18099", "standalone immutable-ledger REST gateway endpoint (HTTP compatibility mode only)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
@@ -39,10 +44,15 @@ func main() {
 	rateBurst := flag.Int("rate-burst", 200, "Rate limit burst size (max requests before throttling)")
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", false, "Honour X-Forwarded-For when identifying clients for rate limiting. Enable ONLY when every request arrives through a proxy that overwrites the header; otherwise clients can forge their own rate-limit identity")
+	praxisURL := flag.String("praxis-url", "", "Internal Praxis inference endpoint")
+	inferenceMaxInflight := flag.Int("inference-max-inflight", 100, "Maximum concurrent inference requests per gateway replica")
 	_ = flag.String("backends", "", "Deprecated: inference routing moved to Praxis")
 	_ = flag.Int("max-inflight", 0, "Deprecated: load shedding moved to Praxis")
 	allowOperatorJSONIntents := flag.Bool("allow-operator-json-intents", false, "Enable unsigned application/json v2 intent input for development/operator compatibility only")
 	flag.Parse()
+	if *praxisURL == "" {
+		*praxisURL = os.Getenv("PRAXIS_URL")
+	}
 
 	if *pgURL == "" {
 		if env := os.Getenv("PG_URL"); env != "" {
@@ -81,6 +91,10 @@ func main() {
 		slog.Warn("authentication is DISABLED: every API request will be served unauthenticated. " +
 			"Set FLEET_AUTH_SECRET or FLEET_AUTH_SECRET_FILE before exposing this controller.")
 	}
+	if err := validateProductionConfig(*production, *mode, *pgURL, ledger.Mode(*ledgerMode), *ledgerEndpoint, authCfg.Enabled, *tlsCert, *tlsKey, *praxisURL, os.Getenv("GCL_DECISION_SIGNING_KEYS_JSON")); err != nil {
+		slog.Error("production configuration rejected", "error", err)
+		os.Exit(1)
+	}
 	slog.Info("configuration loaded", "auth_enabled", authCfg.Enabled, "tls_enabled", *tlsCert != "" && *tlsKey != "", "kube_api", *kubeAPI, "namespace", *namespace, "postgres", *pgURL != "", "event_endpoint", *eventEndpoint)
 
 	fc, err := server.NewFleetControllerWithLedgerConfig(ledger.Config{
@@ -92,7 +106,7 @@ func main() {
 		slog.Error("invalid immutable-ledger configuration", "error", err)
 		os.Exit(1)
 	}
-	if *kubeAPI != "" {
+	if *kubeAPI != "" && *mode != "inference" {
 		identity := os.Getenv("POD_NAME")
 		if identity == "" {
 			identity, err = os.Hostname()
@@ -127,6 +141,14 @@ func main() {
 	}
 
 	fc.AuthSecret = authCfg.Secret
+	fc.PraxisURL = *praxisURL
+	fc.PraxisToken = os.Getenv("PRAXIS_API_TOKEN")
+	fc.CPUPhysicalModel = os.Getenv("FLEET_CPU_PHYSICAL_MODEL")
+	fc.GPUPhysicalModel = os.Getenv("FLEET_GPU_PHYSICAL_MODEL")
+	if *inferenceMaxInflight > 0 {
+		fc.InferenceSlots = make(chan struct{}, *inferenceMaxInflight)
+	}
+	fc.InferenceClient = &http.Client{Timeout: 180 * time.Second}
 
 	if *pgURL != "" {
 		db, err := sql.Open("postgres", *pgURL)
@@ -166,4 +188,36 @@ func main() {
 		slog.Error("fleet-controller exited", "error", err)
 		os.Exit(1)
 	}
+}
+
+func validateProductionConfig(production bool, mode, pgURL string, ledgerMode ledger.Mode, ledgerEndpoint string, authEnabled bool, tlsCert, tlsKey, praxisURL, decisionKeys string) error {
+	if !production {
+		return nil
+	}
+	var missing []string
+	if !authEnabled {
+		missing = append(missing, "authentication")
+	}
+	if pgURL == "" || !strings.Contains(pgURL, "sslmode=") || strings.Contains(pgURL, "sslmode=disable") {
+		missing = append(missing, "TLS PostgreSQL")
+	}
+	if ledgerMode != ledger.ModeHTTP || !strings.HasPrefix(ledgerEndpoint, "https://") || os.Getenv("LEDGER_GATEWAY_API_TOKEN") == "" {
+		missing = append(missing, "authenticated HTTPS immutable ledger")
+	}
+	if tlsCert == "" || tlsKey == "" {
+		missing = append(missing, "API TLS certificate and key")
+	}
+	if decisionKeys == "" {
+		missing = append(missing, "GCL Ed25519 verification keys")
+	}
+	if (mode == "all" || mode == "inference") && praxisURL == "" {
+		missing = append(missing, "Praxis URL")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing or unsafe production requirements: %s", strings.Join(missing, ", "))
+	}
+	if mode != "all" && mode != "control" && mode != "inference" {
+		return fmt.Errorf("invalid server mode %q", mode)
+	}
+	return nil
 }

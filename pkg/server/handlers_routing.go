@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -45,8 +46,18 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 		return
 	}
 
+	resp, err := fc.classifyAndRoute(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("routing failed: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (fc *FleetController) classifyAndRoute(ctx context.Context, req routeRequest) (routeResponse, error) {
 	start := time.Now()
-	ctx := r.Context()
 
 	result, err := fc.Routing.ClassifyPrompt(ctx, req.Text, req.RequestID)
 	if err != nil {
@@ -92,9 +103,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 					resp.SemanticMargin = result.Margin
 					resp.ClassifierID = result.ClassifierID
 				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
+				return resp, nil
 			}
 		}
 	}
@@ -104,8 +113,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 
 	decision, err := fc.Routing.Evaluator.Evaluate(ctx, routingReq, health, routingPolicy)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("routing failed: %v", err))
-		return
+		return routeResponse{}, err
 	}
 
 	// Bind session to the selected cluster for future turns.
@@ -134,8 +142,7 @@ func (fc *FleetController) handleClassifyAndRoute(w http.ResponseWriter, r *http
 		resp.ClassifierID = result.ClassifierID
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	return resp, nil
 }
 
 func (fc *FleetController) getRoutingPolicy(name string) v1alpha1.FleetRoutingPolicySpec {

@@ -1,0 +1,181 @@
+package server
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+)
+
+const (
+	defaultCPUModel = "granite-2b-cpu"
+	defaultGPUModel = "ibm-granite/granite-3.1-8b-instruct"
+)
+
+type inferenceEnvelope struct {
+	Model     string          `json:"model"`
+	Prompt    json.RawMessage `json:"prompt,omitempty"`
+	Messages  json.RawMessage `json:"messages,omitempty"`
+	TenantID  string          `json:"tenant_id,omitempty"`
+	SessionID string          `json:"session_id,omitempty"`
+	Policy    string          `json:"policy,omitempty"`
+}
+
+func (fc *FleetController) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	fc.handleInference(w, r, true)
+}
+
+func (fc *FleetController) handleCompletions(w http.ResponseWriter, r *http.Request) {
+	fc.handleInference(w, r, false)
+}
+
+func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Request, chat bool) {
+	start := time.Now()
+	requestsTotal.Inc()
+	defer ObserveRequest(start)
+	if fc.InferenceSlots != nil {
+		select {
+		case fc.InferenceSlots <- struct{}{}:
+			defer func() { <-fc.InferenceSlots }()
+		case <-r.Context().Done():
+			return
+		default:
+			inferenceErrors.Inc("concurrency_limit")
+			w.Header().Set("Retry-After", "1")
+			writeInferenceError(w, http.StatusTooManyRequests, "concurrency_limit", "inference gateway is at capacity", requestID(r))
+			return
+		}
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var envelope inferenceEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON request")
+		return
+	}
+	text, err := inferenceText(envelope, chat)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	requestID := requestID(r)
+	decision, err := fc.classifyAndRoute(r.Context(), routeRequest{
+		Text: text, RequestID: requestID, Model: envelope.Model,
+		TenantID: envelope.TenantID, SessionID: envelope.SessionID, Policy: envelope.Policy,
+	})
+	if err != nil {
+		inferenceErrors.Inc("no_eligible_provider")
+		writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", err.Error(), requestID)
+		return
+	}
+	physicalModel := fc.CPUPhysicalModel
+	if physicalModel == "" {
+		physicalModel = defaultCPUModel
+	}
+	if decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || decision.TargetCluster == "brutus" {
+		physicalModel = fc.GPUPhysicalModel
+		if physicalModel == "" {
+			physicalModel = defaultGPUModel
+		}
+	}
+	var forwarded map[string]json.RawMessage
+	_ = json.Unmarshal(body, &forwarded)
+	modelJSON, _ := json.Marshal(physicalModel)
+	forwarded["model"] = modelJSON
+	delete(forwarded, "tenant_id")
+	delete(forwarded, "session_id")
+	delete(forwarded, "policy")
+	body, _ = json.Marshal(forwarded)
+	praxisURL := strings.TrimRight(fc.PraxisURL, "/")
+	if praxisURL == "" {
+		writeInferenceError(w, http.StatusServiceUnavailable, "gateway_not_configured", "Praxis endpoint is not configured", requestID)
+		return
+	}
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, praxisURL+r.URL.Path, bytes.NewReader(body))
+	if err != nil {
+		writeInferenceError(w, http.StatusInternalServerError, "proxy_error", "could not create upstream request", requestID)
+		return
+	}
+	upstream.Header.Set("Content-Type", "application/json")
+	upstream.Header.Set("Accept", r.Header.Get("Accept"))
+	upstream.Header.Set("X-Request-ID", requestID)
+	upstream.Header.Set("X-Fleet-Target-Cluster", decision.TargetCluster)
+	upstream.Header.Set("X-Fleet-Routing-Reason", decision.Reason)
+	if fc.PraxisToken != "" {
+		upstream.Header.Set("Authorization", "Bearer "+fc.PraxisToken)
+	}
+	client := fc.InferenceClient
+	if client == nil {
+		client = &http.Client{Timeout: 180 * time.Second}
+	}
+	inferenceActive.Inc()
+	defer inferenceActive.Dec()
+	resp, err := client.Do(upstream)
+	if err != nil {
+		inferenceErrors.Inc("upstream_unavailable")
+		slog.Warn("inference upstream failed", "request_id", requestID, "cluster", decision.TargetCluster, "error", err)
+		writeInferenceError(w, http.StatusBadGateway, "upstream_unavailable", "inference upstream failed", requestID)
+		return
+	}
+	defer resp.Body.Close()
+	copyResponseHeaders(w.Header(), resp.Header)
+	w.Header().Set("X-Request-ID", requestID)
+	w.Header().Set("X-Fleet-Routed-To", decision.TargetCluster)
+	w.Header().Set("X-Fleet-Routing-Reason", decision.Reason)
+	w.Header().Set("X-Fleet-Actual-Model", physicalModel)
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		inferenceErrors.Inc("stream_interrupted")
+	}
+	inferenceRequests.Inc(decision.TargetCluster + ":" + physicalModel)
+}
+
+func inferenceText(req inferenceEnvelope, chat bool) (string, error) {
+	if chat {
+		var messages []struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(req.Messages, &messages); err != nil || len(messages) == 0 {
+			return "", fmt.Errorf("messages must be a non-empty array")
+		}
+		for i := len(messages) - 1; i >= 0; i-- {
+			var text string
+			if json.Unmarshal(messages[i].Content, &text) == nil && strings.TrimSpace(text) != "" {
+				return text, nil
+			}
+		}
+		return "", fmt.Errorf("messages must contain text content")
+	}
+	var prompt string
+	if err := json.Unmarshal(req.Prompt, &prompt); err != nil || strings.TrimSpace(prompt) == "" {
+		return "", fmt.Errorf("prompt must be a non-empty string")
+	}
+	return prompt, nil
+}
+
+func requestID(r *http.Request) string {
+	if id := strings.TrimSpace(r.Header.Get("X-Request-ID")); id != "" && len(id) <= 128 {
+		return id
+	}
+	return fmt.Sprintf("fleet-%d", time.Now().UnixNano())
+}
+
+func copyResponseHeaders(dst, src http.Header) {
+	for _, key := range []string{"Content-Type", "Cache-Control", "Retry-After"} {
+		if value := src.Get(key); value != "" {
+			dst.Set(key, value)
+		}
+	}
+}
+
+func writeInferenceError(w http.ResponseWriter, status int, code, message, requestID string) {
+	w.Header().Set("X-Request-ID", requestID)
+	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message, "request_id": requestID}})
+}

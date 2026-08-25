@@ -1101,9 +1101,49 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  # Note: /v1/chat/completions and /v1/completions are served by Praxis AI
-  # (the inference data plane), not the fleet-controller. They are not part
-  # of this API specification.
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Route an OpenAI-compatible chat completion
+      description: The fleet gateway selects a healthy compatible cluster and streams the Praxis response. Clients must not call Praxis or spoke Routes directly.
+      tags: [inference]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              additionalProperties: true
+      responses:
+        "200": {description: OpenAI-compatible completion or event stream}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "429": {description: Tenant rate or gateway concurrency limit exceeded}
+        "502": {description: Selected inference upstream failed}
+        "503": {description: No compatible healthy provider is available}
+        "504": {description: Inference deadline exceeded}
+
+  /v1/completions:
+    post:
+      operationId: createCompletion
+      summary: Route an OpenAI-compatible text completion
+      description: The fleet gateway selects a healthy compatible cluster and streams the Praxis response. Clients must not call Praxis or spoke Routes directly.
+      tags: [inference]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt]
+              additionalProperties: true
+      responses:
+        "200": {description: OpenAI-compatible completion or event stream}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "429": {description: Tenant rate or gateway concurrency limit exceeded}
+        "502": {description: Selected inference upstream failed}
+        "503": {description: No compatible healthy provider is available}
+        "504": {description: Inference deadline exceeded}
 
 components:
   # ---------- security schemes ----------

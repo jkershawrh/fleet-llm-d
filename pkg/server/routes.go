@@ -106,6 +106,13 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 		mux.HandleFunc("GET /api/v1/modelplane/cost/{deployment}", fc.handleModelPlaneDeploymentCost)
 	}
 
+	// OpenAI-compatible inference gateway. These are the only supported
+	// production inference entry points; Praxis remains internal.
+	if mode == "all" || mode == "inference" {
+		mux.HandleFunc("POST /v1/chat/completions", fc.handleChatCompletions)
+		mux.HandleFunc("POST /v1/completions", fc.handleCompletions)
+	}
+
 	// Platform metrics (unified view across all systems)
 	if mode == "all" || mode == "control" {
 		gclURL := os.Getenv("GCL_URL")

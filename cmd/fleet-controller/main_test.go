@@ -18,6 +18,27 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/server"
 )
 
+func TestValidateProductionConfig(t *testing.T) {
+	t.Setenv("LEDGER_GATEWAY_API_TOKEN", "ledger-token")
+	valid := func() error {
+		return validateProductionConfig(true, "inference", "postgres://db/fleet?sslmode=verify-full", ledger.ModeHTTP,
+			"https://ledger.example", true, "/tls/tls.crt", "/tls/tls.key", "http://praxis-ai:8080", `{"gcl":"base64:key"}`)
+	}
+	if err := valid(); err != nil {
+		t.Fatalf("valid production config rejected: %v", err)
+	}
+	t.Setenv("LEDGER_GATEWAY_API_TOKEN", "")
+	if err := valid(); err == nil || !strings.Contains(err.Error(), "immutable ledger") {
+		t.Fatalf("expected ledger validation error, got %v", err)
+	}
+}
+
+func TestValidateProductionConfigDevelopmentBypass(t *testing.T) {
+	if err := validateProductionConfig(false, "all", "", ledger.ModeDisabled, "", false, "", "", "", ""); err != nil {
+		t.Fatalf("development configuration should remain supported: %v", err)
+	}
+}
+
 // newTestController creates a minimal FleetController for testing route setup.
 func newTestController(t *testing.T) *server.FleetController {
 	t.Helper()
