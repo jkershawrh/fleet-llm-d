@@ -98,11 +98,12 @@ data:
 
           - filter: load_balancer
             clusters:
-              # Granite 2B CPU — load-balanced across Oberon + Arena
+              # Default Granite 2B CPU traffic stays on the healthy local backend.
+              # Arena remains available through its explicit model route below;
+              # do not add it here without active endpoint health ejection.
               - name: ovms-granite-2b
                 endpoints:
                   - "ovms-granite-2b.fleet-llm-d.svc:8080"
-                  - "arena-ovms-external.fleet-llm-d.svc:8080"
               - name: ovms-granite-8b
                 endpoints:
                   - "ovms-granite-8b.fleet-llm-d.svc:8080"

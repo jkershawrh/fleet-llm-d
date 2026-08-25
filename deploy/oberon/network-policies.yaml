@@ -213,7 +213,7 @@ spec:
         - port: 5432
           protocol: TCP
 ---
-# OVMS Granite — ingress from Praxis + controller
+# OVMS Granite — ingress from Praxis, controller, and local fleet agent
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -237,6 +237,13 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: fleet-controller
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-agent
       ports:
         - port: 8080
           protocol: TCP

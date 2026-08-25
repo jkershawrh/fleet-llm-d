@@ -38,9 +38,17 @@ spec:
             - name: FLEET_CONTROL_PLANE_URL
               value: http://fleet-controller.fleet-llm-d.svc:8080
             - name: FLEET_CLUSTER_ID
-              value: oberon-sno
+              value: oberon-cpu
             - name: FLEET_PROXY_PORT
               value: "8090"
+            - name: FLEET_LOCAL_PROMETHEUS_URL
+              value: http://fleet-controller.fleet-llm-d.svc:9091/metrics
+            - name: FLEET_CLUSTER_HEALTH_URL
+              value: http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready
+            - name: FLEET_CLUSTER_INFERENCE_URL
+              value: http://ovms-granite-2b.fleet-llm-d.svc:8080
+            - name: FLEET_UPSTREAM_URL
+              value: http://ovms-granite-2b.fleet-llm-d.svc:8080
           ports:
             - name: proxy
               containerPort: 8090
@@ -60,7 +68,9 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
+              # Liveness of the agent process. Backend health is reported
+              # separately through FLEET_CLUSTER_HEALTH_URL.
+              path: /healthz
               port: proxy
             periodSeconds: 5
             timeoutSeconds: 2
