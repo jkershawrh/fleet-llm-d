@@ -108,7 +108,9 @@ func AuthorizationMiddleware(exempt []string, next http.Handler) http.Handler {
 			return
 		}
 
-		if !CheckPermission(claims.Role, r.Method) {
+		inferenceRequest := r.Method == http.MethodPost &&
+			(r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/completions")
+		if !CheckPermission(claims.Role, r.Method) && !(claims.Role == RoleTenant && inferenceRequest) {
 			writeAuthorizationError(w, "role is not allowed to perform this action")
 			slog.Info("fleet.security.rbac.denied",
 				"subject", claims.Subject, "role", claims.Role,
@@ -116,7 +118,7 @@ func AuthorizationMiddleware(exempt []string, next http.Handler) http.Handler {
 			return
 		}
 
-		if claims.Role == RoleTenant && !tenantRequestAllowed(claims.Subject, r.Method, r.URL.Path) {
+		if claims.Role == RoleTenant && !inferenceRequest && !tenantRequestAllowed(claims.Subject, r.Method, r.URL.Path) {
 			writeAuthorizationError(w, "tenant is not allowed to access this resource")
 			slog.Info("fleet.security.rbac.denied",
 				"subject", claims.Subject, "role", claims.Role,

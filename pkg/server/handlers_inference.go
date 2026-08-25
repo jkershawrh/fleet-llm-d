@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/auth"
+	"github.com/llm-d/fleet-llm-d/pkg/tenant/quota"
 )
 
 const (
@@ -25,6 +30,7 @@ type inferenceEnvelope struct {
 	TenantID  string          `json:"tenant_id,omitempty"`
 	SessionID string          `json:"session_id,omitempty"`
 	Policy    string          `json:"policy,omitempty"`
+	MaxTokens int64           `json:"max_tokens,omitempty"`
 }
 
 func (fc *FleetController) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -68,9 +74,19 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	requestID := requestID(r)
+	tenantID := envelope.TenantID
+	if claims := auth.GetClaims(r); claims != nil {
+		if claims.Role == auth.RoleTenant || tenantID == "" {
+			tenantID = claims.Subject
+		}
+	}
+	requestedTokens := envelope.MaxTokens
+	if requestedTokens <= 0 {
+		requestedTokens = 256
+	}
 	decision, err := fc.classifyAndRoute(r.Context(), routeRequest{
 		Text: text, RequestID: requestID, Model: envelope.Model,
-		TenantID: envelope.TenantID, SessionID: envelope.SessionID, Policy: envelope.Policy,
+		TenantID: tenantID, SessionID: envelope.SessionID, Policy: envelope.Policy,
 	})
 	if err != nil {
 		inferenceErrors.Inc("no_eligible_provider")
@@ -98,6 +114,26 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		physicalModel = fc.GPUPhysicalModel
 		if physicalModel == "" {
 			physicalModel = defaultGPUModel
+		}
+	}
+	if tenantID != "" && fc.QuotaEnforcer != nil {
+		check := quota.QuotaCheckRequest{TokensRequested: requestedTokens, Model: physicalModel, ClusterID: decision.TargetCluster}
+		var result quota.QuotaCheckResult
+		if consumer, ok := fc.QuotaEnforcer.(*quota.DefaultQuotaEnforcer); ok {
+			result, err = consumer.ConsumeQuota(r.Context(), tenantID, check)
+		} else {
+			result, err = fc.QuotaEnforcer.CheckQuota(r.Context(), tenantID, check)
+		}
+		if err != nil {
+			inferenceErrors.Inc("quota_unavailable")
+			writeInferenceError(w, http.StatusServiceUnavailable, "quota_unavailable", "tenant quota service is unavailable", requestID)
+			return
+		}
+		if !result.Allowed {
+			inferenceErrors.Inc("quota_denied")
+			w.Header().Set("Retry-After", "60")
+			writeInferenceError(w, http.StatusTooManyRequests, "quota_exceeded", result.Reason, requestID)
+			return
 		}
 	}
 	var forwarded map[string]json.RawMessage
@@ -136,10 +172,20 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		inferenceErrors.Inc("upstream_unavailable")
 		slog.Warn("inference upstream failed", "request_id", requestID, "cluster", decision.TargetCluster, "error", err)
+		if errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
+			writeInferenceError(w, http.StatusGatewayTimeout, "upstream_timeout", "inference upstream timed out", requestID)
+			return
+		}
 		writeInferenceError(w, http.StatusBadGateway, "upstream_unavailable", "inference upstream failed", requestID)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		inferenceErrors.Inc("no_eligible_provider")
+		_, _ = io.Copy(io.Discard, resp.Body)
+		writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the selected provider is unavailable", requestID)
+		return
+	}
 	copyResponseHeaders(w.Header(), resp.Header)
 	w.Header().Set("X-Request-ID", requestID)
 	w.Header().Set("X-Fleet-Routed-To", decision.TargetCluster)
@@ -150,6 +196,11 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		inferenceErrors.Inc("stream_interrupted")
 	}
 	inferenceRequests.Inc(decision.TargetCluster + ":" + physicalModel)
+}
+
+func isTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func (fc *FleetController) requiresGPUModel(requested string) bool {

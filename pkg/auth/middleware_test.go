@@ -217,3 +217,14 @@ func TestAuthorizationMiddleware_TenantUsageScope(t *testing.T) {
 		t.Fatalf("expected 200 for matching tenant usage read, got %d", rr.Code)
 	}
 }
+
+func TestAuthorizationMiddleware_AllowsTenantInference(t *testing.T) {
+	handler := AuthorizationMiddleware(nil, dummyHandler())
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(WithClaims(req.Context(), &Claims{Subject: "tenant-a", Role: RoleTenant}))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("tenant inference status = %d, want 200", rr.Code)
+	}
+}

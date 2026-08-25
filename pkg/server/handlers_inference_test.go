@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
@@ -139,5 +140,61 @@ func TestInferenceGatewayRejectsInvalidPayloads(t *testing.T) {
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("%s: expected 400, got %d", tc.path, rr.Code)
 		}
+	}
+}
+
+func TestInferenceGatewayEnforcesTenantQuota(t *testing.T) {
+	fc := newTestFleetController(t)
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"tenant_id":"tenant-a","model":"granite-2b-cpu","max_tokens":2000,"messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests || !strings.Contains(rr.Body.String(), "quota_exceeded") {
+		t.Fatalf("expected quota 429, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInferenceGatewayMapsTimeoutTo504(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	fc := newTestFleetController(t)
+	fc.PraxisURL = upstream.URL
+	fc.InferenceClient = &http.Client{Timeout: 10 * time.Millisecond}
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusGatewayTimeout || !strings.Contains(rr.Body.String(), "upstream_timeout") {
+		t.Fatalf("expected structured 504, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInferenceGatewayNormalizesProvider503(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "<html>router unavailable</html>")
+	}))
+	defer upstream.Close()
+	fc := newTestFleetController(t)
+	fc.PraxisURL = upstream.URL
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "no_compatible_capacity") || strings.Contains(rr.Body.String(), "<html>") {
+		t.Fatalf("expected structured 503, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
