@@ -29,7 +29,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: fleet-controller
-          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:32aa02860ea20c90219436e2c4f07d3393752158abfd3a55c5921b2b7b7b6d7d
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:3ab6b91a00e3366a28c78878a3f5adfd9e97b33ab39063d5aaf479327d72cc6b
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
