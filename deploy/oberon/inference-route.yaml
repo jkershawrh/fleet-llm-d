@@ -1,0 +1,42 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ovms-granite-2b
+  namespace: fleet-llm-d
+  labels:
+    app: ovms-granite-2b
+    fleet.llm-d.ai/purpose: cross-cluster-inference
+  annotations:
+    haproxy.router.openshift.io/timeout: 180s
+    haproxy.router.openshift.io/haproxy.health.check.interval: 5s
+spec:
+  host: ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
+  to:
+    kind: Service
+    name: ovms-granite-2b
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect
+    destinationCACertificate: |-
+      -----BEGIN CERTIFICATE-----
+      MIIDUTCCAjmgAwIBAgIIL3iTtsSzyTQwDQYJKoZIhvcNAQELBQAwNjE0MDIGA1UE
+      Awwrb3BlbnNoaWZ0LXNlcnZpY2Utc2VydmluZy1zaWduZXJAMTc4MDQyNzU2MjAe
+      Fw0yNjA2MDIxOTEyNDFaFw0yODA3MzExOTEyNDJaMDYxNDAyBgNVBAMMK29wZW5z
+      aGlmdC1zZXJ2aWNlLXNlcnZpbmctc2lnbmVyQDE3ODA0Mjc1NjIwggEiMA0GCSqG
+      SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDD9xN6WrWQbM3Bxy2VXlgPxFGJfU/gnXyy
+      p2xA9VosZPIR8j8m8PzaQ0Lz/17MPjRCEHiLZialQxjxV5qd+4Vn+v6+6xz9YXu6
+      fWz1xXNxJ7TO+x/iy3VxqMIreHE1aX+qV8PLIcxioKBgi8h3OiwWO69PQrUo7J4v
+      8rn0jvN53O2eB3j2bIZSKTgKA5tYWQDlwwsDVP6FPir/ZYqMRGyxw0nkqLNHJl8c
+      Di2HrvHt5ARf8qQqafkc2+9ZZ1fzanfYX2PSoO50Q2ax8FG9CA2/aaaFhbpBOkpH
+      3T2dXMhL1sPd2kEVVck05OObmKlQw4FR5CN8ra8naQifyMXWqa1RAgMBAAGjYzBh
+      MA4GA1UdDwEB/wQEAwICpDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5uqrW
+      XujG1D/1nOwNhBtusUzDJzAfBgNVHSMEGDAWgBR5uqrWXujG1D/1nOwNhBtusUzD
+      JzANBgkqhkiG9w0BAQsFAAOCAQEAfrrPLeDJ8D8PYTqEWEAhzB4M7RWvUa85jYBK
+      +7C2XLaVS64GO8eeFKf0W9ummLSfMy8ow7crpa1JkdNAeFkKO6qbWEIcaCIck2qP
+      LX/LAc6cyFYRCWGWgOzhCmhuYEEE1AfeigUq1g0oJ+qE9aJYEqoxFMW+IwwsKR8f
+      x3aEu94kXhB/tzb7pznLNn7FgQeSlhxvr8jQiCVVqsXNbdYb5CIkeTqJLO/MoNUA
+      HGrRBHmHhbuQBkd0zrBBPSPQ5IKaUbHTDU0sAtSItvDxqINOaVyp0Wm+XjU94Fb4
+      97Zffao6HzHFSfLjRDBwi+xxM6on3iCeDHxe+WoAnSt7I5TxHA==
+      -----END CERTIFICATE-----
