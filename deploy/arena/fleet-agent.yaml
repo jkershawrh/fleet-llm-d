@@ -27,7 +27,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: fleet-agent
-          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-agent:latest
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-agent@sha256:39bc755470a20394df00eaa801e1f8746a9bd4c90a3113683a0826e3b6033668
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true

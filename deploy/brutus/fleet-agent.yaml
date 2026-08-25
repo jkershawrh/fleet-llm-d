@@ -27,7 +27,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: fleet-agent
-          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-agent:latest
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-agent@sha256:c6da51ce92cc506ff2b46c776adc80a260254554299c24c93ad44e9f303ccd79
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
@@ -36,7 +36,7 @@ spec:
               drop: ["ALL"]
           env:
             - name: FLEET_CONTROL_PLANE_URL
-              value: FLEET_CONTROL_PLANE_URL_PLACEHOLDER
+              value: https://fleet-controller-fleet-llm-d.apps.oberon.fm2aihpcsed.com
             - name: FLEET_CLUSTER_ID
               value: brutus-h100
             - name: FLEET_PROXY_PORT
@@ -79,7 +79,8 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
+              # Agent process readiness; vLLM health is reported separately.
+              path: /healthz
               port: proxy
             periodSeconds: 5
             timeoutSeconds: 2
