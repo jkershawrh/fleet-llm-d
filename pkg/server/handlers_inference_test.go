@@ -140,6 +140,20 @@ func TestInferenceGatewayExactCPUModelCannotEscalateToGPU(t *testing.T) {
 	}
 }
 
+func TestInferenceGatewayDistributesAcrossHealthyCPUProviders(t *testing.T) {
+	fc := newTestFleetController(t)
+	for _, cluster := range []string{"oberon-cpu", "arena-xeon6"} {
+		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := fc.nextHealthyCPUProvider(context.Background())
+	second := fc.nextHealthyCPUProvider(context.Background())
+	if first != "arena-xeon6" || second != "oberon-cpu" {
+		t.Fatalf("CPU distribution = %q, %q", first, second)
+	}
+}
+
 func TestInferenceGatewayRejectsInvalidPayloads(t *testing.T) {
 	fc := newTestFleetController(t)
 	tests := []struct{ path, body string }{

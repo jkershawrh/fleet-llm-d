@@ -125,6 +125,7 @@ type FleetController struct {
 	GPUPhysicalModel string
 	InferenceSlots   chan struct{}
 	ProviderHealth   *ProviderHealthCache
+	cpuRouteCounter  atomic.Uint64
 
 	// Server state
 	ready atomic.Bool

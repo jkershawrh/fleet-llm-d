@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -116,6 +117,16 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 			physicalModel = defaultGPUModel
 		}
 	}
+	if physicalModel == fc.cpuPhysicalModel() && decision.Reason != "session-affinity" {
+		if selected := fc.nextHealthyCPUProvider(r.Context()); selected != "" {
+			decision.TargetCluster = selected
+			decision.Reason = "compatible-round-robin"
+			if envelope.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
+				fc.Routing.SessionTable.Unbind(envelope.SessionID)
+				fc.Routing.SessionTable.Bind(envelope.SessionID, selected)
+			}
+		}
+	}
 	if tenantID != "" && fc.QuotaEnforcer != nil {
 		check := quota.QuotaCheckRequest{TokensRequested: requestedTokens, Model: physicalModel, ClusterID: decision.TargetCluster}
 		var result quota.QuotaCheckResult
@@ -209,6 +220,29 @@ func (fc *FleetController) requiresGPUModel(requested string) bool {
 		gpuModel = defaultGPUModel
 	}
 	return requested == gpuModel || requested == defaultGPUModel
+}
+
+func (fc *FleetController) cpuPhysicalModel() string {
+	if fc.CPUPhysicalModel != "" {
+		return fc.CPUPhysicalModel
+	}
+	return defaultCPUModel
+}
+
+func (fc *FleetController) nextHealthyCPUProvider(ctx context.Context) string {
+	allowed := map[string]bool{"oberon-cpu": true, "arena-xeon6": true}
+	providers := make([]string, 0, len(allowed))
+	for _, cluster := range fc.BuildInferenceClusterHealth(ctx) {
+		if allowed[cluster.ClusterID] && cluster.Healthy {
+			providers = append(providers, cluster.ClusterID)
+		}
+	}
+	if len(providers) == 0 {
+		return ""
+	}
+	sort.Strings(providers)
+	index := (fc.cpuRouteCounter.Add(1) - 1) % uint64(len(providers))
+	return providers[index]
 }
 
 func (fc *FleetController) clusterIsHealthy(ctx context.Context, clusterID string) bool {
