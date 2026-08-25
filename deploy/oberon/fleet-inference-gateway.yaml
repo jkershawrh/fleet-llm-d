@@ -30,7 +30,7 @@ spec:
               app.kubernetes.io/name: fleet-inference-gateway
       containers:
         - name: gateway
-          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:823fd097988addda98dc31b6b9132546618ead9dc3b2d790945b6dc767bba7fb
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:5039347c43fc805b63c5ddfec72b3f6d75dabfda58a9977e6a4106412003cd37
           args:
             - --mode=inference
             - --port=8080
