@@ -27,6 +27,7 @@ const (
 	leaseRenewInterval = 5 * time.Second
 	leaseRetryInterval = 3 * time.Second
 	serviceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount"
+	leaderLabelKey     = "fleet.llm-d.ai/leader"
 )
 
 // LeaderElector implements leader election using Kubernetes Lease objects
@@ -78,9 +79,56 @@ func (le *LeaderElector) IsLeader() bool {
 	return le.isLeader.Load()
 }
 
+func (le *LeaderElector) setLeader(ctx context.Context, leader bool) error {
+	value := "false"
+	if leader {
+		value = "true"
+	}
+	patch := map[string]any{"metadata": map[string]any{"labels": map[string]string{leaderLabelKey: value}}}
+	data, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s", le.apiServer, le.namespace, le.identity)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+le.token)
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+	resp, err := le.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("patch leader pod label: %d %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+	le.isLeader.Store(leader)
+	return nil
+}
+
+func (le *LeaderElector) acquireServingLeadership(ctx context.Context) error {
+	if err := le.setLeader(ctx, true); err != nil {
+		le.isLeader.Store(false)
+		return err
+	}
+	return nil
+}
+
 // Run starts the leader election loop. Blocks until context is cancelled.
 func (le *LeaderElector) Run(ctx context.Context) error {
 	slog.Info("leader election started", "identity", le.identity, "namespace", le.namespace)
+	defer func() {
+		if le.isLeader.Load() {
+			withdrawCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := le.setLeader(withdrawCtx, false); err != nil {
+				slog.Warn("leader election: failed to withdraw endpoint during shutdown", "error", err)
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -106,14 +154,18 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			le.isLeader.Store(true)
+			if err := le.acquireServingLeadership(ctx); err != nil {
+				return fmt.Errorf("publish new leader endpoint: %w", err)
+			}
 			slog.Info("leader election: acquired lease (new)")
 			le.renewLoop(ctx)
 			continue
 		}
 
 		if le.isHeldByMe(lease) {
-			le.isLeader.Store(true)
+			if err := le.acquireServingLeadership(ctx); err != nil {
+				return fmt.Errorf("publish leader endpoint: %w", err)
+			}
 			le.renewLoop(ctx)
 			continue
 		}
@@ -126,13 +178,17 @@ func (le *LeaderElector) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			le.isLeader.Store(true)
+			if err := le.acquireServingLeadership(ctx); err != nil {
+				return fmt.Errorf("publish acquired leader endpoint: %w", err)
+			}
 			slog.Info("leader election: acquired expired lease")
 			le.renewLoop(ctx)
 			continue
 		}
 
-		le.isLeader.Store(false)
+		if le.isLeader.Load() {
+			_ = le.setLeader(ctx, false)
+		}
 		if !waitForLeaderRetry(ctx) {
 			return ctx.Err()
 		}
@@ -146,11 +202,14 @@ func (le *LeaderElector) renewLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			le.isLeader.Store(false)
 			return
 		case <-ticker.C:
 			if err := le.renewLease(ctx); err != nil {
 				slog.Warn("leader election: lost lease", "error", err)
-				le.isLeader.Store(false)
+				if labelErr := le.setLeader(ctx, false); labelErr != nil {
+					slog.Warn("leader election: failed to withdraw leader endpoint", "error", labelErr)
+				}
 				return
 			}
 		}

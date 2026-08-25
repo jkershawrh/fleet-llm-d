@@ -19,10 +19,6 @@ func (fc *FleetController) handleReadyz(w http.ResponseWriter, _ *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
-	if fc.LeaderElector != nil && !fc.LeaderElector.IsLeader() {
-		writeError(w, http.StatusServiceUnavailable, "standby: not the elected leader")
-		return
-	}
 	if fc.CRDWatcher != nil && !fc.CRDWatcher.Ready() {
 		writeError(w, http.StatusServiceUnavailable, "Kubernetes fleet API is not ready")
 		return

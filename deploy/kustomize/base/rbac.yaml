@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/component: controller
     app.kubernetes.io/part-of: fleet-llm-d
 rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
   - apiGroups:
       - coordination.k8s.io
     resources:
