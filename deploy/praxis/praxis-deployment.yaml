@@ -298,22 +298,6 @@ spec:
     - port: 8080
       targetPort: 8080
       name: http
----
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: praxis-ai
-  namespace: fleet-llm-d
-spec:
-  to:
-    kind: Service
-    name: praxis-ai
-  port:
-    targetPort: http
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
----
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
