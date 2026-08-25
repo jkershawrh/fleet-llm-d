@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: arena-ovms-external
+  namespace: fleet-llm-d
+  labels:
+    fleet.llm-d.ai/purpose: cross-cluster-inference
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 30106
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: arena-ovms-external-1
+  namespace: fleet-llm-d
+  labels:
+    kubernetes.io/service-name: arena-ovms-external
+addressType: IPv4
+endpoints:
+  - addresses: ["192.168.1.150"]
+ports:
+  - name: http
+    port: 30106
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: brutus-vllm-external
+  namespace: fleet-llm-d
+  labels:
+    fleet.llm-d.ai/purpose: cross-cluster-inference
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 32712
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: brutus-vllm-external-1
+  namespace: fleet-llm-d
+  labels:
+    kubernetes.io/service-name: brutus-vllm-external
+addressType: IPv4
+endpoints:
+  - addresses: ["192.168.1.75"]
+ports:
+  - name: http
+    port: 32712
+    protocol: TCP

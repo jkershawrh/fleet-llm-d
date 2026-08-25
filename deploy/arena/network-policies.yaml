@@ -23,33 +23,10 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: openshift-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
-        - port: 443
-          protocol: TCP
-    - to:
-        - podSelector: {}
-      ports:
-        - port: 8080
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: default
-      ports:
-        - port: 6443
-          protocol: TCP
+    # The spoke agent must reach DNS, the Kubernetes API, local inference,
+    # and the external Oberon control plane. Keep this broad allowance scoped
+    # to the fleet-agent label; default-deny remains in force for other pods.
+    - {}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

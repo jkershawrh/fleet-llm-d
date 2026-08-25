@@ -31,6 +31,10 @@ pub struct MetricsReporter {
     health_url: String,
     /// Gateway-reachable inference proxy base URL advertised with cluster status.
     inference_url: String,
+    /// Total accelerator capacity advertised to the control plane.
+    gpu_total: u32,
+    /// Currently available accelerator capacity advertised to the control plane.
+    gpu_available: u32,
     /// Accept invalid TLS certificates (for cross-cluster OpenShift Routes).
     /// Only takes effect when no CA cert is configured via `tls_ca_cert`.
     tls_insecure: bool,
@@ -56,6 +60,8 @@ impl MetricsReporter {
             control_plane_token: None,
             health_url: String::new(),
             inference_url: String::new(),
+            gpu_total: 0,
+            gpu_available: 0,
             tls_insecure: false,
             tls_ca_cert: None,
             http: reqwest::Client::builder()
@@ -124,6 +130,14 @@ impl MetricsReporter {
         self
     }
 
+    /// Configure accelerator capacity reported with cluster health. Available
+    /// capacity is clamped to the declared total to preserve the API contract.
+    pub fn with_gpu_capacity(mut self, available: u32, total: u32) -> Self {
+        self.gpu_total = total;
+        self.gpu_available = available.min(total);
+        self
+    }
+
     /// Set a PEM-encoded CA certificate file for proper TLS verification.
     /// When set, this takes precedence over `tls_insecure`.
     pub fn with_tls_ca_cert(mut self, path: Option<String>) -> Self {
@@ -175,8 +189,8 @@ impl MetricsReporter {
                 name: format!("cluster-{}", self.cluster_id),
                 region: String::new(),
                 phase: if scrape_ok { "Running" } else { "Degraded" }.to_string(),
-                gpu_available: 0,
-                gpu_total: 0,
+                gpu_available: self.gpu_available,
+                gpu_total: self.gpu_total,
                 healthy: scrape_ok,
             };
 
@@ -404,6 +418,18 @@ mod tests {
         )
         .with_interval(30);
         assert_eq!(reporter.collect_interval_secs, 30);
+    }
+
+    #[test]
+    fn reporter_uses_configured_gpu_capacity() {
+        let reporter = MetricsReporter::new(
+            "https://cp.example.com".to_string(),
+            ClusterId("gpu-cluster".to_string()),
+            "http://localhost:9090".to_string(),
+        )
+        .with_gpu_capacity(2, 1);
+        assert_eq!(reporter.gpu_available, 1);
+        assert_eq!(reporter.gpu_total, 1);
     }
 
     #[tokio::test]

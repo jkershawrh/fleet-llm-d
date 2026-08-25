@@ -43,6 +43,13 @@ spec:
               value: "8090"
             - name: FLEET_TLS_INSECURE_SKIP_VERIFY
               value: "true"
+            - name: FLEET_CONTROL_PLANE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-agent-auth
+                  key: FLEET_CONTROL_PLANE_TOKEN
+            - name: FLEET_LOCAL_PROMETHEUS_URL
+              value: http://ovms-granite-2b.fleet-llm-d.svc:8080/v1/models
             - name: FLEET_CLUSTER_HEALTH_URL
               value: http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready
             - name: FLEET_CLUSTER_INFERENCE_URL
@@ -68,7 +75,8 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /readyz
+              # Agent process readiness; OVMS health is reported separately.
+              path: /healthz
               port: proxy
             periodSeconds: 5
             timeoutSeconds: 2

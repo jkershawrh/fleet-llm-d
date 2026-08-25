@@ -43,6 +43,17 @@ spec:
               value: "8090"
             - name: FLEET_TLS_INSECURE_SKIP_VERIFY
               value: "true"
+            - name: FLEET_CONTROL_PLANE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-agent-auth
+                  key: FLEET_CONTROL_PLANE_TOKEN
+            - name: FLEET_LOCAL_PROMETHEUS_URL
+              value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000/metrics
+            - name: FLEET_GPU_TOTAL
+              value: "1"
+            - name: FLEET_GPU_AVAILABLE
+              value: "1"
             - name: FLEET_CLUSTER_HEALTH_URL
               value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000/health
             - name: FLEET_CLUSTER_INFERENCE_URL

@@ -65,6 +65,14 @@ pub struct FleetAgentConfig {
     )]
     pub local_prometheus_url: String,
 
+    /// Total GPU capacity exposed by this cluster.
+    #[arg(long, default_value = "0", env = "FLEET_GPU_TOTAL")]
+    pub gpu_total: u32,
+
+    /// Currently available GPU capacity exposed by this cluster.
+    #[arg(long, default_value = "0", env = "FLEET_GPU_AVAILABLE")]
+    pub gpu_available: u32,
+
     /// Optional bearer token for authenticated control-plane ingestion.
     #[arg(long, env = "FLEET_CONTROL_PLANE_TOKEN")]
     pub control_plane_token: Option<String>,
@@ -138,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
     .with_token(config.control_plane_token.clone())
     .with_health_url(config.cluster_health_url.clone())
     .with_inference_url(config.cluster_inference_url.clone())
+    .with_gpu_capacity(config.gpu_available, config.gpu_total)
     .with_tls_ca_cert(config.tls_ca_cert.clone())
     .with_tls_insecure(config.tls_insecure);
     let enforcer = enforcer::PolicyEnforcerImpl::new(cluster_id.clone());
