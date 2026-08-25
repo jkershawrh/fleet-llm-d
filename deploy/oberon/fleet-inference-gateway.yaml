@@ -56,6 +56,10 @@ spec:
                 secretKeyRef: {name: fleet-postgres-credentials, key: pg-url}
             - name: SEMANTIC_CLASSIFIER_URL
               value: llm-d-semantic-classifier.fleet-llm-d.svc:50051
+            - name: FLEET_PROVIDER_HEALTH_URLS_JSON
+              value: '{"oberon-cpu":"http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready","arena-xeon6":"https://ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com/v2/health/ready","brutus-h100":"https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com/health"}'
+            - name: FLEET_PROVIDER_CA_FILE
+              value: /etc/fleet/route-ca/ca-bundle.crt
           ports:
             - {name: http, containerPort: 8080}
             - {name: metrics, containerPort: 9091}
@@ -76,6 +80,14 @@ spec:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+          volumeMounts:
+            - name: route-ca
+              mountPath: /etc/fleet/route-ca
+              readOnly: true
+      volumes:
+        - name: route-ca
+          configMap:
+            name: fleet-route-ca
 ---
 apiVersion: v1
 kind: Service
@@ -160,6 +172,11 @@ spec:
               app.kubernetes.io/name: llm-d-semantic-classifier
       ports:
         - {protocol: TCP, port: 50051}
+    - to:
+        - ipBlock: {cidr: 192.168.1.106/32}
+        - ipBlock: {cidr: 192.168.1.75/32}
+      ports:
+        - {protocol: TCP, port: 443}
     - to:
         - namespaceSelector:
             matchLabels:

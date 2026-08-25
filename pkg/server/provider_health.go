@@ -1,0 +1,95 @@
+package server
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net/http"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
+)
+
+type providerHealthEntry struct {
+	healthy   bool
+	checkedAt time.Time
+}
+
+// ProviderHealthCache actively verifies inference endpoints. Configured
+// providers fail closed: repository or agent health cannot override a failed
+// inference probe.
+type ProviderHealthCache struct {
+	mu      sync.Mutex
+	urls    map[string]string
+	entries map[string]providerHealthEntry
+	ttl     time.Duration
+	client  *http.Client
+	now     func() time.Time
+}
+
+func NewProviderHealthCache(urls map[string]string, caPath string) (*ProviderHealthCache, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if caPath != "" {
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read provider CA bundle: %w", err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("provider CA bundle contains no certificates")
+		}
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	}
+	return &ProviderHealthCache{
+		urls: urls, entries: make(map[string]providerHealthEntry), ttl: 5 * time.Second,
+		client: &http.Client{Transport: transport, Timeout: 2 * time.Second}, now: time.Now,
+	}, nil
+}
+
+func (p *ProviderHealthCache) Healthy(ctx context.Context, clusterID string) (bool, bool) {
+	if p == nil {
+		return false, false
+	}
+	url, configured := p.urls[clusterID]
+	if !configured {
+		return false, false
+	}
+	now := p.now()
+	p.mu.Lock()
+	entry, cached := p.entries[clusterID]
+	if cached && now.Sub(entry.checkedAt) < p.ttl {
+		p.mu.Unlock()
+		return entry.healthy, true
+	}
+	p.mu.Unlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	healthy := false
+	if err == nil {
+		resp, requestErr := p.client.Do(req)
+		if requestErr == nil {
+			healthy = resp.StatusCode >= 200 && resp.StatusCode < 300
+			_ = resp.Body.Close()
+		}
+	}
+	p.mu.Lock()
+	p.entries[clusterID] = providerHealthEntry{healthy: healthy, checkedAt: now}
+	p.mu.Unlock()
+	return healthy, true
+}
+
+func (fc *FleetController) BuildInferenceClusterHealth(ctx context.Context) []policy.ClusterHealth {
+	health := fc.BuildClusterHealth(ctx)
+	for i := range health {
+		if activelyHealthy, configured := fc.ProviderHealth.Healthy(ctx, health[i].ClusterID); configured {
+			health[i].Healthy = health[i].Healthy && activelyHealthy
+		}
+	}
+	return health
+}

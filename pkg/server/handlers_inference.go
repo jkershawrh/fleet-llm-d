@@ -161,7 +161,7 @@ func (fc *FleetController) requiresGPUModel(requested string) bool {
 }
 
 func (fc *FleetController) clusterIsHealthy(ctx context.Context, clusterID string) bool {
-	for _, cluster := range fc.BuildClusterHealth(ctx) {
+	for _, cluster := range fc.BuildInferenceClusterHealth(ctx) {
 		if cluster.ClusterID == clusterID {
 			return cluster.Healthy
 		}

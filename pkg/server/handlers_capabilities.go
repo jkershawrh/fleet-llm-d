@@ -15,7 +15,7 @@ type capabilityStatus struct {
 func (fc *FleetController) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	requestsTotal.Inc()
 	defer ObserveRequest(time.Now())
-	health := fc.BuildClusterHealth(r.Context())
+	health := fc.BuildInferenceClusterHealth(r.Context())
 	healthy := make(map[string]bool, len(health))
 	for _, site := range health {
 		healthy[site.ClusterID] = site.Healthy

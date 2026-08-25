@@ -108,7 +108,7 @@ func (fc *FleetController) classifyAndRoute(ctx context.Context, req routeReques
 		}
 	}
 
-	health := fc.BuildClusterHealth(ctx)
+	health := fc.BuildInferenceClusterHealth(ctx)
 	routingPolicy := fc.getRoutingPolicy(req.Policy)
 
 	decision, err := fc.Routing.Evaluator.Evaluate(ctx, routingReq, health, routingPolicy)

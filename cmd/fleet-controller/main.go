@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -145,6 +146,20 @@ func main() {
 	fc.PraxisToken = os.Getenv("PRAXIS_API_TOKEN")
 	fc.CPUPhysicalModel = os.Getenv("FLEET_CPU_PHYSICAL_MODEL")
 	fc.GPUPhysicalModel = os.Getenv("FLEET_GPU_PHYSICAL_MODEL")
+	if raw := os.Getenv("FLEET_PROVIDER_HEALTH_URLS_JSON"); raw != "" {
+		var providerURLs map[string]string
+		if err := json.Unmarshal([]byte(raw), &providerURLs); err != nil {
+			slog.Error("invalid provider health URL configuration", "error", err)
+			os.Exit(1)
+		}
+		providerHealth, err := server.NewProviderHealthCache(providerURLs, os.Getenv("FLEET_PROVIDER_CA_FILE"))
+		if err != nil {
+			slog.Error("invalid provider health probe configuration", "error", err)
+			os.Exit(1)
+		}
+		fc.ProviderHealth = providerHealth
+		slog.Info("active provider health probes enabled", "providers", len(providerURLs))
+	}
 	if *inferenceMaxInflight > 0 {
 		fc.InferenceSlots = make(chan struct{}, *inferenceMaxInflight)
 	}
