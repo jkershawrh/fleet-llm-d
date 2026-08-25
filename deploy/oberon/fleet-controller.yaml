@@ -13,7 +13,7 @@ metadata:
     app.kubernetes.io/name: fleet-controller
     app.kubernetes.io/part-of: fleet-llm-d
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: fleet-controller
@@ -24,6 +24,7 @@ spec:
         app.kubernetes.io/part-of: fleet-llm-d
     spec:
       enableServiceLinks: false
+      serviceAccountName: fleet-controller
       securityContext:
         runAsNonRoot: true
       containers:
@@ -35,15 +36,17 @@ spec:
             capabilities:
               drop: ["ALL"]
           args:
+            - "--mode=control"
+            - "--kube-api=https://kubernetes.default.svc"
+            - "--namespace=fleet-llm-d"
             - "--port=8080"
             - "--metrics-port=9091"
             - "--ledger-mode=http"
             - "--ledger-endpoint=http://ledger-gateway.immutable-ledger.svc:28099"
-            - "--backend-vllm=http://granite-real.fleet-llm-d.svc:8000"
-            - "--backend-ovms=http://ovms-granite-2b.fleet-llm-d.svc:8080"
             - "--modelplane-api=http://modelplane-mock.fleet-llm-d.svc:8090"
             - "--modelplane-namespace=default"
-            - "--rate-limit=0"
+            - "--rate-limit=100"
+            - "--rate-burst=200"
             - "--log-level=info"
           ports:
             - containerPort: 8080
@@ -51,6 +54,10 @@ spec:
             - containerPort: 9091
               name: metrics
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: FLEET_AUTH_SECRET
               valueFrom:
                 secretKeyRef:
@@ -97,6 +104,13 @@ spec:
             limits:
               cpu: 1000m
               memory: 512Mi
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-controller
 ---
 apiVersion: v1
 kind: Service
@@ -131,3 +145,14 @@ spec:
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fleet-controller
+  namespace: fleet-llm-d
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller

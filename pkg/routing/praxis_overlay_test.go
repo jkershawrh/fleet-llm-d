@@ -65,6 +65,21 @@ func TestRenderConfig_MultiCluster(t *testing.T) {
 	}
 }
 
+func TestRenderConfig_TLSClusterIsIsolatedAndVerified(t *testing.T) {
+	overlay := NewPraxisOverlay([]PraxisClusterEndpoint{
+		{ClusterID: "arena", Endpoint: "model.apps.arena.example:443", TLS: true},
+	})
+	out, err := overlay.RenderConfig([]PoolPlacement{{ModelName: "model", Clusters: []string{"arena"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"x-fleet-target-cluster": "arena"`, `"sni": "model.apps.arena.example"`, `"verify": true`, `"health_check"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %s in config:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderConfig_UnknownClusterSkipped(t *testing.T) {
 	overlay := NewPraxisOverlay([]PraxisClusterEndpoint{
 		{ClusterID: "oberon-sno", Endpoint: "ovms:8080"},

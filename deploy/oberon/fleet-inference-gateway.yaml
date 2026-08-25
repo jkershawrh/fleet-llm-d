@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-inference-gateway
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-inference-gateway
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-inference-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-inference-gateway
+        app.kubernetes.io/part-of: fleet-llm-d
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: fleet-controller
+      securityContext:
+        runAsNonRoot: true
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-inference-gateway
+      containers:
+        - name: gateway
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller:latest
+          args:
+            - --mode=inference
+            - --port=8080
+            - --metrics-port=9091
+            - --praxis-url=http://praxis-ai.fleet-llm-d.svc:8080
+            - --ledger-mode=http
+            - --ledger-endpoint=http://ledger-gateway.immutable-ledger.svc:28099
+            - --inference-max-inflight=100
+            - --rate-limit=50
+            - --rate-burst=100
+            - --trust-proxy-headers=true
+          env:
+            - name: FLEET_AUTH_SECRET
+              valueFrom:
+                secretKeyRef: {name: fleet-identity, key: hmac-secret}
+            - name: GCL_DECISION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef: {name: fleet-identity, key: gcl-signing-key}
+            - name: GCL_DECISION_SIGNING_KEY_ID
+              value: fleet-llm-d-2026-08
+            - name: PG_URL
+              valueFrom:
+                secretKeyRef: {name: fleet-postgres-credentials, key: pg-url}
+            - name: SEMANTIC_CLASSIFIER_URL
+              value: llm-d-semantic-classifier.fleet-llm-d.svc:50051
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: metrics, containerPort: 9091}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {cpu: "2", memory: 1Gi}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-inference-gateway
+  namespace: fleet-llm-d
+spec:
+  selector:
+    app.kubernetes.io/name: fleet-inference-gateway
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+    - {name: metrics, port: 9091, targetPort: metrics}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: fleet-inference-gateway
+  namespace: fleet-llm-d
+  annotations:
+    haproxy.router.openshift.io/timeout: 180s
+spec:
+  to: {kind: Service, name: fleet-inference-gateway}
+  port: {targetPort: http}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fleet-inference-gateway
+  namespace: fleet-llm-d
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-inference-gateway

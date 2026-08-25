@@ -3,6 +3,7 @@ package routing
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
@@ -51,17 +52,47 @@ func (o *PraxisOverlay) RenderConfig(placements []PoolPlacement) (string, error)
 	clusterSeen := make(map[string]bool)
 
 	for _, p := range placements {
-		clusterName := sanitizeClusterName(p.ModelName)
-
-		endpoints := make([]string, 0)
+		var firstCluster string
 		for _, cid := range p.Clusters {
 			ep, ok := o.Endpoints[cid]
 			if !ok {
 				continue
 			}
-			endpoints = append(endpoints, ep.Endpoint)
+			clusterName := sanitizeClusterName(p.ModelName + "-" + cid)
+			if firstCluster == "" {
+				firstCluster = clusterName
+			}
+			routes = append(routes, map[string]interface{}{
+				"path_prefix": "/",
+				"headers":     map[string]string{"x-fleet-target-cluster": cid},
+				"cluster":     clusterName,
+			})
+			if clusterSeen[clusterName] {
+				continue
+			}
+			cluster := map[string]interface{}{
+				"name":            clusterName,
+				"endpoints":       []string{ep.Endpoint},
+				"max_connections": 100,
+				"health_check": map[string]interface{}{
+					"type": "http", "path": "/health", "interval_ms": 5000,
+					"timeout_ms": 2000, "healthy_threshold": 2, "unhealthy_threshold": 3,
+					"passive_healthy_threshold": 2, "passive_unhealthy_threshold": 3,
+				},
+			}
+			if ep.TLS {
+				host, _, err := net.SplitHostPort(ep.Endpoint)
+				if err != nil {
+					return "", fmt.Errorf("invalid TLS endpoint %q: %w", ep.Endpoint, err)
+				}
+				cluster["http"] = map[string]string{"authority": host}
+				cluster["tls"] = map[string]interface{}{"sni": host, "verify": true}
+				cluster["total_connection_timeout_ms"] = 5000
+			}
+			clusters = append(clusters, cluster)
+			clusterSeen[clusterName] = true
 		}
-		if len(endpoints) == 0 {
+		if firstCluster == "" {
 			continue
 		}
 
@@ -70,25 +101,17 @@ func (o *PraxisOverlay) RenderConfig(placements []PoolPlacement) (string, error)
 			route := map[string]interface{}{
 				"path_prefix": "/",
 				"headers":     map[string]string{"x-ai-model": name},
-				"cluster":     clusterName,
+				"cluster":     firstCluster,
 			}
 			routes = append(routes, route)
 		}
 
-		if !clusterSeen[clusterName] {
-			cluster := map[string]interface{}{
-				"name":      clusterName,
-				"endpoints": endpoints,
-			}
-			clusters = append(clusters, cluster)
-			clusterSeen[clusterName] = true
-		}
 	}
 
 	if len(routes) > 0 && len(clusters) > 0 {
 		defaultRoute := map[string]interface{}{
 			"path_prefix": "/",
-			"cluster":     sanitizeClusterName(placements[0].ModelName),
+			"cluster":     clusters[0]["name"],
 		}
 		routes = append(routes, defaultRoute)
 	}

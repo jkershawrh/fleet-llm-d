@@ -6,6 +6,9 @@ metadata:
   labels:
     app: ovms-granite-2b
     fleet.llm-d.ai/purpose: cross-cluster-inference
+  annotations:
+    haproxy.router.openshift.io/timeout: 180s
+    haproxy.router.openshift.io/haproxy.health.check.interval: 5s
 spec:
   to:
     kind: Service

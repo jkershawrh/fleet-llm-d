@@ -29,6 +29,21 @@ data:
 
           - filter: router
             routes:
+              # Trusted decisions from the fleet inference gateway take
+              # precedence over model fallbacks. NetworkPolicy prevents
+              # public callers from reaching this listener directly.
+              - path_prefix: "/"
+                headers:
+                  x-fleet-target-cluster: "oberon"
+                cluster: oberon-cpu
+              - path_prefix: "/"
+                headers:
+                  x-fleet-target-cluster: "arena"
+                cluster: arena-cpu
+              - path_prefix: "/"
+                headers:
+                  x-fleet-target-cluster: "brutus"
+                cluster: brutus-gpu
               # --- Oberon-local backends (cluster DNS) ---
 
               # Granite 2B (OVMS, fast CPU inference)
@@ -86,11 +101,63 @@ data:
 
           - filter: load_balancer
             clusters:
+              - name: oberon-cpu
+                endpoints:
+                  - "ovms-granite-2b.fleet-llm-d.svc:8080"
+                max_connections: 100
+                health_check:
+                  type: http
+                  path: "/v2/health/ready"
+                  interval_ms: 5000
+                  timeout_ms: 2000
+                  healthy_threshold: 2
+                  unhealthy_threshold: 3
+                  passive_unhealthy_threshold: 3
+                  passive_healthy_threshold: 2
+              - name: arena-cpu
+                endpoints:
+                  - "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com:443"
+                http:
+                  authority: "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com"
+                tls:
+                  sni: "ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com"
+                  verify: true
+                total_connection_timeout_ms: 5000
+                read_timeout_ms: 180000
+                max_connections: 100
+                health_check:
+                  type: http
+                  path: "/v2/health/ready"
+                  interval_ms: 5000
+                  timeout_ms: 2000
+                  healthy_threshold: 2
+                  unhealthy_threshold: 3
+                  passive_unhealthy_threshold: 3
+                  passive_healthy_threshold: 2
+              - name: brutus-gpu
+                endpoints:
+                  - "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com:443"
+                http:
+                  authority: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
+                tls:
+                  sni: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
+                  verify: true
+                total_connection_timeout_ms: 5000
+                read_timeout_ms: 180000
+                max_connections: 32
+                health_check:
+                  type: http
+                  path: "/health"
+                  interval_ms: 5000
+                  timeout_ms: 2000
+                  healthy_threshold: 2
+                  unhealthy_threshold: 3
+                  passive_unhealthy_threshold: 3
+                  passive_healthy_threshold: 2
               # Granite 2B CPU — load-balanced across Oberon + Arena.
               - name: ovms-granite-2b
                 endpoints:
                   - "ovms-granite-2b.fleet-llm-d.svc:8080"
-                  - "arena-ovms-external.fleet-llm-d.svc:8080"
               - name: ovms-granite-8b
                 endpoints:
                   - "ovms-granite-8b.fleet-llm-d.svc:8080"
@@ -100,10 +167,15 @@ data:
               - name: vllm-granite
                 endpoints:
                   - "granite-real.fleet-llm-d.svc:8000"
-              # Brutus cross-cluster (via K8s external service → Brutus NodePort 32712)
+              # Compatibility model route; trusted gateway traffic uses brutus-gpu.
               - name: brutus-granite-8b-gpu
                 endpoints:
-                  - "brutus-vllm-external.fleet-llm-d.svc:8000"
+                  - "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com:443"
+                http:
+                  authority: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
+                tls:
+                  sni: "vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com"
+                  verify: true
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -114,7 +186,7 @@ metadata:
     app.kubernetes.io/name: praxis-ai
     app.kubernetes.io/part-of: fleet-llm-d
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: praxis-ai
@@ -127,6 +199,13 @@ spec:
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: praxis-ai
       containers:
         - name: praxis-ai
           image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/praxis-ai:latest
@@ -141,22 +220,24 @@ spec:
             - containerPort: 8080
               name: http
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /ready
               port: 8080
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthy
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 15
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 500m
+              cpu: 250m
               memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
           volumeMounts:
             - name: config
               mountPath: /etc/praxis
@@ -196,3 +277,14 @@ spec:
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: praxis-ai
+  namespace: fleet-llm-d
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: praxis-ai

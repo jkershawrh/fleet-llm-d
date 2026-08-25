@@ -169,9 +169,13 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		for _, entry := range strings.Split(praxisEndpoints, ",") {
 			parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
 			if len(parts) == 2 {
+				endpoint := parts[1]
+				tlsEnabled := strings.HasPrefix(endpoint, "https://")
+				endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
 				endpoints = append(endpoints, routing.PraxisClusterEndpoint{
 					ClusterID: parts[0],
-					Endpoint:  parts[1],
+					Endpoint:  endpoint,
+					TLS:       tlsEnabled,
 				})
 			}
 		}
