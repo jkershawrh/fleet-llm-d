@@ -85,6 +85,19 @@ pub struct FleetAgentConfig {
     #[arg(long, default_value = "", env = "FLEET_CLUSTER_INFERENCE_URL")]
     pub cluster_inference_url: String,
 
+    /// Fleet-reachable routing endpoint. This may be an OpenShift Route,
+    /// Gateway API address, MCS endpoint, or another verified HTTPS URL.
+    #[arg(long, default_value = "", env = "FLEET_ROUTING_ENDPOINT")]
+    pub routing_endpoint: String,
+
+    /// Optional fleet-reachable pool metrics endpoint.
+    #[arg(long, default_value = "", env = "FLEET_ROUTING_METRICS_ENDPOINT")]
+    pub routing_metrics_endpoint: String,
+
+    /// Optional TLS server name expected by the routing data plane.
+    #[arg(long, default_value = "", env = "FLEET_ROUTING_TLS_SERVER_NAME")]
+    pub routing_tls_server_name: String,
+
     /// Local llm-d EPP endpoint that receives proxied inference requests.
     #[arg(
         long,
@@ -146,6 +159,11 @@ async fn main() -> anyhow::Result<()> {
     .with_token(config.control_plane_token.clone())
     .with_health_url(config.cluster_health_url.clone())
     .with_inference_url(config.cluster_inference_url.clone())
+    .with_external_endpoints(
+        config.routing_endpoint.clone(),
+        config.routing_metrics_endpoint.clone(),
+        config.routing_tls_server_name.clone(),
+    )
     .with_gpu_capacity(config.gpu_available, config.gpu_total)
     .with_tls_ca_cert(config.tls_ca_cert.clone())
     .with_tls_insecure(config.tls_insecure);

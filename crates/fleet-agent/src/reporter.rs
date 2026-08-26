@@ -31,6 +31,9 @@ pub struct MetricsReporter {
     health_url: String,
     /// Gateway-reachable inference proxy base URL advertised with cluster status.
     inference_url: String,
+    routing_endpoint: String,
+    routing_metrics_endpoint: String,
+    routing_tls_server_name: String,
     /// Total accelerator capacity advertised to the control plane.
     gpu_total: u32,
     /// Currently available accelerator capacity advertised to the control plane.
@@ -60,6 +63,9 @@ impl MetricsReporter {
             control_plane_token: None,
             health_url: String::new(),
             inference_url: String::new(),
+            routing_endpoint: String::new(),
+            routing_metrics_endpoint: String::new(),
+            routing_tls_server_name: String::new(),
             gpu_total: 0,
             gpu_available: 0,
             tls_insecure: false,
@@ -127,6 +133,19 @@ impl MetricsReporter {
     /// Advertise the cluster inference proxy URL used by the fleet gateway.
     pub fn with_inference_url(mut self, inference_url: String) -> Self {
         self.inference_url = inference_url;
+        self
+    }
+
+    /// Advertise transport-neutral endpoints consumed by routing adapters.
+    pub fn with_external_endpoints(
+        mut self,
+        routing_endpoint: String,
+        metrics_endpoint: String,
+        tls_server_name: String,
+    ) -> Self {
+        self.routing_endpoint = routing_endpoint;
+        self.routing_metrics_endpoint = metrics_endpoint;
+        self.routing_tls_server_name = tls_server_name;
         self
     }
 
@@ -353,6 +372,9 @@ impl FleetReporter for MetricsReporter {
             "healthy": status.healthy,
             "health_url": self.health_url,
             "inference_url": self.inference_url,
+            "routing_endpoint": self.routing_endpoint,
+            "metrics_endpoint": self.routing_metrics_endpoint,
+            "tls_server_name": self.routing_tls_server_name,
         });
         self.post_json("/api/v1/agent/status", &body).await
     }
@@ -430,6 +452,26 @@ mod tests {
         .with_gpu_capacity(2, 1);
         assert_eq!(reporter.gpu_available, 1);
         assert_eq!(reporter.gpu_total, 1);
+    }
+
+    #[test]
+    fn reporter_uses_transport_neutral_routing_endpoints() {
+        let reporter = MetricsReporter::new(
+            "https://cp.example.com".to_string(),
+            ClusterId("spoke".to_string()),
+            "http://localhost:9090".to_string(),
+        )
+        .with_external_endpoints(
+            "https://inference.example.com".to_string(),
+            "https://metrics.example.com".to_string(),
+            "inference.example.com".to_string(),
+        );
+        assert_eq!(reporter.routing_endpoint, "https://inference.example.com");
+        assert_eq!(
+            reporter.routing_metrics_endpoint,
+            "https://metrics.example.com"
+        );
+        assert_eq!(reporter.routing_tls_server_name, "inference.example.com");
     }
 
     #[tokio::test]

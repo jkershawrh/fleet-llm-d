@@ -47,6 +47,12 @@ spec:
               value: http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready
             - name: FLEET_CLUSTER_INFERENCE_URL
               value: http://ovms-granite-2b.fleet-llm-d.svc:8080
+            - name: FLEET_ROUTING_ENDPOINT
+              value: https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
+            - name: FLEET_ROUTING_METRICS_ENDPOINT
+              value: https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
+            - name: FLEET_ROUTING_TLS_SERVER_NAME
+              value: ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
             - name: FLEET_UPSTREAM_URL
               value: http://ovms-granite-2b.fleet-llm-d.svc:8080
           ports:

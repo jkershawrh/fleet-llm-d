@@ -58,6 +58,12 @@ spec:
               value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000/health
             - name: FLEET_CLUSTER_INFERENCE_URL
               value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000
+            - name: FLEET_ROUTING_ENDPOINT
+              value: https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com
+            - name: FLEET_ROUTING_METRICS_ENDPOINT
+              value: https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com
+            - name: FLEET_ROUTING_TLS_SERVER_NAME
+              value: vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com
             - name: FLEET_UPSTREAM_URL
               value: http://vllm-granite-8b-gpu.fleet-llm-d.svc:8000
           ports:

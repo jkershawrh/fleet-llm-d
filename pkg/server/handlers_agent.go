@@ -15,15 +15,18 @@ import (
 )
 
 type agentStatusReport struct {
-	ClusterID    string `json:"cluster_id"`
-	Name         string `json:"name"`
-	Region       string `json:"region"`
-	Phase        string `json:"phase"`
-	GPUAvailable int    `json:"gpu_available"`
-	GPUTotal     int    `json:"gpu_total"`
-	Healthy      bool   `json:"healthy"`
-	HealthURL    string `json:"health_url"`
-	InferenceURL string `json:"inference_url"`
+	ClusterID       string `json:"cluster_id"`
+	Name            string `json:"name"`
+	Region          string `json:"region"`
+	Phase           string `json:"phase"`
+	GPUAvailable    int    `json:"gpu_available"`
+	GPUTotal        int    `json:"gpu_total"`
+	Healthy         bool   `json:"healthy"`
+	HealthURL       string `json:"health_url"`
+	InferenceURL    string `json:"inference_url"`
+	RoutingEndpoint string `json:"routing_endpoint"`
+	MetricsEndpoint string `json:"metrics_endpoint"`
+	TLSServerName   string `json:"tls_server_name"`
 }
 
 type agentMetricsReport struct {
@@ -73,6 +76,14 @@ func (fc *FleetController) handleAgentStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := validateAgentURL("inference_url", report.InferenceURL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateAgentURL("routing_endpoint", report.RoutingEndpoint); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateAgentURL("metrics_endpoint", report.MetricsEndpoint); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -139,8 +150,11 @@ func applyAgentStatus(record *postgres.ClusterRecord, report agentStatusReport, 
 		record.Labels = make(map[string]string)
 	}
 	for label, value := range map[string]string{
-		"health_url":    report.HealthURL,
-		"inference_url": report.InferenceURL,
+		"health_url":                      report.HealthURL,
+		"inference_url":                   report.InferenceURL,
+		"fleet.llm-d.ai/egress-address":   report.RoutingEndpoint,
+		"fleet.llm-d.ai/metrics-endpoint": report.MetricsEndpoint,
+		"fleet.llm-d.ai/tls-server-name":  report.TLSServerName,
 	} {
 		if value == "" {
 			delete(record.Labels, label)

@@ -28,7 +28,10 @@ func TestAgentIngestionRoutes(t *testing.T) {
 		"cluster_id":"spoke-1","name":"spoke-1","region":"us-east",
 		"phase":"Running","gpu_available":4,"gpu_total":8,"healthy":true,
 		"health_url":"http://spoke-1.example/readyz",
-		"inference_url":"http://spoke-1.example"
+		"inference_url":"http://spoke-1.example",
+		"routing_endpoint":"https://spoke-1.example",
+		"metrics_endpoint":"https://metrics.spoke-1.example",
+		"tls_server_name":"spoke-1.example"
 	}`)
 	if status.Code != http.StatusOK {
 		t.Fatalf("status report returned %d: %s", status.Code, status.Body.String())
@@ -39,6 +42,9 @@ func TestAgentIngestionRoutes(t *testing.T) {
 	}
 	if record.GPUAvailable != 4 || record.GPUTotal != 8 || record.Labels["health_url"] == "" || record.Labels["inference_url"] == "" {
 		t.Fatalf("unexpected cluster record: %+v", record)
+	}
+	if record.Labels["fleet.llm-d.ai/egress-address"] != "https://spoke-1.example" || record.Labels["fleet.llm-d.ai/metrics-endpoint"] != "https://metrics.spoke-1.example" {
+		t.Fatalf("routing endpoint labels = %#v", record.Labels)
 	}
 	updated := postAgentJSON(t, mux, "/api/v1/agent/status", `{
 		"cluster_id":"spoke-1","name":"spoke-1","phase":"Degraded",

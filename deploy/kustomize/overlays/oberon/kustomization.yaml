@@ -30,3 +30,9 @@ patches:
                     value: http://fleet-controller.fleet-llm-d.svc:8080
                   - name: FLEET_CLUSTER_ID
                     value: oberon-sno
+                  - name: FLEET_ROUTING_ENDPOINT
+                    value: https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
+                  - name: FLEET_ROUTING_METRICS_ENDPOINT
+                    value: https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
+                  - name: FLEET_ROUTING_TLS_SERVER_NAME
+                    value: ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com
