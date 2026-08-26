@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-router-endpoints
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: llm-d-router
+    app.kubernetes.io/component: endpoint-discovery
+    app.kubernetes.io/part-of: fleet-llm-d
+data:
+  # The controller replaces the complete data map after its first successful
+  # provider-sync cycle. Keeping a valid empty index makes rollout ordering
+  # deterministic without publishing an unqualified backend.
+  index.json: |
+    {
+      "version": "v1",
+      "models": {}
+    }

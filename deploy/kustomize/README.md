@@ -54,3 +54,11 @@ kubectl kustomize deploy/kustomize/overlays/standalone >/dev/null
 kubectl kustomize deploy/kustomize/overlays/hub >/dev/null
 kubectl kustomize deploy/kustomize/overlays/federated >/dev/null
 ```
+
+The `llmd-router-endpoints` component switches the authoritative routing
+adapter and publishes the qualified endpoint files into the
+`fleet-router-endpoints` ConfigMap. Router EPP replicas mount that ConfigMap
+with `watchFile: true`; Kubernetes projected-volume swaps preserve the last
+valid data while the controller publishes a complete replacement. The
+`oberon-router-beta` overlay is intentionally separate from the validated
+Praxis overlay so qualification can roll back by reapplying `oberon`.
