@@ -97,7 +97,7 @@ func (p *LLMDProvider) sync(ctx context.Context, clusters []FleetClusterInfo, po
 		}
 		for _, clusterID := range pool.Clusters {
 			cluster, ok := byID[clusterID]
-			if !ok || !p.eligible(cluster) {
+			if !ok || !p.eligible(cluster) || !supportsExactModel(cluster, model) {
 				continue
 			}
 			endpoint, err := p.endpoint(cluster, pool, model)
@@ -137,6 +137,22 @@ func (p *LLMDProvider) sync(ctx context.Context, clusters []FleetClusterInfo, po
 		return p.opts.Publisher.Publish(ctx, files)
 	}
 	return directoryPublisher{directory: p.opts.Directory}.Publish(ctx, files)
+}
+
+func supportsExactModel(cluster FleetClusterInfo, model string) bool {
+	if cluster.Labels == nil {
+		return true
+	}
+	configured := strings.TrimSpace(cluster.Labels["fleet.llm-d.ai/physical-models"])
+	if configured == "" {
+		return true
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *LLMDProvider) eligible(cluster FleetClusterInfo) bool {

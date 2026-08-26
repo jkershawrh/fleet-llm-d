@@ -17,12 +17,13 @@ func TestLLMDProviderFiltersAndSeparatesExactModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	clusters := []FleetClusterInfo{
-		{ID: "oberon", Region: "central", Status: "Running", UpdatedAt: now, Authorized: true, EgressAddress: "https://oberon.example:443", MetricsEndpoint: "https://metrics.oberon.example:9443"},
+		{ID: "oberon", Region: "central", Status: "Running", UpdatedAt: now, Authorized: true, EgressAddress: "https://oberon.example:443", MetricsEndpoint: "https://metrics.oberon.example:9443", Labels: map[string]string{"fleet.llm-d.ai/physical-models": "granite-cpu"}},
 		{ID: "arena", Status: "draining", UpdatedAt: now, Authorized: true, EgressAddress: "https://arena.example"},
 		{ID: "brutus", Status: "Running", UpdatedAt: now.Add(-time.Minute), Authorized: true, EgressAddress: "https://brutus.example"},
+		{ID: "wrong-model", Status: "Running", UpdatedAt: now, Authorized: true, EgressAddress: "https://wrong.example", Labels: map[string]string{"fleet.llm-d.ai/physical-models": "granite-gpu"}},
 	}
 	pools := []FleetPoolInfo{
-		{Name: "cpu", ModelName: "logical", PhysicalModel: "granite-cpu", Clusters: []string{"oberon", "arena"}},
+		{Name: "cpu", ModelName: "logical", PhysicalModel: "granite-cpu", Clusters: []string{"oberon", "arena", "wrong-model"}},
 		{Name: "gpu", ModelName: "logical", PhysicalModel: "granite-gpu", Clusters: []string{"brutus"}},
 	}
 	if err := p.Sync(context.Background(), clusters, pools); err != nil {
