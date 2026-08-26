@@ -113,17 +113,8 @@ func (fc *FleetController) SetupRoutes(mode string) *http.ServeMux {
 	// Platform metrics (unified view across all systems)
 	if mode == "all" || mode == "control" {
 		gclURL := os.Getenv("GCL_URL")
-		if gclURL == "" {
-			gclURL = "http://gcl-app.governed-cognitive-loop.svc:8000"
-		}
 		deepfieldURL := os.Getenv("DEEPFIELD_URL")
-		if deepfieldURL == "" {
-			deepfieldURL = "http://deepfield-fleet.fleet-llm-d.svc:8000"
-		}
 		ledgerURL := os.Getenv("LEDGER_GATEWAY_URL")
-		if ledgerURL == "" {
-			ledgerURL = fc.LedgerGatewayURL
-		}
 		platformCollector := &metrics.PlatformCollector{
 			GCLURL:        gclURL,
 			DeepfieldURL:  deepfieldURL,
