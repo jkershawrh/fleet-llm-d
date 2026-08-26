@@ -505,3 +505,32 @@ func TestSolve_GPUCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestSolve_KubernetesGPUResourceConstraint(t *testing.T) {
+	s := NewConstraintSolver()
+	policy := v1alpha1.PlacementPolicySpec{Constraints: []v1alpha1.PlacementConstraint{
+		{Type: "hardware", Rule: "nvidia.com/gpu >= 2"},
+	}}
+	clusters := []ClusterInfo{
+		{ID: "cpu", GPUCapacity: GPUCapacity{}},
+		{ID: "one-gpu", GPUCapacity: GPUCapacity{Available: 1, Total: 1, Types: []string{"H100"}}},
+		{ID: "two-gpu", GPUCapacity: GPUCapacity{Available: 2, Total: 4, Types: []string{"H100"}}},
+	}
+	decisions, err := s.Solve(context.Background(), poolSpec("model", "source"), clusters, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 1 || decisions[0].ClusterID != "two-gpu" {
+		t.Fatalf("decisions = %#v", decisions)
+	}
+}
+
+func TestSolve_UnknownHardwareConstraintFailsClosed(t *testing.T) {
+	s := NewConstraintSolver()
+	policy := v1alpha1.PlacementPolicySpec{Constraints: []v1alpha1.PlacementConstraint{
+		{Type: "hardware", Rule: "accelerator maybe"},
+	}}
+	if decisions, err := s.Solve(context.Background(), poolSpec("model", "source"), sampleClusters(), policy); err == nil || decisions != nil {
+		t.Fatalf("expected infeasible placement, got decisions=%#v err=%v", decisions, err)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
@@ -180,11 +181,28 @@ func filterRegulatory(clusters []ClusterInfo, rule string) []ClusterInfo {
 // filterHardware keeps clusters that have the requested GPU type available
 // (format: "gpu-type=TYPE").
 func filterHardware(clusters []ClusterInfo, rule string) []ClusterInfo {
+	fields := strings.Fields(rule)
+	if len(fields) == 3 && fields[0] == "nvidia.com/gpu" && fields[1] == ">=" {
+		minimum, err := strconv.Atoi(fields[2])
+		if err != nil || minimum < 0 {
+			return nil
+		}
+		var result []ClusterInfo
+		for _, c := range clusters {
+			if c.GPUCapacity.Available >= minimum {
+				result = append(result, c)
+			}
+		}
+		return result
+	}
 	parts := strings.SplitN(rule, "=", 2)
 	if len(parts) != 2 {
-		return clusters
+		return nil
 	}
-	gpuType := parts[1]
+	if strings.TrimSpace(parts[0]) != "gpu-type" {
+		return nil
+	}
+	gpuType := strings.TrimSpace(parts[1])
 	var result []ClusterInfo
 	for _, c := range clusters {
 		for _, t := range c.GPUCapacity.Types {
