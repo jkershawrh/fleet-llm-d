@@ -69,7 +69,15 @@ func TestInferenceProviderCRD_SchemaValid(t *testing.T) {
 	}
 
 	// Spec schema fields.
-	requiredFields := []string{"providerKind", "backendKind", "models", "metricsConfig"}
+	requiredFields := []string{
+		"providerKind",
+		"backendKind",
+		"models",
+		"metricsConfig",
+		"siteSelector",
+		"matchLabels",
+		"matchExpressions",
+	}
 	for _, field := range requiredFields {
 		if !strings.Contains(content, field+":") {
 			t.Fatalf("inferenceprovider.yaml schema missing required field: %s", field)
