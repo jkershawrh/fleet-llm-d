@@ -222,6 +222,19 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 			swimSync = client.NewSWIMSyncAdapter(kubeAPI, token, clusterRepo)
 			slog.Info("Grid CRD translator enabled", "network", gridNetwork)
 		}
+		if providerName == routing.ProviderLLMD {
+			directory := os.Getenv("LLMD_ROUTER_ENDPOINTS_DIR")
+			if directory == "" {
+				directory = "/var/lib/fleet-llm-d/router-endpoints"
+			}
+			routingProvider, err = routing.NewLLMDProvider(routing.LLMDProviderOptions{
+				Directory: directory, Namespace: namespace, RequireTLS: os.Getenv("LLMD_ROUTER_ALLOW_INSECURE") != "true",
+			})
+			if err != nil {
+				return nil, fmt.Errorf("initialize llm-d Router adapter: %w", err)
+			}
+			slog.Info("llm-d Router adapter enabled", "directory", directory)
+		}
 	}
 
 	// Classification carries prompt text, so the channel is TLS by default.

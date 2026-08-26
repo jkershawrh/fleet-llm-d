@@ -115,20 +115,26 @@ type LabelSelectorRequirement struct {
 
 // FleetClusterInfo holds the fleet-llm-d cluster state needed for translation.
 type FleetClusterInfo struct {
-	ID            string
-	Name          string
-	Region        string
-	Labels        map[string]string
-	EgressAddress string
-	GPUTypes      []string
-	GPUAvailable  int
-	GPUTotal      int
+	ID              string
+	Name            string
+	Region          string
+	Labels          map[string]string
+	EgressAddress   string
+	MetricsEndpoint string
+	Status          string
+	UpdatedAt       time.Time
+	Draining        bool
+	Authorized      bool
+	GPUTypes        []string
+	GPUAvailable    int
+	GPUTotal        int
 }
 
 // FleetPoolInfo holds the fleet-llm-d pool state needed for translation.
 type FleetPoolInfo struct {
 	Name            string
 	ModelName       string
+	PhysicalModel   string
 	ModelSource     string
 	Clusters        []string
 	TargetPorts     []int

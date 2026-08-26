@@ -59,24 +59,30 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 			egressAddress = c.Labels["fleet.llm-d.ai/egress-address"]
 		}
 		clusterInfos = append(clusterInfos, routing.FleetClusterInfo{
-			ID:            c.ID,
-			Name:          c.Name,
-			Region:        c.Region,
-			Labels:        c.Labels,
-			EgressAddress: egressAddress,
-			GPUAvailable:  c.GPUAvailable,
-			GPUTotal:      c.GPUTotal,
+			ID:              c.ID,
+			Name:            c.Name,
+			Region:          c.Region,
+			Labels:          c.Labels,
+			EgressAddress:   egressAddress,
+			MetricsEndpoint: c.Labels["fleet.llm-d.ai/metrics-endpoint"],
+			Status:          c.Status,
+			UpdatedAt:       c.UpdatedAt,
+			Draining:        c.Labels["fleet.llm-d.ai/draining"] == "true",
+			Authorized:      c.Labels["fleet.llm-d.ai/authorized"] != "false",
+			GPUAvailable:    c.GPUAvailable,
+			GPUTotal:        c.GPUTotal,
 		})
 	}
 
 	poolInfos := make([]routing.FleetPoolInfo, 0, len(pools))
 	for _, p := range pools {
 		poolInfos = append(poolInfos, routing.FleetPoolInfo{
-			Name:        p.Name,
-			ModelName:   p.ModelName,
-			ModelSource: p.ModelSource,
-			Clusters:    append([]string(nil), p.DesiredClusters...),
-			TargetPorts: append([]int(nil), p.TargetPorts...),
+			Name:          p.Name,
+			ModelName:     p.ModelName,
+			PhysicalModel: p.ModelName,
+			ModelSource:   p.ModelSource,
+			Clusters:      append([]string(nil), p.DesiredClusters...),
+			TargetPorts:   append([]int(nil), p.TargetPorts...),
 		})
 	}
 
