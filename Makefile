@@ -53,7 +53,7 @@ lint-go:
 
 lint-rust:
 	cargo clippy --workspace -- -D warnings
-	cargo fmt --workspace -- --check
+	cargo fmt --all -- --check
 
 lint-web:
 	cd web && npm run lint

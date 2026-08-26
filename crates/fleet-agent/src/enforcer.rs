@@ -343,15 +343,27 @@ mod tests {
         let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
         let tid = TenantId("t1".to_string());
         enforcer
-            .set_quota(tid.clone(), TenantQuota { max_rps: 10.0, max_concurrent: 100, max_tokens_per_minute: 1_000_000 })
+            .set_quota(
+                tid.clone(),
+                TenantQuota {
+                    max_rps: 10.0,
+                    max_concurrent: 100,
+                    max_tokens_per_minute: 1_000_000,
+                },
+            )
             .await;
-        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
-            current_rps: 15.0,
-            current_concurrent: 0,
-            tokens_this_minute: 0,
-        });
+        enforcer.usage.write().await.insert(
+            tid.clone(),
+            TenantUsage {
+                current_rps: 15.0,
+                current_concurrent: 0,
+                tokens_this_minute: 0,
+            },
+        );
 
-        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
+        let result = enforcer
+            .enforce_tenant_quota(&tid, &ModelId("m1".to_string()))
+            .await;
         assert!(result.is_err(), "should deny when RPS exceeds quota");
     }
 
@@ -360,16 +372,31 @@ mod tests {
         let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
         let tid = TenantId("t1".to_string());
         enforcer
-            .set_quota(tid.clone(), TenantQuota { max_rps: 100.0, max_concurrent: 5, max_tokens_per_minute: 1_000_000 })
+            .set_quota(
+                tid.clone(),
+                TenantQuota {
+                    max_rps: 100.0,
+                    max_concurrent: 5,
+                    max_tokens_per_minute: 1_000_000,
+                },
+            )
             .await;
-        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
-            current_rps: 1.0,
-            current_concurrent: 5,
-            tokens_this_minute: 0,
-        });
+        enforcer.usage.write().await.insert(
+            tid.clone(),
+            TenantUsage {
+                current_rps: 1.0,
+                current_concurrent: 5,
+                tokens_this_minute: 0,
+            },
+        );
 
-        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
-        assert!(result.is_err(), "should deny when concurrent requests reach quota");
+        let result = enforcer
+            .enforce_tenant_quota(&tid, &ModelId("m1".to_string()))
+            .await;
+        assert!(
+            result.is_err(),
+            "should deny when concurrent requests reach quota"
+        );
     }
 
     #[tokio::test]
@@ -377,16 +404,31 @@ mod tests {
         let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
         let tid = TenantId("t1".to_string());
         enforcer
-            .set_quota(tid.clone(), TenantQuota { max_rps: 100.0, max_concurrent: 100, max_tokens_per_minute: 500 })
+            .set_quota(
+                tid.clone(),
+                TenantQuota {
+                    max_rps: 100.0,
+                    max_concurrent: 100,
+                    max_tokens_per_minute: 500,
+                },
+            )
             .await;
-        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
-            current_rps: 1.0,
-            current_concurrent: 1,
-            tokens_this_minute: 501,
-        });
+        enforcer.usage.write().await.insert(
+            tid.clone(),
+            TenantUsage {
+                current_rps: 1.0,
+                current_concurrent: 1,
+                tokens_this_minute: 501,
+            },
+        );
 
-        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
-        assert!(result.is_err(), "should deny when tokens-per-minute exceeds quota");
+        let result = enforcer
+            .enforce_tenant_quota(&tid, &ModelId("m1".to_string()))
+            .await;
+        assert!(
+            result.is_err(),
+            "should deny when tokens-per-minute exceeds quota"
+        );
     }
 
     #[tokio::test]
@@ -394,15 +436,27 @@ mod tests {
         let enforcer = PolicyEnforcerImpl::new(ClusterId("c1".to_string()));
         let tid = TenantId("t1".to_string());
         enforcer
-            .set_quota(tid.clone(), TenantQuota { max_rps: 100.0, max_concurrent: 50, max_tokens_per_minute: 1_000_000 })
+            .set_quota(
+                tid.clone(),
+                TenantQuota {
+                    max_rps: 100.0,
+                    max_concurrent: 50,
+                    max_tokens_per_minute: 1_000_000,
+                },
+            )
             .await;
-        enforcer.usage.write().await.insert(tid.clone(), TenantUsage {
-            current_rps: 50.0,
-            current_concurrent: 25,
-            tokens_this_minute: 500_000,
-        });
+        enforcer.usage.write().await.insert(
+            tid.clone(),
+            TenantUsage {
+                current_rps: 50.0,
+                current_concurrent: 25,
+                tokens_this_minute: 500_000,
+            },
+        );
 
-        let result = enforcer.enforce_tenant_quota(&tid, &ModelId("m1".to_string())).await;
+        let result = enforcer
+            .enforce_tenant_quota(&tid, &ModelId("m1".to_string()))
+            .await;
         assert!(result.is_ok(), "should allow when all usage is under quota");
         assert!(result.unwrap());
     }
@@ -418,12 +472,21 @@ mod tests {
             .await;
 
         let result = enforcer
-            .enforce_placement_constraints(&ModelId("other-model".to_string()), &ClusterId("c1".to_string()))
+            .enforce_placement_constraints(
+                &ModelId("other-model".to_string()),
+                &ClusterId("c1".to_string()),
+            )
             .await;
-        assert!(result.is_err(), "model not on allow list should be rejected");
+        assert!(
+            result.is_err(),
+            "model not on allow list should be rejected"
+        );
 
         let result = enforcer
-            .enforce_placement_constraints(&ModelId("allowed-model".to_string()), &ClusterId("c1".to_string()))
+            .enforce_placement_constraints(
+                &ModelId("allowed-model".to_string()),
+                &ClusterId("c1".to_string()),
+            )
             .await;
         assert!(result.is_ok(), "model on allow list should be accepted");
     }
