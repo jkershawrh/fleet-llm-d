@@ -10,8 +10,9 @@ import (
 )
 
 func (fc *FleetController) runGridSyncLoop(ctx context.Context) {
-	if fc.GridCRDTranslator == nil {
-		slog.Info("grid sync loop disabled: no GridCRDTranslator configured")
+	provider := fc.effectiveRoutingProvider()
+	if provider == nil {
+		slog.Info("routing provider sync loop disabled", "provider", fc.RoutingProviderName)
 		return
 	}
 
@@ -19,7 +20,7 @@ func (fc *FleetController) runGridSyncLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	slog.Info("grid sync loop started", "interval", interval)
+	slog.Info("routing provider sync loop started", "provider", provider.Name(), "interval", interval)
 
 	for {
 		select {
@@ -80,8 +81,12 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 	}
 
 	syncSucceeded := true
-	if err := fc.GridCRDTranslator.SyncFromFleetState(ctx, clusterInfos, poolInfos); err != nil {
-		slog.Warn("grid sync: CRD translation failed", "error", err)
+	provider := fc.effectiveRoutingProvider()
+	if provider == nil {
+		return
+	}
+	if err := provider.Sync(ctx, clusterInfos, poolInfos); err != nil {
+		slog.Warn("routing provider sync failed", "provider", provider.Name(), "error", err)
 		syncSucceeded = false
 	}
 
@@ -105,7 +110,18 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 
 	_ = fc.EventPublisher.Publish(ctx, events.FleetEvent{
 		Type: events.EventGridSynced, Source: "urn:fleet-llm-d:controller",
-		Subject: "grid-sync", Timestamp: time.Now().UTC(),
-		Payload: map[string]interface{}{"sites": len(clusterInfos), "providers": len(poolInfos)},
+		Subject: "routing-provider-sync", Timestamp: time.Now().UTC(),
+		Payload: map[string]interface{}{"adapter": provider.Name(), "sites": len(clusterInfos), "providers": len(poolInfos)},
 	})
+}
+
+func (fc *FleetController) effectiveRoutingProvider() routing.RoutingProvider {
+	if fc.RoutingProvider != nil {
+		return fc.RoutingProvider
+	}
+	// Compatibility for embedders and tests that configured the legacy field.
+	if fc.GridCRDTranslator != nil {
+		return fc.GridCRDTranslator
+	}
+	return nil
 }

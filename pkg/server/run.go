@@ -207,7 +207,7 @@ func (fc *FleetController) runControlPlaneWatchers(ctx context.Context) {
 	if fc.Actuator != nil {
 		workers = append(workers, fc.runAutoscalingLoop)
 	}
-	if fc.GridCRDTranslator != nil {
+	if fc.effectiveRoutingProvider() != nil {
 		workers = append(workers, fc.runGridSyncLoop)
 	}
 

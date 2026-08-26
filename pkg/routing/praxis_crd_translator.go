@@ -23,6 +23,14 @@ type GridCRDTranslator struct {
 	gridNetwork string
 }
 
+// Name identifies this translator as the Praxis routing-provider adapter.
+func (t *GridCRDTranslator) Name() ProviderName { return ProviderPraxis }
+
+// Sync implements RoutingProvider without changing the existing Praxis CRDs.
+func (t *GridCRDTranslator) Sync(ctx context.Context, clusters []FleetClusterInfo, pools []FleetPoolInfo) error {
+	return t.SyncFromFleetState(ctx, clusters, pools)
+}
+
 // NewGridCRDTranslator creates a translator that writes Grid CRDs to the
 // given K8s API server. The gridNetwork parameter names the GridNetwork
 // resource that owns the translated GridSite and InferenceProvider CRDs.

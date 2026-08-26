@@ -19,6 +19,7 @@ import (
 	fleetcontroller "github.com/llm-d/fleet-llm-d/pkg/controller"
 	"github.com/llm-d/fleet-llm-d/pkg/intents"
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
+	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/server"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 )
@@ -47,6 +48,7 @@ func main() {
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", false, "Honour X-Forwarded-For when identifying clients for rate limiting. Enable ONLY when every request arrives through a proxy that overwrites the header; otherwise clients can forge their own rate-limit identity")
 	praxisURL := flag.String("praxis-url", "", "Internal Praxis inference endpoint")
+	routingProvider := flag.String("routing-provider", "", "Authoritative routing adapter: praxis (default), llm-d-router, or disabled")
 	inferenceMaxInflight := flag.Int("inference-max-inflight", 100, "Maximum concurrent inference requests per gateway replica")
 	_ = flag.String("backends", "", "Deprecated: inference routing moved to Praxis")
 	_ = flag.Int("max-inflight", 0, "Deprecated: load shedding moved to Praxis")
@@ -54,6 +56,18 @@ func main() {
 	flag.Parse()
 	if *praxisURL == "" {
 		*praxisURL = os.Getenv("PRAXIS_URL")
+	}
+	if *routingProvider == "" {
+		*routingProvider = os.Getenv("FLEET_ROUTING_PROVIDER")
+	}
+	parsedRoutingProvider, err := routing.ParseProviderName(*routingProvider)
+	if err != nil {
+		slog.Error("invalid routing provider", "error", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("FLEET_ROUTING_PROVIDER", string(parsedRoutingProvider)); err != nil {
+		slog.Error("configure routing provider", "error", err)
+		os.Exit(1)
 	}
 
 	if *pgURL == "" {

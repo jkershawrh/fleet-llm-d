@@ -103,6 +103,12 @@ type FleetController struct {
 	// GridCRDTranslator renders fleet cluster/pool state as Praxis Grid CRDs.
 	GridCRDTranslator *routing.GridCRDTranslator
 
+	// RoutingProvider is the single authoritative adapter that receives the
+	// fleet-qualified provider set. GridCRDTranslator remains as a deprecated
+	// compatibility handle for callers that inspect the Praxis adapter.
+	RoutingProvider     routing.RoutingProvider
+	RoutingProviderName routing.ProviderName
+
 	// SWIMSyncAdapter reads GridSite health status back into FleetCluster records.
 	SWIMSyncAdapter *client.SWIMSyncAdapter
 
@@ -194,6 +200,11 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	var crdWatcher *controller.CRDWatcher
 	var autoscalingActuator *actuator.ModelPlaneActuator
 	var gridTranslator *routing.GridCRDTranslator
+	providerName, err := routing.ParseProviderName(os.Getenv("FLEET_ROUTING_PROVIDER"))
+	if err != nil {
+		return nil, err
+	}
+	var routingProvider routing.RoutingProvider
 	var swimSync *client.SWIMSyncAdapter
 	var intentRepository intents.Repository = intents.NewMemoryRepository()
 	if kubeAPI != "" {
@@ -205,8 +216,9 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 		intentRepository = intents.NewKubernetesRepository(kubeAPI, namespace, token, nil)
 		autoscalingActuator = actuator.NewModelPlaneActuator(kubeAPI, token)
 
-		if gridNetwork := os.Getenv("GRID_NETWORK"); gridNetwork != "" {
+		if gridNetwork := os.Getenv("GRID_NETWORK"); gridNetwork != "" && providerName == routing.ProviderPraxis {
 			gridTranslator = routing.NewGridCRDTranslator(kubeAPI, namespace, token, gridNetwork)
+			routingProvider = gridTranslator
 			swimSync = client.NewSWIMSyncAdapter(kubeAPI, token, clusterRepo)
 			slog.Info("Grid CRD translator enabled", "network", gridNetwork)
 		}
@@ -270,16 +282,18 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 			}
 			return ""
 		}(),
-		LedgerGatewayToken: ledgerCfg.APIToken,
-		IntentService:      intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
-		PraxisOverlay:      praxisOverlay,
-		GridCRDTranslator:  gridTranslator,
-		SWIMSyncAdapter:    swimSync,
-		ClusterRepo:        clusterRepo,
-		PoolRepo:           poolRepo,
-		TenantRepo:         tenantRepo,
-		RolloutRepo:        rolloutRepo,
-		KubeAPI:            kubeAPI,
+		LedgerGatewayToken:  ledgerCfg.APIToken,
+		IntentService:       intents.NewService(intentRepository, intents.DefaultPolicyConfig(), ledgerClient),
+		PraxisOverlay:       praxisOverlay,
+		GridCRDTranslator:   gridTranslator,
+		RoutingProvider:     routingProvider,
+		RoutingProviderName: providerName,
+		SWIMSyncAdapter:     swimSync,
+		ClusterRepo:         clusterRepo,
+		PoolRepo:            poolRepo,
+		TenantRepo:          tenantRepo,
+		RolloutRepo:         rolloutRepo,
+		KubeAPI:             kubeAPI,
 	}
 	// The callback deliberately dereferences repositories through fc. This is
 	// important because production persistence is wired after construction.
