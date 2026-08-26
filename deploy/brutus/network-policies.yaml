@@ -101,10 +101,18 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: openshift-dns
+        - ipBlock:
+            cidr: 172.30.0.10/32
+        - ipBlock:
+            cidr: 10.128.0.0/14
       ports:
         - port: 53
           protocol: UDP
         - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
           protocol: TCP
     - to:
         - ipBlock:
