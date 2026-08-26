@@ -1,0 +1,64 @@
+router:
+  inferencePool:
+    create: false
+  proxy:
+    enabled: false
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main
+      pullPolicy: Always
+    flags:
+      allow-experimental-plugins: true
+      v: 2
+    pluginsConfigFile: multicluster.yaml
+    pluginsCustomConfig:
+      multicluster.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          - type: multicluster-file-discovery
+            name: discovery
+            parameters:
+              path: /var/run/fleet-router/endpoints-25edf1e35996.json
+              watchFile: true
+          - type: openai-parser
+          - type: random-picker
+        dataLayer:
+          discovery:
+            endpoints:
+              pluginRef: discovery
+        requestHandler:
+          parsers:
+            - pluginRef: openai-parser
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: random-picker
+    volumes:
+      - name: fleet-router-endpoints
+        configMap:
+          name: fleet-router-endpoints
+    volumeMounts:
+      - name: fleet-router-endpoints
+        mountPath: /var/run/fleet-router
+        readOnly: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  modelServers:
+    type: vllm
+    protocol: http
+    matchLabels:
+      fleet.llm-d.ai/shadow-router: never
+    targetPorts:
+      - number: 443
+  monitoring:
+    prometheus:
+      enabled: false
