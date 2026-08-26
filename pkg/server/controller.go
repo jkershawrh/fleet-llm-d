@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,6 +33,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/balancer"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
+	gridsignals "github.com/llm-d/fleet-llm-d/pkg/routing/signals"
 	"github.com/llm-d/fleet-llm-d/pkg/serving"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
@@ -133,6 +137,7 @@ type FleetController struct {
 	GPUPhysicalModel string
 	InferenceSlots   chan struct{}
 	ProviderHealth   *ProviderHealthCache
+	GridSignalPoller *gridsignals.Poller
 	cpuRouteCounter  atomic.Uint64
 
 	// Server state
@@ -314,7 +319,44 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	// important because production persistence is wired after construction.
 	fc.configureReconcilerOnChange(kubeAPI, namespace)
 	fc.configureServingActuator(namespace)
+	if err := fc.configureGridSignals(); err != nil {
+		return nil, err
+	}
 	return fc, nil
+}
+
+func (fc *FleetController) configureGridSignals() error {
+	raw := strings.TrimSpace(os.Getenv("GRID_SIGNALS_PEERS_JSON"))
+	if raw == "" {
+		return nil
+	}
+	var endpoints map[string]string
+	if err := json.Unmarshal([]byte(raw), &endpoints); err != nil {
+		return fmt.Errorf("parse GRID_SIGNALS_PEERS_JSON: %w", err)
+	}
+	certPath, keyPath := os.Getenv("GRID_SIGNALS_CLIENT_CERT"), os.Getenv("GRID_SIGNALS_CLIENT_KEY")
+	if certPath == "" || keyPath == "" {
+		return fmt.Errorf("grid signals require client certificate and key")
+	}
+	tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.TLSOptions{CAPath: os.Getenv("GRID_SIGNALS_CA")})
+	if err != nil {
+		return fmt.Errorf("grid signals TLS trust: %w", err)
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return fmt.Errorf("grid signals client identity: %w", err)
+	}
+	tlsConfig.Certificates = []tls.Certificate{cert}
+	peers := make([]gridsignals.Peer, 0, len(endpoints))
+	for site, endpoint := range endpoints {
+		peers = append(peers, gridsignals.Peer{Site: site, Endpoint: endpoint})
+	}
+	sort.Slice(peers, func(i, j int) bool { return peers[i].Site < peers[j].Site })
+	fc.GridSignalPoller = &gridsignals.Poller{
+		Client: gridsignals.NewClient(tlsConfig, 5*time.Second, 30*time.Second),
+		Peers:  peers,
+	}
+	return nil
 }
 
 func (fc *FleetController) configureServingActuator(namespace string) {
