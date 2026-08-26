@@ -234,8 +234,23 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 			if directory == "" {
 				directory = "/var/lib/fleet-llm-d/router-endpoints"
 			}
+			var publisher routing.LLMDFilePublisher
+			if configMap := os.Getenv("LLMD_ROUTER_ENDPOINTS_CONFIGMAP"); configMap != "" {
+				tlsConfig, tlsErr := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
+				if tlsErr != nil {
+					return nil, fmt.Errorf("initialize Kubernetes trust for llm-d Router adapter: %w", tlsErr)
+				}
+				publisher, err = routing.NewKubernetesConfigMapPublisher(kubeAPI, namespace, configMap, token, &http.Client{
+					Timeout:   10 * time.Second,
+					Transport: &http.Transport{TLSClientConfig: tlsConfig},
+				})
+				if err != nil {
+					return nil, fmt.Errorf("initialize llm-d Router ConfigMap publisher: %w", err)
+				}
+				slog.Info("llm-d Router ConfigMap publishing enabled", "configmap", configMap)
+			}
 			routingProvider, err = routing.NewLLMDProvider(routing.LLMDProviderOptions{
-				Directory: directory, Namespace: namespace, RequireTLS: os.Getenv("LLMD_ROUTER_ALLOW_INSECURE") != "true",
+				Directory: directory, Publisher: publisher, Namespace: namespace, RequireTLS: os.Getenv("LLMD_ROUTER_ALLOW_INSECURE") != "true",
 			})
 			if err != nil {
 				return nil, fmt.Errorf("initialize llm-d Router adapter: %w", err)

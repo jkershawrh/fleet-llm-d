@@ -38,10 +38,17 @@ type llmdModelIndex struct {
 
 type LLMDProviderOptions struct {
 	Directory    string
+	Publisher    LLMDFilePublisher
 	Namespace    string
 	MaxStaleness time.Duration
 	RequireTLS   bool
 	Now          func() time.Time
+}
+
+// LLMDFilePublisher publishes the complete watched-file set consumed by one
+// or more llm-d Router EPP deployments.
+type LLMDFilePublisher interface {
+	Publish(ctx context.Context, files map[string][]byte) error
 }
 
 // LLMDProvider renders one watched endpoint file per exact physical model.
@@ -52,7 +59,7 @@ type LLMDProvider struct {
 }
 
 func NewLLMDProvider(opts LLMDProviderOptions) (*LLMDProvider, error) {
-	if !filepath.IsAbs(opts.Directory) {
+	if opts.Publisher == nil && !filepath.IsAbs(opts.Directory) {
 		return nil, fmt.Errorf("llm-d Router endpoint directory must be absolute")
 	}
 	if opts.Namespace == "" {
@@ -69,7 +76,11 @@ func NewLLMDProvider(opts LLMDProviderOptions) (*LLMDProvider, error) {
 
 func (p *LLMDProvider) Name() ProviderName { return ProviderLLMD }
 
-func (p *LLMDProvider) Sync(_ context.Context, clusters []FleetClusterInfo, pools []FleetPoolInfo) error {
+func (p *LLMDProvider) Sync(ctx context.Context, clusters []FleetClusterInfo, pools []FleetPoolInfo) error {
+	return p.sync(ctx, clusters, pools)
+}
+
+func (p *LLMDProvider) sync(ctx context.Context, clusters []FleetClusterInfo, pools []FleetPoolInfo) error {
 	byID := make(map[string]FleetClusterInfo, len(clusters))
 	for _, cluster := range clusters {
 		byID[cluster.ID] = cluster
@@ -97,9 +108,7 @@ func (p *LLMDProvider) Sync(_ context.Context, clusters []FleetClusterInfo, pool
 		}
 	}
 
-	if err := os.MkdirAll(p.opts.Directory, 0o750); err != nil {
-		return fmt.Errorf("create llm-d Router endpoint directory: %w", err)
-	}
+	files := make(map[string][]byte, len(byModel)+1)
 	index := llmdModelIndex{Version: "v1", Models: make(map[string]string, len(byModel))}
 	models := make([]string, 0, len(byModel))
 	for model := range byModel {
@@ -110,14 +119,24 @@ func (p *LLMDProvider) Sync(_ context.Context, clusters []FleetClusterInfo, pool
 		endpoints := byModel[model]
 		sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].Name < endpoints[j].Name })
 		filename := modelFilename(model)
-		if err := writeJSONAtomic(filepath.Join(p.opts.Directory, filename), llmdEndpointsFile{Endpoints: endpoints}); err != nil {
+		data, err := marshalJSON(llmdEndpointsFile{Endpoints: endpoints})
+		if err != nil {
 			return err
 		}
+		files[filename] = data
 		index.Models[model] = filename
 	}
 	// Publish the index last so readers never observe a model file before its
 	// complete contents have been atomically installed.
-	return writeJSONAtomic(filepath.Join(p.opts.Directory, "index.json"), index)
+	data, err := marshalJSON(index)
+	if err != nil {
+		return err
+	}
+	files["index.json"] = data
+	if p.opts.Publisher != nil {
+		return p.opts.Publisher.Publish(ctx, files)
+	}
+	return directoryPublisher{directory: p.opts.Directory}.Publish(ctx, files)
 }
 
 func (p *LLMDProvider) eligible(cluster FleetClusterInfo) bool {
@@ -233,12 +252,29 @@ func modelFilename(model string) string {
 	return "endpoints-" + hex.EncodeToString(sum[:6]) + ".json"
 }
 
-func writeJSONAtomic(path string, value interface{}) error {
+func marshalJSON(value interface{}) ([]byte, error) {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal %s: %w", path, err)
+		return nil, fmt.Errorf("marshal llm-d Router endpoint file: %w", err)
 	}
-	data = append(data, '\n')
+	return append(data, '\n'), nil
+}
+
+type directoryPublisher struct{ directory string }
+
+func (p directoryPublisher) Publish(_ context.Context, files map[string][]byte) error {
+	if err := os.MkdirAll(p.directory, 0o750); err != nil {
+		return fmt.Errorf("create llm-d Router endpoint directory: %w", err)
+	}
+	for name, data := range files {
+		if err := writeFileAtomic(filepath.Join(p.directory, name), data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".fleet-router-*")
 	if err != nil {
 		return fmt.Errorf("create temporary endpoint file: %w", err)

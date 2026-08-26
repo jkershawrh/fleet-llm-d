@@ -10,6 +10,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["fleet-router-endpoints"]
+    verbs: ["get", "patch", "update"]
   - apiGroups:
       - coordination.k8s.io
     resources:
