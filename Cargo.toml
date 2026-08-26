@@ -31,5 +31,5 @@ chrono = { version = "0.4", features = ["serde"] }
 kube = { version = "0.99", features = ["runtime", "derive"] }
 k8s-openapi = { version = "0.24", features = ["latest"] }
 sha2 = "0.10"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 async-trait = "0.1"
