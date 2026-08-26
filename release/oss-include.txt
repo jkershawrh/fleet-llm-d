@@ -1,0 +1,34 @@
+# Paths included in the portable OSS source bundle.
+#
+# Keep this list allowlisted. Environment deployments, historical evidence,
+# private operations scripts, model artifacts, and external ecosystem services
+# remain in the repository but are not copied into the community release.
+LICENSE
+NOTICE
+go.mod
+go.sum
+Cargo.toml
+Cargo.lock
+api
+charts
+cmd/fleet-controller
+cmd/fleetctl
+cmd/inference-mock
+crates
+pkg
+web
+deploy/docker
+deploy/kustomize/base
+deploy/kustomize/base-spoke
+deploy/kustomize/overlays/community
+deploy/kustomize/components/community-postgres
+deploy/migrations
+deploy/mock-inference
+deploy/prometheus
+deploy/grafana
+docs/community
+test/architecture
+test/bdd
+test/contracts
+test/integration
+test/security

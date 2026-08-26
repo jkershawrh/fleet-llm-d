@@ -90,6 +90,12 @@ jobs:
           cd dist
           tar czf fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz -C linux-amd64 .
           tar czf fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz -C linux-arm64 .
+
+      - name: Build and verify portable OSS source bundle
+        run: |
+          bash hack/build-oss-release.sh "${{ steps.version.outputs.VERSION }}"
+          bash hack/verify-oss-release.sh "dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-oss-source.tar.gz"
+          cd dist
           sha256sum *.tar.gz > checksums-sha256.txt
 
       - name: Log in to GHCR
@@ -170,7 +176,10 @@ jobs:
           files: |
             dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
             dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-oss-source.tar.gz
             dist/checksums-sha256.txt
+            sbom-fleet-controller.json
+            sbom-fleet-agent.json
 
   smoke-test:
     name: Smoke Test Published Images

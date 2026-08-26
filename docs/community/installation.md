@@ -1,0 +1,57 @@
+# Community installation
+
+The community profile is a portable starting point for Kubernetes. External
+systems are disabled by default, and the package does not install model weights,
+an inference engine, a semantic classifier, or an immutable ledger.
+
+## Images
+
+Release automation publishes signed controller and agent images to the GitHub
+Container Registry namespace belonging to the repository that creates the
+release. Set the image repositories and immutable release tag explicitly:
+
+```sh
+helm upgrade --install fleet charts/fleet-llm-d \
+  --namespace fleet-llm-d \
+  --set clusterIdentity.clusterId=community-cluster-01 \
+  --set controller.image.repository=ghcr.io/OWNER/fleet-llm-d/fleet-controller \
+  --set controller.image.tag=VERSION \
+  --set agent.image.repository=ghcr.io/OWNER/fleet-llm-d/fleet-agent \
+  --set agent.image.tag=VERSION
+```
+
+For Kustomize, replace the two image names in
+`deploy/kustomize/overlays/community/kustomization.yaml` with the release
+repository and tag before applying the overlay.
+
+The community overlay omits Prometheus Operator `ServiceMonitor` objects so it
+can be applied to vanilla Kubernetes. The Prometheus rules and dashboards are
+included as optional observability assets; install their operator-specific
+resources only when the corresponding CRDs are available.
+
+## Durable state
+
+The default chart keeps PostgreSQL disabled. Set
+`externalDependencies.postgres.enabled=true` and supply an existing Secret
+containing the full TLS connection URL for a durable deployment.
+
+The optional `community-postgres` Kustomize component uses the upstream
+PostgreSQL image and is intended only for evaluation. It deliberately requires
+the operator to create the password Secret instead of embedding credentials.
+
+## Inference
+
+Configure each agent's `upstreamURL` to a local llm-d-compatible inference
+entry point. The included mock backend is for contract testing only. Praxis and
+llm-d Router adapters are optional; neither is embedded in the core images.
+
+Semantic classification is also optional. The release contains the classifier
+client contract but does not distribute classifier model weights or an
+unpublished classifier server.
+
+## Production boundary
+
+Production deployments require operator-managed authentication, TLS, durable
+state, external evidence infrastructure when policy requires it, topology
+spread, disruption budgets, capacity testing, and failure certification. The
+community profile is not a claim that those dependencies have been supplied.

@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fleet-llm-d
+resources:
+  - ../../base
+  - pdb.yaml
+images:
+  - name: ghcr.io/llm-d/fleet-controller
+    newName: ghcr.io/OWNER/fleet-llm-d/fleet-controller
+    newTag: VERSION
+  - name: ghcr.io/llm-d/fleet-agent
+    newName: ghcr.io/OWNER/fleet-llm-d/fleet-agent
+    newTag: VERSION
+patches:
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: ServiceMonitor
+      name: fleet-controller
+    patch: |-
+      $patch: delete
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: fleet-controller
+  - target:
+      group: monitoring.coreos.com
+      version: v1
+      kind: ServiceMonitor
+      name: fleet-agent
+    patch: |-
+      $patch: delete
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: fleet-agent

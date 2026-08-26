@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e lint clean dev generate bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production multi-cluster-deploy-arena multi-cluster-test multi-cluster-teardown
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e lint clean dev generate oss-release verify-oss-release bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production multi-cluster-deploy-arena multi-cluster-test multi-cluster-teardown
 
 # ──────────────────────────────────────────────
 # Build
@@ -100,6 +100,17 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 docker-build:
 	docker build -t $(REGISTRY)/fleet-controller:$(VERSION) -f deploy/docker/Dockerfile.controller .
 	docker build -t $(REGISTRY)/fleet-agent:$(VERSION) -f deploy/docker/Dockerfile.agent .
+
+# ──────────────────────────────────────────────
+# Portable OSS release
+# ──────────────────────────────────────────────
+
+oss-release:
+	bash hack/build-oss-release.sh "$(VERSION)"
+
+verify-oss-release:
+	@archive=$$(bash hack/build-oss-release.sh "$(VERSION)"); \
+		bash hack/verify-oss-release.sh "$$archive"
 
 # ──────────────────────────────────────────────
 # Benchmarks
