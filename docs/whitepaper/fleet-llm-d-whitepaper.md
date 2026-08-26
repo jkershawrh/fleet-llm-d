@@ -68,7 +68,13 @@ The control plane is implemented in Go 1.26.5 using standard library HTTP for th
 - `pkg/modelplane/` -- ModelPlane integration layer: types (`types.go`), adapter (`adapter.go`), watcher (`watcher.go`), policy injector (`policy.go`), and compliance bridge (`compliance.go`). Consumes ModelDeployment and InferenceCluster CRDs, injects fleet policy, and bridges events to the ARE ledger.
 - `pkg/cost/` -- GPU inference cost model: pricing table (`pricing.go`), tokenomics calculator (`tokenomics.go`), chargeback report generator (`chargeback.go`), and budget alert engine (`alerts.go`). Covers 6 GPU types across 3 pricing tiers with per-tenant cost attribution.
 
-**Fleet Controller API.** The fleet-controller exposes 42 REST endpoints organized across 13 resource groups: health (liveness, readiness), clusters (list, register, deregister, drain, activate), pools (list, webhook, state), tenants (list, create, usage), metrics (fleet-wide, per-model, platform), rollouts (list, create, promote, rollback), compliance (chain verification), modelplane (clusters, deployments, per-deployment cost), cost (pricing, tokenomics, chargeback, projection, savings, alerts), agent (status, metrics, events, policies), intents (v1 submit, v2 submit/get, v2 get/approve/cancel operation), auth (token refresh), and webhooks (validation). Authentication uses HMAC-SHA256 signed bearer tokens (custom format: base64(claims).base64(hmac), not RFC 7519 JWT). The OpenAPI 3.1 specification is maintained in `api/openapi/fleet-api.yaml`.
+**Fleet Controller API.** The fleet-controller's current OpenAPI contract
+defines 43 paths across health, fleet management, metrics, rollouts,
+compliance, ModelPlane, cost, agents, intents, authentication, inference, and
+webhook groups. Authentication uses HMAC-SHA256 signed bearer tokens (custom
+format: base64(claims).base64(hmac), not RFC 7519 JWT). The OpenAPI 3.1
+specification in `api/openapi/fleet-api.yaml` is authoritative; path counts are
+inventory, not a compatibility promise.
 
 **State Management.** PostgreSQL 16+ stores fleet state: cluster registrations, pool configurations, tenant profiles, rollout state, and placement decisions. The repository layer (`pkg/store/postgres/`) provides transactional access with an in-memory implementation for testing. Events are published to an in-memory publisher plus an optional HTTP sink (`pkg/store/events/http_publisher.go`) that can target any CloudEvents-compatible endpoint, including a Kafka REST proxy. There is no native Kafka client -- this is a deliberate supply-chain-minimal design choice (the entire Go module depends only on `lib/pq`).
 
@@ -223,7 +229,13 @@ fleet-llm-d accepts typed intents from the [governed-cognitive-loop](https://git
 
 fleet-llm-d evaluates received intents against its CRD-defined policies (confidence thresholds, replica limits, human gates for critical actions) before actuating. This creates a two-stage governance model: the GCL governs the decision (constraint satisfaction, falsification), and fleet-llm-d governs the execution (policy compliance, resource availability).
 
-The current integration contract is the signed, expiry-bounded `DecisionPackage` proposal carried into Fleet REST v2 with a stable correlation and idempotency identity. HMAC fleet v1 is compatibility-only. Fleet verifies the proposal, applies its own admission and approval policy, and owns actuation. The immutable ledger records correlated proposal and outcome evidence without granting authority.
+The current integration contract is the Ed25519-signed, expiry-bounded
+`DecisionPackage` proposal carried into Fleet REST v2 with a stable correlation
+and idempotency identity. Fleet stores GCL public keys only. Legacy HMAC is
+migration-only and refused unless explicitly enabled. Fleet verifies the
+proposal, applies its own admission and approval policy, and owns actuation.
+The immutable ledger records correlated proposal and outcome evidence without
+granting authority.
 
 The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.
 
@@ -356,7 +368,9 @@ Preflight, cluster registration, cross-cluster placement, cross-cluster routing,
 #### 5.2.6 Governance and Compliance
 
 - ARE Immutable Ledger: 9,760+ entries across 11 chain types, all chains verified valid
-- GCL signed DecisionPackage CloudEvents: end-to-end verified (HMAC-SHA256 signature, expiry-bounded)
+- Historical GCL DecisionPackage CloudEvents: end-to-end verified with the
+  then-current HMAC-SHA256 contract; current production admission requires
+  Ed25519 by default
 - Fail-closed on ledger errors: controller returns 500, never silently drops evidence
 - Chain integrity maintained across 4hr sustained variable-intensity load
 
@@ -582,7 +596,7 @@ The following capabilities were evaluated and intentionally deferred based on th
 | **Granite 4.1 8B on CPU** | Export requires >16 GB RAM, exceeding the local development machine. Not blocking for large-scale industry events -- the 350M/2B/3B tier covers all demo scenarios. | Export planned on the validation cluster worker nodes (503 GB RAM each) or, if unavailable, a secondary validation cluster (503 GB RAM, Intel VPN network). |
 | **OVMS for all models** | Python/FastAPI backends for Phi-3-Mini and Qwen 2.5 3B perform competitively for single requests (762ms vs 784ms). OVMS advantage is primarily under concurrent load. | OVMS exports for these models can be produced with the same `export_model.py` pipeline when concurrent capacity becomes the bottleneck. |
 | **Speculative decoding** | Granite 350M is deployed as the draft model. The speculative decode integration in fleet-llm-d's proxy (draft → verify pipeline) is designed but not yet implemented. | Code integration in `pkg/routing/proxy.go` -- route draft to 350M, verify with 2B/3B. |
-| **Multi-cluster routing** | Closed. 3-cluster fleet (Oberon hub, Arena CPU, Brutus GPU H100) operational with cross-cluster routing via NodePort bridges. Cascade soak: 9,778 ops, 0 errors, 9/9 SLO gates (smoke+short+pressure+stress). | Praxis AI replaced fleet-gateway as the inference routing layer. GCL signed CloudEvents verified end-to-end. |
+| **Multi-cluster routing** | Closed for the historical 3-cluster soak: Oberon hub, Arena CPU, and Brutus GPU H100 routed through NodePort bridges, with 9,778 operations, 0 errors, and 9/9 SLO gates. The current physical deployment uses TLS OpenShift Routes. | Praxis AI replaced fleet-gateway as the inference routing layer. The historical run used HMAC-signed GCL events; current production admission requires Ed25519. |
 | **Intel TDX confidential inference** | Xeon 6767P supports TDX (TME flag present). BIOS enablement requires infrastructure team coordination and a maintenance window for worker node reboots. | Detailed enablement plan documented at `docs/proposals/intel-tdx-enablement.md`. |
 
 #### 5.4.12 Gaps by Technical Limitation
@@ -687,7 +701,14 @@ All 7 degradation injections passed: burst-50 concurrent events (0 errors), inva
 
 #### 5.5.6 3-Cluster Cascade Soak (August 2026)
 
-A cascading soak test validated the full fleet across three physical clusters: Oberon (hub, Intel Xeon CPU, OVMS), Arena (CPU spoke, Intel Xeon6, OVMS), and Brutus (GPU spoke, NVIDIA H100 NVL 94GB, vLLM). Inference routed through Praxis AI on Oberon with cross-cluster NodePort bridges to Arena and Brutus. All 17 lifecycle phases exercised per cycle, including GCL signed DecisionPackage CloudEvents (HMAC-SHA256 verified) and ARE ledger hash-chain verification.
+A cascading soak test validated the full fleet across three physical clusters:
+Oberon (hub, Intel Xeon CPU, OVMS), Arena (CPU spoke, Intel Xeon6, OVMS), and
+Brutus (GPU spoke, NVIDIA H100 NVL 94GB, vLLM). This historical run routed
+through Praxis AI on Oberon with NodePort bridges to Arena and Brutus. The
+current deployment uses TLS OpenShift Routes. All 17 lifecycle phases were
+exercised per cycle, including the then-current HMAC-signed GCL
+DecisionPackage contract and ARE ledger hash-chain verification. Current
+production GCL admission requires Ed25519 by default.
 
 | Level | Duration | Concurrency | Interval | Operations | Errors | Rate | SLO Gates |
 |-------|----------|-------------|----------|-----------|--------|------|-----------|

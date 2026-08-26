@@ -51,7 +51,7 @@ DeepField owns observations, findings, and forecasts. GCL owns signed and falsif
 ## Dependencies
 
 - Go 1.26+
-- Rust 1.79+
+- Rust 1.90+
 - Node.js 20+
 - Python 3.12+
 - PostgreSQL 16+

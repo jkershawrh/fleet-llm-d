@@ -192,7 +192,7 @@ Advisory CloudEvent
 ├─ OPA Honesty Boundary ────────► Guardian sidecar blocks action
 │                                  fields from LLM responses
 │
-└─ Signed DecisionPackage ──────► HMAC-SHA256 signed
+└─ Signed DecisionPackage ──────► Ed25519 signed
                                    Expiry-bounded
                                    Scope-bound (tenant + zone)
                                    Full evidence chain attached

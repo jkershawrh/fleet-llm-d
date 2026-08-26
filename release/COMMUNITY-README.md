@@ -2,7 +2,7 @@
 
 fleet-llm-d is an Apache-2.0 fleet-level inference control plane for multiple
 llm-d deployments. This portable release contains the controller, agent,
-OpenAI-compatible inference gateway, API definitions, Helm chart, generic
+OpenAI-compatible controller ingress, API definitions, Helm chart, generic
 Kubernetes manifests, mock inference backend, and portable tests.
 
 The community release is intentionally environment-neutral. It does not

@@ -4,6 +4,13 @@
 **Clusters:** Oberon (hub, CPU/OVMS), Arena (CPU spoke, OVMS), Brutus (GPU spoke, H100/vLLM)
 **Stage:** Staging-promotable, cascade soak complete (9,778 ops, 0 errors, 9/9 SLO gates)
 
+> Historical snapshot: this report records the August 7 deployment and test
+> topology. Since then, the standalone fleet-gateway crate was removed, the
+> controller gained the supported OpenAI-compatible ingress, production GCL
+> admission moved to Ed25519, and the physical fleet replaced NodePort bridges
+> with TLS OpenShift Routes. See the root README and community installation
+> guide for the current v0.3.0 architecture.
+
 ---
 
 ## What fleet-llm-d Is
@@ -11,7 +18,8 @@
 Fleet-level inference orchestration for llm-d. Extends single-cluster LLM inference to multi-cluster fleet operations with:
 
 - **Go control plane** -- model placement, routing, autoscaling, tenant governance, lifecycle management
-- **Rust data plane** -- fleet gateway, fleet agent, KV cache transfer
+- **Rust data plane at that time** -- fleet agent and KV cache transfer; the
+  former fleet gateway has since been removed
 - **Praxis AI gateway** -- programmable inference routing with token counting and access logging
 - **Multi-cluster federation** -- cross-cluster routing, health-aware load balancing, cluster discovery
 - **PostgreSQL persistence** -- state survives controller restarts
@@ -89,7 +97,10 @@ Client → Praxis AI Gateway (Oberon) → Fleet Controller → Inference Backend
 
 ## Test Evidence
 
-### Test Counts
+### Historical Test Counts
+
+These counts describe the August 7 snapshot and are not current release
+inventory. Current CI results are authoritative.
 | Suite | Count | Status |
 |-------|-------|--------|
 | Go unit tests | 27 packages | All passing |

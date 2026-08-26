@@ -111,7 +111,7 @@ fleet-llm-d manages all fleet behavior through 10 declarative CRDs in the `fleet
 
 ### 3.3 Intent Admission and Operation Lifecycle
 
-fleet-llm-d's v2 intent boundary (`POST /api/v2/intents`) accepts cryptographically signed governance proposals from external systems. The 957-line admission adapter performs exhaustive validation: HMAC-SHA256 signature verification against a keyring, expiry checking, scope binding validation (tenant + zone), proposer identity verification (SPIFFE URI), evidence reference integrity, and fleet-owned authorization policy enforcement.
+fleet-llm-d's v2 intent boundary (`POST /api/v2/intents`) accepts cryptographically signed governance proposals from external systems. The admission adapter performs exhaustive validation: Ed25519 signature verification against a public-key ring, expiry checking, scope binding validation (tenant + zone), proposer identity verification (SPIFFE URI), evidence reference integrity, and fleet-owned authorization policy enforcement. Legacy HMAC-SHA256 packages are refused unless an operator explicitly enables the migration window.
 
 A valid intent creates a FleetOperation that tracks through a 17-phase lifecycle:
 
@@ -124,7 +124,11 @@ Each phase transition is recorded. Operations that fail at any phase record the 
 
 ### 3.4 Architecture
 
-**Go control plane.** The fleet-controller binary manages all CRD reconciliation, API endpoints (27 REST endpoints), intent admission, metrics federation, and cost modeling. Standard library HTTP server with HMAC-SHA256 authentication, per-IP rate limiting, and TLS 1.3.
+**Go control plane.** The fleet-controller binary manages CRD reconciliation,
+the 43-path OpenAPI surface (including OpenAI-compatible inference ingress),
+intent admission, metrics federation, and cost modeling. It uses the standard
+library HTTP server with HMAC-SHA256 bearer-token compatibility authentication,
+per-key rate limiting, and configurable TLS 1.3.
 
 **Rust data plane and Praxis AI.** fleet-agent (spoke cluster management) and KV transfer coordinator (cache state migration) are Rust binaries using tokio async runtime, tonic for gRPC, and axum for HTTP. Praxis AI handles cross-cluster inference routing as the programmable data plane (model-based dispatch, token counting, access logging).
 
@@ -161,7 +165,7 @@ No system bypasses fleet-llm-d's admission boundary. GCL cannot actuate infrastr
 
 ### 4.2 Governance Integration (GCL)
 
-GCL exercises fleet-llm-d's most demanding API surface: the v2 intent admission boundary. GCL's 7-stage governance pipeline (classify, predict, interpret, plan, falsify, commit, drive) produces HMAC-SHA256 signed DecisionPackages with expiry timestamps, scope binding, and full evidence chains. fleet-llm-d's 957-line adapter independently verifies the signature, validates the trust envelope, and creates a FleetOperation only when all checks pass. This validates that fleet-llm-d's admission model works with real, cryptographically signed external governance.
+GCL exercises fleet-llm-d's most demanding API surface: the v2 intent admission boundary. GCL's 7-stage governance pipeline (classify, predict, interpret, plan, falsify, commit, drive) produces Ed25519-signed DecisionPackages with expiry timestamps, scope binding, and full evidence chains. fleet-llm-d independently verifies the signature with GCL's public key, validates the trust envelope, and creates a FleetOperation only when all checks pass. Historical soak evidence in this paper used the earlier HMAC contract; current production policy requires Ed25519 by default.
 
 GCL provides 6 governance scenarios (inference_fleet_spike, compliance_breach, capacity_exhaustion, slo_cascade, mixed_storm, multi_cluster_migration) that exercise fleet-llm-d's placement, routing, scaling, and migration capabilities through the governed path. The 8-hour soak test ran 5,534 governance cycles through this pipeline with zero errors.
 

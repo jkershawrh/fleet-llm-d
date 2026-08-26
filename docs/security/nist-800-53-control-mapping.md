@@ -66,12 +66,16 @@ fleet-llm-d runs on OpenShift/Kubernetes and cloud infrastructure. Controls are 
 | Control | Description | Implementation | Responsibility |
 |---------|-------------|----------------|----------------|
 | SC-7 | Boundary protection | NetworkPolicy default-deny-all. Namespace isolation. Ingress restrictions. | Shared |
-| SC-8 | Transmission confidentiality | Controller HTTPS via `--tls-cert`/`--tls-key`. `fleetctl` via `--tls-ca`. | Partial -- see SC-8 gap |
+| SC-8 | Transmission confidentiality | Controller HTTPS via `--tls-cert`/`--tls-key`; `fleetctl` via `--tls-ca`; agent supports a pinned CA through `--tls-ca-cert`; production startup requires PostgreSQL `sslmode=verify-full` and HTTPS Praxis/ledger endpoints. | Partial -- see SC-8 gap |
 | SC-12 | Cryptographic key management | HMAC secret for token signing. TLS certificate management. | Delegated to platform |
 | SC-13 | Cryptographic protection | SHA-256 for token HMAC, ledger hash chains, content hashing. | fleet-llm-d |
 | SC-28 | Protection of information at rest | -- | Delegated to platform (dm-crypt/LUKS, cloud encryption) |
 
-**SC-8 Gap**: fleet-agent (Rust) communicates over plaintext HTTP. KV cache transfer (TCP) has no TLS. PostgreSQL uses `sslmode=disable`.
+**SC-8 Gap**: TLS is configurable rather than automatically provisioned for
+controller/agent communication, and mutual workload identity is not yet
+implemented. KV cache transfer (TCP) has no TLS. Production mode rejects
+PostgreSQL connections that do not use `sslmode=verify-full`; development mode
+can still be configured less safely and must not be treated as production.
 
 ## SI -- System and Information Integrity
 

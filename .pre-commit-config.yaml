@@ -18,7 +18,16 @@ repos:
     hooks:
       - id: no-internal-refs
         name: Block internal infrastructure references
-        entry: bash -c 'if grep -rn --include="*.go" --include="*.md" --include="*.yaml" --include="*.yml" --include="*.adoc" --include="*.py" --include="*.rs" --include="*.tsx" --include="*.ts" --include="*.json" -i -E "(fm2aihpcsed|racmaas|jkershawrh|jkershaw@redhat|redhat-gpte|maas-rhdp|redhatworkshops\.io)" "$@" 2>/dev/null; then echo ""; echo "ERROR: Internal infrastructure references detected. Remove before committing."; exit 1; fi'
+        entry: >-
+          bash -c 'if grep -n -i -E
+          "(fm2aihpcsed|racmaas|jkershaw@redhat|redhat-gpte|maas-rhdp|redhatworkshops\.io)"
+          "$@" 2>/dev/null; then echo ""; echo "ERROR: Internal infrastructure
+          references detected. Remove before committing."; exit 1; fi' --
         language: system
         types: [file]
         pass_filenames: true
+        # Physical-fleet material is intentionally preserved in the full repo
+        # and excluded from portable artifacts by release/oss-include.txt.
+        # hack/verify-oss-release.sh enforces the same boundary on archives.
+        exclude: >-
+          ^(\.pre-commit-config\.yaml|hack/verify-oss-release\.sh|test/soak/|deploy/build-and-push-all\.sh|deploy/(oberon|arena|brutus|praxis)/|deploy/kustomize/overlays/(oberon|arena|brutus)/)

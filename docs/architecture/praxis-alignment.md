@@ -5,6 +5,10 @@
 **Audience:** Office of the Chief AI Architect, AI Gateway leadership
 **Reference:** Jason Greene, "Red Hat AI Gateway: Architecture & Direction" (July 30, 2026)
 
+> Historical alignment snapshot: architecture conclusions remain useful, but
+> the test counts below describe the July review and are not current release
+> inventory. Current CI and the root README are authoritative.
+
 ---
 
 ## Executive Summary

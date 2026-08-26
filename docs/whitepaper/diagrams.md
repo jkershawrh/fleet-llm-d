@@ -27,7 +27,7 @@ graph LR
     end
 
     DF -- "Advisory CloudEvents<br/>(observation, finding,<br/>forecast, remediation)" --> GCL
-    GCL -- "Signed DecisionPackages<br/>(HMAC-SHA256, expiry-bounded,<br/>scope-bound, SPIFFE identity)" --> FLEET
+    GCL -- "Signed DecisionPackages<br/>(Ed25519, expiry-bounded,<br/>scope-bound, SPIFFE identity)" --> FLEET
     FLEET -- "Evidence entries<br/>(hash-chained,<br/>correlation-indexed)" --> ARE
 
     FLEET -. "Independent verification<br/>before actuation" .-> FLEET
@@ -140,14 +140,14 @@ sequenceDiagram
         GCL->>GCL: 4. Plan (deterministic actions)
         GCL->>GCL: 5. Falsify (7 checks challenge proposal)
         GCL->>GCL: 6. Commit (sign DecisionPackage)
-        Note over GCL: HMAC-SHA256 signature,<br/>expiry timestamp,<br/>scope binding (tenant + zone),<br/>SPIFFE URI identity
+        Note over GCL: Ed25519 signature,<br/>expiry timestamp,<br/>scope binding (tenant + zone),<br/>SPIFFE URI identity
     end
 
     GCL->>FLEET: POST /api/v2/intents<br/>(Signed DecisionPackage)
 
     rect rgb(232, 245, 233)
         Note over FLEET: v2 Intent Admission (957 lines)
-        FLEET->>FLEET: Verify HMAC-SHA256 signature
+        FLEET->>FLEET: Verify Ed25519 signature with GCL public key
         FLEET->>FLEET: Check expiry timestamp
         FLEET->>FLEET: Validate scope binding
         FLEET->>FLEET: Verify proposer identity (SPIFFE)

@@ -1,11 +1,14 @@
 # Kustomize deployment profiles
 
-The base deploys the three fleet runtime components in the `fleet-llm-d`
-namespace. The overlays retain the existing standalone, hub, and federated
-topologies.
+The base deploys the fleet controller and per-cluster agent in the
+`fleet-llm-d` namespace. The controller serves the OpenAI-compatible ingress
+and forwards admitted requests to an explicitly configured external Praxis
+endpoint. The overlays retain the existing standalone, hub, and federated
+topologies; they do not install Praxis.
 
-Every overlay runs exactly one controller. Leader election is not implemented,
-so gateway scaling and disruption budgets do not constitute control-plane HA.
+Kubernetes API mode enables Lease-based active/passive leader election. The
+reference overlays retain a conservative single controller by default because
+replica HA also requires shared PostgreSQL and external event/ledger services.
 
 ## Required cluster identity
 
@@ -28,20 +31,16 @@ a shared cluster ID for production clusters.
 | --- | ---: | --- |
 | controller | 8080 | control-plane API and health probes |
 | controller | 9091 | Prometheus metrics |
-| gateway | 8080 | inference routing proxy |
-| gateway | 8081 | liveness and fail-closed readiness probes |
-| gateway | 9090 | Prometheus metrics |
 | agent | 8090 | local proxy, liveness, and fail-closed readiness probes |
 
 The manifests expose only listeners the current binaries bind. Agent ports 8080
 and 9090 remain reserved CLI contracts and are not rendered as Services. Agent
-readiness stays false until synchronization and upstream forwarding exist;
-gateway readiness stays false until a real routing snapshot is installed. This
-prevents scaffold processes from being counted as live provider evidence.
+readiness stays false until synchronization and upstream forwarding exist.
+This prevents scaffold processes from being counted as live provider evidence.
 
-The base keeps the gateway `ClusterIP`; expose it only through an explicitly
-managed ingress, OpenShift Route, Gateway API object, or LoadBalancer policy.
-The controller starts with the external ARE ledger disabled and without a
+The base keeps the controller `ClusterIP`; expose its inference endpoints only
+through an explicitly managed ingress, OpenShift Route, Gateway API object, or
+LoadBalancer policy. The controller starts with the external ARE ledger disabled and without a
 PostgreSQL or event-publisher endpoint. Production overlays should opt into
 those services with operator-managed credentials and TLS endpoints rather than
 guessed service addresses. The standalone overlay's PostgreSQL and Redis

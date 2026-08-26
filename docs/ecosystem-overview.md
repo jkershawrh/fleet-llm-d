@@ -90,7 +90,10 @@ This platform is built on and integrates with open-source projects across the Re
 - **Deterministic optimization**: Numpy-based controller selects actions: scale, pre-warm, shed load, alert, migrate, rollback. Scale capped at 20 replicas. Custom hard constraints produce no-action.
 - **Falsification gate**: 7 deterministic checks challenge every proposed action before it can be emitted (capacity available, scale magnitude reasonable, warmup time realistic, prediction confidence, compliance action valid, shed load bounded, migration target available).
 - **Honesty boundary**: OPA Guardian sidecar blocks action fields from LLM responses at runtime. AST-verified separation.
-- **Signed DecisionPackages**: Every surviving proposal is HMAC-SHA256 signed, expiry-bounded, scope-bound (tenant + zone), and carries its full evidence chain.
+- **Signed DecisionPackages**: Every surviving proposal is Ed25519 signed,
+  expiry-bounded, scope-bound (tenant + zone), and carries its full evidence
+  chain. GCL retains the private key and Fleet stores only public verification
+  keys. Legacy HMAC-SHA256 is migration-only and refused by default.
 - **Post-commit accountability**: Outcome tracking (did the action work?), 60-second decision cooldown, actuation verification against fleet response.
 - **Semantic routing**: Classifies prompts by complexity (simple/standard/complex) and routes to the appropriate inference tier.
 
@@ -209,7 +212,9 @@ An 8-phase stress test exercised all 4 systems on the Oberon cluster. GCL ran as
 | 7. Pen Testing | 5/5 | No injection or traversal vulnerabilities |
 | 8. Chaos | 1/3 | 200 simultaneous cycles with 0 errors; single-pod ceiling reached at saturation |
 
-See [ecosystem stress test benchmarks](docs/benchmarks/ecosystem-stress-benchmarks.md) for the full breakdown.
+See the [ecosystem validation report](ecosystem-validation-report.md) and the
+[current fleet whitepaper](whitepaper/fleet-llm-d-whitepaper.md) for the full
+breakdown and evidence boundaries.
 
 ### Cascade Soak (3-Cluster, August 2026)
 

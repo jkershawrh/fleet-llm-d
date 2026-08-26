@@ -8,16 +8,16 @@ an inference engine, a semantic classifier, or an immutable ledger.
 
 Release automation publishes signed controller and agent images to the GitHub
 Container Registry namespace belonging to the repository that creates the
-release. Set the image repositories and immutable release tag explicitly:
+release. For the v0.3.0 public release, use:
 
 ```sh
 helm upgrade --install fleet charts/fleet-llm-d \
   --namespace fleet-llm-d \
   --set clusterIdentity.clusterId=community-cluster-01 \
-  --set controller.image.repository=ghcr.io/OWNER/fleet-llm-d/fleet-controller \
-  --set controller.image.tag=VERSION \
-  --set agent.image.repository=ghcr.io/OWNER/fleet-llm-d/fleet-agent \
-  --set agent.image.tag=VERSION
+  --set controller.image.repository=ghcr.io/jkershawrh/fleet-llm-d/fleet-controller \
+  --set controller.image.tag=0.3.0 \
+  --set agent.image.repository=ghcr.io/jkershawrh/fleet-llm-d/fleet-agent \
+  --set agent.image.tag=0.3.0
 ```
 
 For Kustomize, replace the two image names in
@@ -42,8 +42,11 @@ the operator to create the password Secret instead of embedding credentials.
 ## Inference
 
 Configure each agent's `upstreamURL` to a local llm-d-compatible inference
-entry point. The included mock backend is for contract testing only. Praxis and
-llm-d Router adapters are optional; neither is embedded in the core images.
+entry point. The included mock backend is for contract testing only. Clients
+call the controller's `/v1/chat/completions` or `/v1/completions` endpoint; the
+controller performs admission and forwards the request to the configured
+Praxis endpoint. Praxis and llm-d Router adapters are optional; neither is
+embedded in the core images.
 
 Semantic classification is also optional. The release contains the classifier
 client contract but does not distribute classifier model weights or an

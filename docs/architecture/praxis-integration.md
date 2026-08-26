@@ -5,6 +5,13 @@
 **Audience:** Office of the Chief AI Architect, Red Hat  
 **Date:** July 2026
 
+> Current-state note (v0.3.0): this document contains the original phased
+> migration plan for historical context. Phase 1 is complete, the standalone
+> `fleet-gateway` crate has been removed, the Go controller hosts the supported
+> OpenAI-compatible ingress, and accepted requests are forwarded to external
+> Praxis. Any earlier fallback or A/B instructions involving `fleet-gateway`
+> are superseded by the August update near the end of this document.
+
 ---
 
 ## Executive Summary
@@ -12,11 +19,12 @@
 fleet-llm-d is Red Hat's fleet-level inference orchestration platform, providing
 multi-cluster placement, routing, autoscaling, tenant isolation, governed
 autonomy, and tamper-evident compliance for large-scale Model-as-a-Service
-(MaaS) deployments. Today it manages 10 CRDs, 7 gRPC services, and a
-purpose-built Rust data plane across heterogeneous infrastructure -- from Intel
-Xeon CPU clusters running OVMS and vLLM to GPU-equipped nodes. What it lacks is
-a programmable AI gateway layer capable of protocol translation, agentic
-routing, credential injection, and multi-site peer-to-peer mesh discovery.
+(MaaS) deployments. The current project ships 12 CRDs, a Go controller with an
+OpenAI-compatible admission and inference surface, Rust agent and KV-transfer
+components, and an external Praxis integration across heterogeneous
+infrastructure -- from Intel Xeon CPU clusters running OVMS to GPU-equipped
+nodes running vLLM. The sections below preserve the migration rationale that
+led to this architecture.
 
 Praxis fills that gap. Praxis AI is a composable, filter-pipeline Rust proxy
 purpose-built for AI workloads: it speaks OpenAI, Anthropic, and emerging
@@ -432,7 +440,8 @@ routing, proving compatibility with OVMS CPU backends. **Status: Complete.** fle
   regressions in latency p50/p99
 - Token accounting matches backend-reported usage within 2% tolerance
 - Credential injection works for 3+ tenant profiles
-- fleet-gateway remains available as fallback (canary deployment)
+- Historical success criterion: keep fleet-gateway as a canary fallback during
+  migration. This criterion is superseded; the crate has since been removed.
 
 ### Phase 2: Praxis Grid Multi-Site Mesh (Weeks 7-14)
 
@@ -659,8 +668,9 @@ Anyscale offers.
 If Praxis integration encounters blocking issues at any phase, the fallback
 path is clear:
 
-- **Phase 1 blocked:** Continue with fleet-gateway. Token accounting and
-  credential injection move to fleet-gateway as axum middleware.
+- **Phase 1 blocked (historical):** The original fallback was to continue with
+  fleet-gateway. This option is no longer available because Phase 1 completed
+  and the crate was removed.
 - **Phase 2 blocked:** Continue with control-plane-polled cluster discovery.
   SWIM mesh is an optimization, not a prerequisite.
 - **Phase 3 blocked:** Continue with in-process streaming transfer backend.

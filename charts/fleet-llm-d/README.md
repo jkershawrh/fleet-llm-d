@@ -1,7 +1,9 @@
 # fleet-llm-d Helm chart
 
-This chart can deploy the controller, gateway, and per-cluster agent as separate
-workloads. The default `standalone-dev` profile deploys all three. It does not
+This chart deploys the controller and per-cluster agent as separate workloads.
+The controller hosts the OpenAI-compatible ingress and forwards accepted
+requests to external Praxis. The default `standalone-dev` profile deploys both.
+It does not
 install PostgreSQL, Redis, Kafka, ARE, GCL, DeepField,
 ModelPlane, or Prometheus. Stateful and actuation integrations are disabled by
 default and must be enabled with explicit endpoints and operator-managed
@@ -31,10 +33,10 @@ The supported profiles are:
 
 | Values file | Workloads | Intended use |
 | --- | --- | --- |
-| `values-standalone-dev.yaml` | controller, gateway, agent | Local/development packaging; external governance and durable state are disabled |
-| `values-hub.yaml` | one controller, scalable gateway | Central control-plane packaging; production dependencies must be configured explicitly |
+| `values-standalone-dev.yaml` | controller, agent | Local/development packaging; external governance and durable state are disabled |
+| `values-hub.yaml` | one controller | Central control-plane packaging; production dependencies and Praxis must be configured explicitly |
 | `values-spoke.yaml` | agent only | Managed cluster connected to an external hub control plane |
-| `values-federated-hub.yaml` | one controller peer, scalable gateway | One peer per installation; federation does not imply controller HA |
+| `values-federated-hub.yaml` | one controller peer | One peer per installation; federation does not imply controller HA |
 
 The controller uses Kubernetes Lease election whenever `--kube-api` is set.
 Profiles remain conservative at one replica because HA also requires shared
@@ -62,20 +64,15 @@ forwarded request.
 | controller | 8080 | control-plane API and health probes |
 | controller | 9091 | Prometheus metrics |
 | controller | 9092 | optional JSON-RPC listener |
-| gateway | 8080 | inference routing proxy |
-| gateway | 8081 | liveness and fail-closed readiness probes |
-| gateway | 9090 | Prometheus metrics |
 | agent | 8090 | local proxy, liveness, and fail-closed readiness probes |
 
 The package exposes only listeners the current binaries bind. Agent ports 8080
 and 9090 remain reserved CLI contracts and are not rendered as Services. Agent
-readiness follows the configured upstream EPP; gateway readiness requires at
-least one successfully probed agent with a routable inference URL. This
-prevents scaffold processes from being counted as live provider evidence.
+readiness follows the configured upstream EPP.
 
-The default gateway Service is `ClusterIP`. Enable the OpenShift Route or set a
-deliberate ingress/load-balancer policy to expose inference traffic. Controller
-and agent Services remain internal.
+The default controller Service is `ClusterIP`. Add an OpenShift Route or a
+deliberate ingress/load-balancer policy to expose its inference endpoints.
+Agent Services remain internal, and Praxis is an external dependency.
 
 ## External dependencies
 

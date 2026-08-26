@@ -285,7 +285,7 @@ FleetInferencePool: granite-3-2-8b
 
 > **What to highlight:** The platform chose to spread replicas across two regions automatically using BestFit placement. It respected our constraints (A100 or H100, US regions only). The model is serving on both clusters within seconds. No one had to SSH into a node or write a HelmRelease per cluster.
 
-**Transition:** "The model is live. Let's send some inference requests and see the fleet gateway in action."
+**Transition:** "The model is live. Let's send some inference requests through the fleet inference path."
 
 ---
 

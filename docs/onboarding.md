@@ -513,9 +513,10 @@ echo "Exit code: $?"
 | `FLEET_AUTH_SECRET` | HMAC secret for JWT auth. When empty, auth is disabled. |
 | `FLEET_HMAC_SECRET` | Alias for `FLEET_AUTH_SECRET` (used in K8s secrets) |
 | `FLEET_ALLOW_OPERATOR_JSON_INTENTS` | Set to `true` to enable unsigned JSON intents via env instead of flag |
-| `GCL_DECISION_SIGNING_KEY` | Shared HMAC key for verifying GCL DecisionPackage CloudEvents. Prefix with `base64:` for base64-encoded keys. |
-| `GCL_DECISION_SIGNING_KEY_ID` | Key ID for the signing key (default: `gcl-decision-v1`) |
-| `GCL_DECISION_SIGNING_KEYS_JSON` | JSON map of `{key_id: key_material}` for multiple signing keys |
+| `GCL_DECISION_SIGNING_KEY` | Compatibility variable containing one Ed25519 public verification key. Prefix binary key material with `base64:`. Fleet must never receive the private key. |
+| `GCL_DECISION_SIGNING_KEY_ID` | Key ID associated with the single compatibility verification key (default: `gcl-decision-v1`) |
+| `GCL_DECISION_SIGNING_KEYS_JSON` | Preferred JSON map of `{key_id: public_key_material}` for Ed25519 key rotation. Production startup requires this keyring. |
+| `FLEET_ALLOW_HMAC_DECISION_PACKAGES` | Migration-only escape hatch. Set to `true` to accept legacy HMAC-SHA256 DecisionPackages; disabled by default because a shared secret cannot prove GCL authorship. |
 | `LEDGER_GATEWAY_API_TOKEN` | Bearer token for authenticating to the ARE ledger REST gateway |
 | `GCL_URL` | Override the GCL service URL for platform metrics (default: `http://gcl-app.governed-cognitive-loop.svc:8000`) |
 | `DEEPFIELD_URL` | Override the deepfield service URL for platform metrics (default: `http://deepfield-fleet.fleet-llm-d.svc:8000`) |

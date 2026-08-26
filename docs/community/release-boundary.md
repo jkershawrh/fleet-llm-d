@@ -6,7 +6,8 @@ The definitive include list is `release/oss-include.txt`.
 
 ## Included
 
-- Apache-2.0 controller, agent, gateway, CLI, API, and dashboard source.
+- Apache-2.0 controller (including OpenAI-compatible ingress), agent, CLI, API,
+  and dashboard source.
 - Generic Helm and Kustomize deployment resources.
 - Community PostgreSQL evaluation component.
 - Mock inference backend and portable automated tests.

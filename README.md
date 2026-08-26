@@ -11,14 +11,15 @@ fleet-llm-d is the operations control plane for enterprise AI inference fleets. 
 [![Tests](https://img.shields.io/badge/Tests-340%2B_passing-brightgreen.svg)](#testing)
 [![Architecture](https://img.shields.io/badge/Architecture-12_CRDs%2C_42_APIs-blue.svg)](#architecture)
 [![BDD](https://img.shields.io/badge/BDD-49_scenarios-blue.svg)](#testing)
-[![Rust](https://img.shields.io/badge/Rust_Tests-57_passing-blue.svg)](#testing)
+[![Rust](https://img.shields.io/badge/Rust_Tests-58_passing-blue.svg)](#testing)
 
 ---
 
 > **Maturity notice (August 2026):** Staging-promotable. 3-cluster fleet
 > operational: Oberon (hub), Arena (CPU), Brutus (GPU H100). Praxis AI
-> replaced fleet-gateway as inference routing layer. Cross-cluster routing
-> proven via NodePort bridges. Cascade soak: 9,778 ops, 0 errors, 9/9 SLO
+> replaced fleet-gateway as inference routing layer. The current deployment
+> uses TLS OpenShift Routes; the earlier cascade soak used NodePort bridges
+> and remains historical evidence. Cascade soak: 9,778 ops, 0 errors, 9/9 SLO
 > gates (smoke+short+pressure+stress). GCL signed CloudEvents end-to-end.
 > ARE ledger wired with 240+ hash-chained entries verified.
 > Test matrix: 50 green / 10 red (E2E remaining).
@@ -77,7 +78,8 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 
 ### Custom Resource Definitions
 
-fleet-llm-d defines ten CRDs that drive all fleet behavior declaratively:
+fleet-llm-d ships 12 CRDs. Ten are fleet-owned resources and two (`GridSite`
+and `InferenceProvider`) are the Praxis Grid integration contract:
 
 | CRD | Purpose |
 |-----|---------|
@@ -88,6 +90,11 @@ fleet-llm-d defines ten CRDs that drive all fleet behavior declaratively:
 | `FleetScalingPolicy` | Sets autoscaling targets, thresholds, and per-cluster bounds. |
 | `ModelLifecycle` | Specifies rollout strategy and production gate criteria. |
 | `KVCacheTransferPolicy` | Governs when and how KV cache state is migrated between clusters. |
+| `FleetCluster` | Records cluster identity, capacity, health, and lifecycle state. |
+| `FleetIntent` | Stores admitted desired changes submitted through the intent APIs. |
+| `FleetOperation` | Tracks authorization, actuation, observation, and terminal outcome. |
+| `GridSite` | Represents a Praxis Grid site generated from fleet cluster state. |
+| `InferenceProvider` | Represents a routable model provider generated for Praxis Grid. |
 
 ## Integrations
 
@@ -270,14 +277,14 @@ The fleet-llm-d dashboard is a Next.js (TypeScript) application providing fleet-
 
 ```bash
 make test              # Run all tests
-make test-unit         # Unit tests (22 Go packages + 5 Rust crates)
-make test-bdd          # BDD scenarios (63 passing, 8 suites)
+make test-unit         # Go and Rust unit tests
+make test-bdd          # 49 feature scenarios
 make test-contracts    # Contract tests (proto + OpenAPI validation)
 make test-e2e          # End-to-end tests (requires running infrastructure)
 ```
 
 ```bash
-# Architecture proof: 50 claims about how the system works
+# Architecture proofs about how the system works
 go test -tags=architecture ./test/architecture/...
 
 # Security tests: auth, rate limiting, webhook validation
@@ -292,7 +299,7 @@ go test -tags=compliance ./test/compliance/...
 
 ### Architectural Proof
 
-55 architectural assertions are exercised by tests in `test/architecture/`.
+Architectural assertions are exercised by tests in `test/architecture/`.
 These tests are design evidence; they do not by themselves prove assembled
 runtime behavior:
 
@@ -351,7 +358,13 @@ An 8-hour soak ran on-cluster on Oberon (pod-to-pod, production deepfield CloudE
 
 ### Cascade Soak (3-Cluster, August 2026)
 
-A cascade soak exercised the full 3-cluster fleet (Oberon hub, Arena CPU, Brutus GPU H100) with cross-cluster routing via NodePort bridges and Praxis AI. **9,778 ops, 0 errors, 9/9 SLO gates passed** (smoke+short+pressure+stress). GCL signed CloudEvents verified end-to-end. ARE ledger: 240+ hash-chained entries verified.
+A cascade soak exercised the full 3-cluster fleet (Oberon hub, Arena CPU,
+Brutus GPU H100) with cross-cluster routing through Praxis AI. That historical
+run used NodePort bridges; the current deployment uses TLS OpenShift Routes.
+**9,778 ops, 0 errors, 9/9 SLO gates passed**
+(smoke+short+pressure+stress). The run verified the then-current HMAC-signed GCL
+CloudEvents; production admission now requires Ed25519 by default. ARE ledger:
+240+ hash-chained entries verified.
 
 ### Resilience (On-Cluster)
 
@@ -388,7 +401,7 @@ See [`test/matrix/matrix.yaml`](test/matrix/matrix.yaml) and [`test/matrix/rubri
 ```
 fleet-llm-d/
 ├── api/
-│   └── crds/                    # 10 CRD definitions
+│   └── crds/                    # 12 CRD definitions
 ├── cmd/
 │   ├── fleet-controller/        # Go control plane binary
 │   ├── fleetctl/                # CLI tool
@@ -430,7 +443,7 @@ fleet-llm-d/
 │   ├── deploy-demo.sh           # One-click deployment script
 │   └── local-dev.sh             # Kind multi-cluster dev setup
 └── test/
-    ├── architecture/            # 50 architectural proof tests
+    ├── architecture/            # Architectural proof tests
     ├── bdd/                     # 49 BDD scenario tests
     ├── compliance/              # Audit trail completeness
     ├── contracts/               # Proto + OpenAPI validation
@@ -441,7 +454,10 @@ fleet-llm-d/
 
 ## REST API
 
-The fleet controller exposes 27 REST endpoints. See [`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete OpenAPI 3.1 specification.
+The fleet controller's OpenAPI contract currently defines 43 paths. See
+[`api/openapi/fleet-api.yaml`](api/openapi/fleet-api.yaml) for the complete
+OpenAPI 3.1 specification; generated counts should not be treated as a stable
+compatibility promise.
 
 ## Infrastructure
 
@@ -454,7 +470,8 @@ The fleet controller exposes 27 REST endpoints. See [`api/openapi/fleet-api.yaml
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and contribution guidelines.
+Use the build and test commands above and open an issue or pull request in the
+project repository. A dedicated contributor guide has not yet been added.
 
 
 ## License

@@ -1,5 +1,11 @@
 # Fleet-Level Inference Orchestration for llm-d
 
+> Historical proposal: this document preserves the original design that used a
+> standalone Rust `fleet-gateway`. The crate has been removed. In v0.3.0 the Go
+> controller hosts the supported OpenAI-compatible ingress, performs admission
+> and placement, and forwards accepted requests to external Praxis. Treat the
+> gateway sections below as design history, not current installation guidance.
+
 | Field | Value |
 |---|---|
 | **Title** | Fleet-Level Inference Orchestration for llm-d |

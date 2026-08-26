@@ -70,7 +70,7 @@
 | No formal data retention/disposal policy | C1.2 | High | Define retention periods per data type; implement automated purge |
 | Cluster registration/deregistration not in audit trail | CC8.1, PI1.3 | Medium | Add events to FleetRecorder |
 | No centralized evidence repository | All | Medium | Stand up evidence collection system (e.g., Vanta, Drata, or internal) |
-| PostgreSQL sslmode=disable | CC6.6, C1.3 | High | Enable TLS for PostgreSQL connections in `pkg/store/postgres/` |
+| TLS and workload identity are operator-provisioned rather than automatic | CC6.6, C1.3 | High | Use production mode, PostgreSQL `sslmode=verify-full`, HTTPS Praxis/ledger endpoints, pinned agent CA bundles, and document certificate rotation; add mutual workload identity. |
 
 ## References
 

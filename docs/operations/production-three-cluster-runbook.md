@@ -1,13 +1,20 @@
 # Three-cluster production runbook
 
-The supported inference entry point is the `fleet-inference-gateway` Route on Oberon. Clients must not call Praxis or the spoke inference Routes directly.
+The supported inference entry point is the Route exposing the controller's
+OpenAI-compatible inference endpoints on Oberon. The current physical-fleet
+manifest names it `fleet-inference-gateway` for compatibility, but it selects
+the inference-mode controller deployment; there is no separate gateway binary.
+Clients must not call Praxis or the spoke inference Routes directly.
 
 ## Release gates
 
 - Images are referenced by immutable digest and the previous digests are recorded.
 - `PG_URL` resolves to an external HA PostgreSQL service with certificate verification and tested point-in-time recovery.
 - The immutable ledger uses authenticated HTTPS; memory and disabled modes are forbidden.
-- Oberon has three control-plane replicas, two ready gateway replicas, and two ready Praxis replicas.
+- Oberon has at least three leader-elected control-plane replicas serving the
+  inference ingress and at least two ready Praxis replicas. This is the target
+  production topology, not the default replica count installed by the generic
+  v0.3.0 chart or Kustomize overlays.
 - Oberon and Arena are both healthy for the CPU model. The Brutus-only GPU model is reported as degraded/non-HA until a second GPU provider exists.
 - TLS Route probes succeed from the Praxis pod and no NodePort or manually maintained EndpointSlice is in the active data path.
 
@@ -31,6 +38,7 @@ Apply the previous versioned manifests and image digests. Keep the Route-based s
 
 1. Run the bounded saturation probe independently for CPU and GPU and record the maximum clean rate.
 2. Select 50% of the lower applicable clean rate.
-3. Run a 60-minute mixed chat/completions workload through the fleet gateway.
+3. Run a 60-minute mixed chat/completions workload through the fleet inference
+   Route backed by the controller.
 4. During the run, remove and restore Oberon CPU, Arena CPU, and Brutus GPU in sequence.
 5. Accept only with at least 99.9% success where compatible capacity remains, failover under 30 seconds, no cross-tenant or malformed responses, no pod restarts, and no sustained memory, queue, or connection growth.
