@@ -48,6 +48,12 @@ controller performs admission and forwards the request to the configured
 Praxis endpoint. Praxis and llm-d Router adapters are optional; neither is
 embedded in the core images.
 
+Praxis is the default and currently validated adapter. Select the upstream-
+native beta with `--set controller.routingProvider=llm-d-router`; mount the
+generated endpoint directory into one model-specific hub EPP and configure its
+`multicluster-file-discovery` plugin with `watchFile: true`. Use one hub EPP per
+exact model until upstream defines a multi-model discovery/filter contract.
+
 Semantic classification is also optional. The release contains the classifier
 client contract but does not distribute classifier model weights or an
 unpublished classifier server.
@@ -55,6 +61,9 @@ unpublished classifier server.
 ## Production boundary
 
 Production deployments require operator-managed authentication, TLS, durable
-state, external evidence infrastructure when policy requires it, topology
+state, topology
 spread, disruption budgets, capacity testing, and failure certification. The
 community profile is not a claim that those dependencies have been supplied.
+The binary's existing `--production` switch is specifically the governed-
+evidence production contract and additionally requires verified GCL
+DecisionPackages and an authenticated external immutable ledger.

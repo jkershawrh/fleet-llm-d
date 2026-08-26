@@ -93,6 +93,24 @@ conformance tests for capability discovery, exact-model selection, failure
 convergence, streaming behavior, cancellation, and internal-routing-header
 isolation while composing with an unmodified cluster-local llm-d deployment.
 
+### Adapter and serving model
+
+The reference implementation exposes a single routing-provider interface.
+Praxis remains its validated adapter and llm-d Router is the upstream-native
+adapter; exactly one is authoritative in a deployment. This keeps fleet policy
+independent of a particular data plane without asking llm-d to productize
+Praxis. Cluster-local placement may target the existing `InferencePool` path or
+KServe `LLMInferenceService`; KServe owns workload and Router lifecycle when
+selected.
+
+KEDA over EPP metrics is the default local scaling primitive. WVA is optional
+for heterogeneous variants and feeds desired replicas to KEDA/HPA. Fleet policy
+sets cross-cluster budgets and placement bounds rather than replacing either.
+
+The optional signal plane uses SWIM for membership and capability announcements
+and mTLS HTTPS polling for allowlisted pool-level Prometheus gauges. A central
+management hub is not required in the inference request path.
+
 ### User Stories
 
 #### Multi-region CPU availability

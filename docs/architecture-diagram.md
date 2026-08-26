@@ -2,6 +2,12 @@
 
 ## Three-Layer Stack
 
+The diagram below shows the measured Praxis deployment. Praxis is one routing
+adapter, not part of the fleet core. The upstream-native alternative is a
+cluster-scoped llm-d Router/EPP consuming the same fleet-qualified provider
+set. KServe may own cluster-local `LLMInferenceService` lifecycle, and KEDA
+remains the default local scaling primitive.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        Client Request                                   │
@@ -79,7 +85,10 @@
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Ecosystem Event Flow
+## Optional Governed-Observability Event Flow
+
+This flow is an optional deployment profile. DeepField, GCL, and the immutable
+ledger are not dependencies of core fleet eligibility or routing.
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐

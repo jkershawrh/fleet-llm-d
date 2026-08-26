@@ -50,6 +50,15 @@ endpoint. The initial integration can use the plugin's watched endpoint file,
 while a future API may replace that adapter if SIG Router prefers a native
 discovery contract.
 
+The reference implementation now expresses this as a routing-provider adapter:
+Praxis is the validated default and llm-d Router is the upstream-native beta.
+The Router adapter publishes one atomic candidate file per exact model to
+preserve the current homogeneous hub-EPP assumption. KServe
+`LLMInferenceService` is an additive cluster-local serving target. KEDA remains
+the default local scaling primitive, while WVA is optional for heterogeneous
+variants. A decentralized mTLS polling contract can carry allowlisted pool
+signals without putting the management hub in the request path.
+
 ## Experience report
 
 We implemented this boundary in the Apache-2.0

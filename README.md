@@ -1,9 +1,9 @@
 # fleet-llm-d
 
 
-**Fleet-level inference orchestration for [llm-d](https://github.com/llm-d) — coordinating model placement, routing, autoscaling, tenant governance, and compliance across multi-cluster GPU infrastructure.**
+**Fleet-level inference orchestration for [llm-d](https://github.com/llm-d) — qualifying exact-model capacity across clusters and handing the eligible provider set to a supported routing data plane.**
 
-fleet-llm-d is the operations control plane for enterprise AI inference fleets. It extends llm-d from single-cluster inference to multi-cluster fleet operations with seven composable capabilities: placement (constraint solver + GPU-aware scoring), cross-cluster routing (via Praxis AI gateway), fleet autoscaling (GPU/CPU-aware optimizer), tenant governance (quotas, metering, chargeback), model lifecycle (canary/blue-green rollouts), observability federation, and KV cache state transfer. The platform integrates with the governed cognitive loop (GCL) for signed decision governance and the ARE Immutable Ledger for tamper-evident compliance records. Twelve Kubernetes CRDs define the complete fleet state declaratively.
+fleet-llm-d is a data-plane-neutral operations control plane for enterprise AI inference fleets. It owns cluster registration, capability inventory, exact-model resolution, tenant admission, placement constraints, provider health, draining, failure-domain status, and eligible-provider reconciliation. Praxis is the validated routing adapter for the current release; the llm-d Router adapter is the upstream-native beta. KServe, llm-d Router/EPP, KEDA, and optionally WVA retain cluster-local serving, endpoint selection, and pod-scaling ownership. DeepField, GCL, the immutable ledger, llm-d-sc, ModelPack, and ModelPlane are optional integrations rather than OSS-core prerequisites.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
@@ -16,8 +16,8 @@ fleet-llm-d is the operations control plane for enterprise AI inference fleets. 
 ---
 
 > **Maturity notice (August 2026):** Staging-promotable. 3-cluster fleet
-> operational: Oberon (hub), Arena (CPU), Brutus (GPU H100). Praxis AI
-> replaced fleet-gateway as inference routing layer. The current deployment
+> operational: Oberon (hub), Arena (CPU), Brutus (GPU H100). Praxis is the
+> validated routing adapter for that deployment; llm-d Router integration is beta. The current deployment
 > uses TLS OpenShift Routes; the earlier cascade soak used NodePort bridges
 > and remains historical evidence. Cascade soak: 9,778 ops, 0 errors, 9/9 SLO
 > gates (smoke+short+pressure+stress). GCL signed CloudEvents end-to-end.
@@ -29,7 +29,7 @@ fleet-llm-d is the operations control plane for enterprise AI inference fleets. 
 
 ## Why fleet-llm-d
 
-llm-d solves single-cluster inference scheduling, but enterprises operating across dozens of clusters -- edge sites, regulated regions, air-gapped sovereign zones -- hit a coordination gap that no upstream project addresses. Customers in telco, financial services, and sovereign cloud have asked for fleet-wide placement, routing, and compliance controls that respect data residency and hardware topology. fleet-llm-d delivers those capabilities through a declarative CRD-driven control plane, Praxis AI as the inference data plane, and integrations with the broader ecosystem including ModelPack and the ARE Immutable Ledger.
+llm-d and KServe own cluster-local serving and scheduling. Enterprises operating across independent failure domains still need authenticated capability discovery, exact-model eligibility, fleet policy, and failure-domain health before the Router scores a destination. fleet-llm-d fills that coordination boundary without replacing KServe, EPP, KEDA, WVA, or the selected cross-cluster data plane.
 
 ## Architecture
 
@@ -43,11 +43,10 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
                          │  PostgreSQL persistence         │
                          └──────────┬──────────┬───────────┘
                                     │          │
-  Layer 2: Praxis AI (Data Plane)   │          │
+  Layer 2: Routing adapter          │          │
                          ┌──────────▼──────────▼───────────┐
-                         │     Praxis AI Gateway           │
-                         │  model routing | token counting │
-                         │  access logging | protocol xlat │
+                         │ Praxis Grid or llm-d Router     │
+                         │ qualified clusters -> EPP score │
                          └──┬──────────┬──────────┬────────┘
                             │          │          │
   Layer 1: Inference        │          │          │
@@ -60,7 +59,7 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 
   Binaries:  fleet-controller, fleetctl (Go)
              fleet-agent, kv-transfer (Rust)
-  Data Plane: Praxis AI (programmable inference routing)
+  Data Plane: Praxis (validated) or llm-d Router (upstream-native beta)
   Dashboard: Next.js (TypeScript)
 ```
 
@@ -69,8 +68,8 @@ llm-d solves single-cluster inference scheduling, but enterprises operating acro
 | # | Capability | Description | Status |
 |---|-----------|-------------|--------|
 | 1 | **Model Placement** | Solver and scorer assign models to clusters based on GPU topology, locality, and policy constraints. | Soak-proven |
-| 2 | **Cross-Cluster Routing** | Praxis AI gateway routes inference requests across clusters with model-based dispatch and token counting. | Soak-proven |
-| 3 | **Fleet Autoscaling** | Collector and optimizer scale model replicas across the fleet using aggregated metrics from all clusters. | Soak-proven |
+| 2 | **Cross-Cluster Eligibility** | Produces an exact-model, policy-qualified provider set for the selected routing adapter. | Praxis soak-proven; Router beta |
+| 3 | **Fleet Capacity Policy** | Sets fleet budgets, placement bounds, and migration policy while KEDA/HPA performs local scaling; WVA is optional for heterogeneous variants. | Soak-proven |
 | 4 | **Multi-Cluster Observability** | Unified metrics pipeline aggregates per-cluster Prometheus data into fleet-wide Grafana dashboards. | Soak-proven |
 | 5 | **Tenant Governance** | Metering and quota enforcement give platform teams per-tenant controls over GPU-hours and throughput. | Soak-proven |
 | 6 | **Lifecycle Management** | Rollout controller orchestrates canary/blue-green model version upgrades with SLO gates. | Soak-proven |
@@ -98,9 +97,17 @@ and `InferenceProvider`) are the Praxis Grid integration contract:
 
 ## Integrations
 
+### Routing providers
+
+Exactly one routing adapter is authoritative per deployment. Select it with
+`--routing-provider`, `FLEET_ROUTING_PROVIDER`, or Helm
+`controller.routingProvider`: `praxis` (default), `llm-d-router`, or
+`disabled`. Adapters receive the same fleet-qualified provider set and cannot
+add an incompatible cluster or rewrite the exact physical model.
+
 ### Praxis AI Gateway
 
-[Praxis AI](https://github.com/praxis-proxy/ai) is the programmable inference data plane for fleet-llm-d. It provides:
+[Praxis AI](https://github.com/praxis-proxy/ai) is the validated reference data plane for the current physical deployment. Its `GridSite` and `InferenceProvider` resources are emitted by the Praxis adapter without changing their existing contract. It provides:
 
 - **Model-based routing**: Routes requests to the correct backend based on the model name in the request
 - **Token counting**: Tracks prompt and completion tokens per request for metering
@@ -110,6 +117,17 @@ and `InferenceProvider`) are the Praxis Grid integration contract:
 Praxis Grid extends this to multi-site with SWIM membership discovery, CRDT state propagation, and mTLS between sites. ConnectLink + NIXL provides GPU-to-GPU KV cache transfer (RDMA/RoCE for GPU, TCP for CPU, OFI for Gaudi3).
 
 See [`docs/architecture/praxis-integration.md`](docs/architecture/praxis-integration.md) for the full integration architecture.
+
+### llm-d Router and KServe
+
+The upstream-native adapter writes one deterministic watched endpoint file per
+exact physical model for llm-d Router's `multicluster-file-discovery` plugin.
+It removes stale, draining, unavailable, unauthorized, and incompatible
+providers before EPP scoring. Queue, KV, prefix, session, and final endpoint
+selection remain Router/EPP responsibilities. `FleetInferencePool` also
+supports the additive `kserveLLMInferenceService` serving target; KServe then
+owns model workload, revision, readiness, draining, Gateway, and local Router
+lifecycle. The existing `inferencePool` target remains the default.
 
 ### ModelPack (CNCF model-spec)
 
@@ -155,11 +173,14 @@ exercise the watcher and cost paths with CRD-shaped fixtures. That proves the
 mock contract path only. It is not evidence of the pinned, official ModelPlane
 provider, Gateway API ownership, or observed multi-cluster actuation.
 
-The core ecosystem spine is `deepfield-fleet -> governed-cognitive-loop ->
+An optional governed-observability ecosystem is `deepfield-fleet -> governed-cognitive-loop ->
 fleet-llm-d -> are-immutable-ledger`: DeepField owns observations and
 forecasts, GCL owns signed and falsified proposals, fleet owns admission,
 authorization, desired/observed state, and actuation, and the ledger owns
-tamper-evident evidence. ModelPlane and llm-d remain infrastructure and
+tamper-evident evidence. None of DeepField, GCL, or the ledger is required by
+the default community installation. The existing `--production` switch names
+the governed-evidence production contract and therefore still requires signed
+GCL admission and an authenticated external ledger. ModelPlane and llm-d remain infrastructure and
 within-cluster inference providers below the fleet boundary.
 
 ### Governed Cognitive Loop

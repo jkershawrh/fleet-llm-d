@@ -50,6 +50,7 @@ spec:
             - --port=8080
             - --metrics-port=9091
             - --mode=control
+            - --routing-provider=praxis
             - --ledger-mode=disabled
             - --kube-api=https://kubernetes.default.svc
             - --namespace=fleet-llm-d

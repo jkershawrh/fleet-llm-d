@@ -387,13 +387,15 @@ cross-cluster requests.
 
 ### 3. WVA Metrics for Fleet-Level Autoscaling
 
-**Current state:** WVA (Weighted Virtual Accelerator) exposes per-pod
-GPU metrics including utilization, memory usage, and inference throughput.
+**Current state:** The Workload Variant Autoscaler (WVA) computes desired
+replicas for heterogeneous variants from queue, KV-cache, capacity, cost, and
+performance signals. KEDA or HPA consumes that desired-replica signal. For
+ordinary homogeneous pools, llm-d recommends KEDA directly over EPP metrics.
 
-**Proposed consumption:** The fleet-agent scrapes WVA metrics from each
-cluster and reports aggregated values to the fleet-controller. The
-FleetScalingPolicy reconciler uses these metrics for fleet-wide scaling
-decisions:
+**Proposed consumption:** The fleet layer sets budgets, placement bounds, and
+migration constraints. KEDA remains the local scaling primitive. Where WVA is
+installed for heterogeneous variants, the fleet-agent may report its aggregate
+decision and health metrics without attempting to replace WVA's optimizer.
 
 ```
 Per-cluster WVA metrics (scraped by fleet-agent):
@@ -408,8 +410,8 @@ Fleet-controller aggregates across clusters:
   avg_kv_cache_util: 60%     -> compare to FleetScalingPolicy target "70%"
 ```
 
-**Impact on llm-d:** Zero code changes. WVA already exposes Prometheus
-metrics. The fleet-agent is a standard Prometheus scraper.
+**Impact on llm-d:** Zero code changes. The fleet layer consumes standard
+Prometheus output and does not write the local HPA/KEDA replica decision.
 
 ### 4. InferenceModelRewrite for Fleet-Level Canary Deployments
 

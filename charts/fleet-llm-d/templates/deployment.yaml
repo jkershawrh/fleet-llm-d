@@ -46,6 +46,7 @@ spec:
             - --port={{ .Values.controller.ports.api }}
             - --metrics-port={{ .Values.controller.ports.metrics }}
             - --mode={{ .Values.controller.mode }}
+            - --routing-provider={{ .Values.controller.routingProvider }}
             - --allow-operator-json-intents={{ .Values.controller.allowOperatorJSONIntents }}
             - --ledger-mode={{ .Values.externalDependencies.ledger.mode }}
             - --kube-api=https://kubernetes.default.svc
@@ -137,6 +138,12 @@ spec:
             {{- with .Values.controller.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- if eq .Values.controller.routingProvider "llm-d-router" }}
+            - name: LLMD_ROUTER_ENDPOINTS_DIR
+              value: {{ .Values.controller.llmdRouter.endpointsDirectory | quote }}
+            - name: LLMD_ROUTER_ALLOW_INSECURE
+              value: {{ .Values.controller.llmdRouter.allowInsecure | quote }}
+            {{- end }}
           ports:
             - name: api
               containerPort: {{ .Values.controller.ports.api }}
@@ -180,14 +187,21 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
-          {{- if .Values.tls.enabled }}
+          {{- if or .Values.tls.enabled (eq .Values.controller.routingProvider "llm-d-router") }}
           volumeMounts:
+            {{- if .Values.tls.enabled }}
             - name: fleet-tls
               mountPath: /etc/fleet-tls
               readOnly: true
+            {{- end }}
+            {{- if eq .Values.controller.routingProvider "llm-d-router" }}
+            - name: llmd-router-endpoints
+              mountPath: {{ .Values.controller.llmdRouter.endpointsDirectory }}
+            {{- end }}
           {{- end }}
-      {{- if .Values.tls.enabled }}
+      {{- if or .Values.tls.enabled (eq .Values.controller.routingProvider "llm-d-router") }}
       volumes:
+        {{- if .Values.tls.enabled }}
         - name: fleet-tls
           secret:
             secretName: {{ required "tls.existingSecret is required when TLS is enabled" .Values.tls.existingSecret }}
@@ -196,6 +210,11 @@ spec:
                 path: {{ .Values.tls.certKey }}
               - key: {{ .Values.tls.keyKey }}
                 path: {{ .Values.tls.keyKey }}
+        {{- end }}
+        {{- if eq .Values.controller.routingProvider "llm-d-router" }}
+        - name: llmd-router-endpoints
+          emptyDir: {}
+        {{- end }}
       {{- end }}
       {{- with .Values.controller.nodeSelector }}
       nodeSelector:

@@ -54,6 +54,12 @@ tls:
 controller:
   enabled: true
   replicaCount: 1
+  # Exactly one adapter receives the fleet-qualified provider set.
+  # Praxis is the validated default; llm-d-router is the upstream-native beta.
+  routingProvider: praxis
+  llmdRouter:
+    endpointsDirectory: /var/lib/fleet-llm-d/router-endpoints
+    allowInsecure: false
   image:
     repository: ghcr.io/llm-d/fleet-controller
     tag: ""

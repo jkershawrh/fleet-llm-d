@@ -1153,6 +1153,10 @@ paths:
       responses:
         "200":
           description: Capability status with healthy providers and required HA count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityResponse"
 
 components:
   # ---------- security schemes ----------
@@ -1288,6 +1292,47 @@ components:
 
   # ---------- schemas ----------
   schemas:
+    CapabilityResponse:
+      type: object
+      required: [capabilities]
+      properties:
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityStatus"
+    CapabilityStatus:
+      type: object
+      required: [model, status, healthy_providers, required_for_ha]
+      properties:
+        model: {type: string}
+        status:
+          type: string
+          enum: [healthy, degraded/non-HA, draining, unavailable]
+        healthy_providers:
+          type: array
+          items: {type: string}
+        required_for_ha: {type: integer, minimum: 1}
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderCapabilityStatus"
+    ProviderCapabilityStatus:
+      type: object
+      required: [cluster_id, status, physical_model]
+      properties:
+        cluster_id: {type: string}
+        status:
+          type: string
+          enum: [healthy, degraded/non-HA, draining, unavailable]
+        routing_endpoint: {type: string, format: uri}
+        metrics_endpoint: {type: string, format: uri}
+        freshness: {type: string, format: date-time}
+        physical_model: {type: string}
+        failure_domain: {type: string}
+    ServingTarget:
+      type: string
+      enum: [inferencePool, kserveLLMInferenceService]
+      default: inferencePool
     RouteRequest:
       type: object
       required: [text]
@@ -2044,7 +2089,7 @@ components:
         datacontenttype: {type: string, enum: [application/json]}
         dataschema:
           type: string
-          enum: [https://schemas.llm-d.ai/gcl/decision-package/v1/schema.json]
+          enum: ["https://schemas.llm-d.ai/gcl/decision-package/v1/schema.json"]
         correlationid: {type: string, minLength: 1}
         causationid: {type: string, minLength: 1}
         idempotencyid: {type: string, minLength: 1}

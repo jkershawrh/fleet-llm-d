@@ -1,9 +1,9 @@
 # fleet-llm-d Onboarding Guide
 
-Fleet-level inference orchestration platform built on llm-d. This guide takes you
-from a fresh clone to a fully running ecosystem on OpenShift, with all four systems
-wired together: deepfield-fleet, governed-cognitive-loop (GCL), fleet-llm-d, and
-the ARE immutable ledger.
+Fleet-level inference orchestration platform built on llm-d. The core quick
+start requires none of DeepField, governed-cognitive-loop (GCL), or the ARE
+immutable ledger. Later sections describe that optional governed-observability
+profile for operators who need it.
 
 Audience: Red Hat internal engineers working on AI inference PoCs.
 
@@ -554,7 +554,7 @@ Intent pipeline (v2):
 - `POST /api/v2/operations/{id}/approve` - approve an operation
 - `POST /api/v2/operations/{id}/cancel` - cancel an operation
 
-Inference routing (via Praxis AI gateway in production):
+Inference routing (via the selected Praxis or llm-d Router adapter):
 - `POST /v1/chat/completions` - OpenAI-compatible chat completions (development proxy)
 - `POST /v1/completions` - OpenAI-compatible completions (development proxy)
 
