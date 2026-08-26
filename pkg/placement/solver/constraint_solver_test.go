@@ -534,3 +534,21 @@ func TestSolve_UnknownHardwareConstraintFailsClosed(t *testing.T) {
 		t.Fatalf("expected infeasible placement, got decisions=%#v err=%v", decisions, err)
 	}
 }
+
+func TestSolve_CPUFeatureConstraint(t *testing.T) {
+	s := NewConstraintSolver()
+	policy := v1alpha1.PlacementPolicySpec{Constraints: []v1alpha1.PlacementConstraint{
+		{Type: "hardware", Rule: "cpu in ['intel-amx']"},
+	}}
+	clusters := []ClusterInfo{
+		{ID: "amx", Labels: map[string]string{"fleet.llm-d.ai/cpu-features": "avx512,intel-amx"}},
+		{ID: "gpu", Labels: map[string]string{"fleet.llm-d.ai/cpu-features": "avx512"}},
+	}
+	decisions, err := s.Solve(context.Background(), poolSpec("model", "source"), clusters, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 1 || decisions[0].ClusterID != "amx" {
+		t.Fatalf("decisions = %#v", decisions)
+	}
+}

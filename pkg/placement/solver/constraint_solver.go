@@ -181,6 +181,22 @@ func filterRegulatory(clusters []ClusterInfo, rule string) []ClusterInfo {
 // filterHardware keeps clusters that have the requested GPU type available
 // (format: "gpu-type=TYPE").
 func filterHardware(clusters []ClusterInfo, rule string) []ClusterInfo {
+	if feature, ok := parseCPUFeatureConstraint(rule); ok {
+		var result []ClusterInfo
+		for _, c := range clusters {
+			configured := c.Labels["fleet.llm-d.ai/cpu-features"]
+			if configured == "" {
+				configured = c.Labels["cpu-features"]
+			}
+			for _, candidate := range strings.Split(configured, ",") {
+				if strings.TrimSpace(candidate) == feature {
+					result = append(result, c)
+					break
+				}
+			}
+		}
+		return result
+	}
 	fields := strings.Fields(rule)
 	if len(fields) == 3 && fields[0] == "nvidia.com/gpu" && fields[1] == ">=" {
 		minimum, err := strconv.Atoi(fields[2])
@@ -213,6 +229,20 @@ func filterHardware(clusters []ClusterInfo, rule string) []ClusterInfo {
 		}
 	}
 	return result
+}
+
+func parseCPUFeatureConstraint(rule string) (string, bool) {
+	const prefix = "cpu in ["
+	rule = strings.TrimSpace(rule)
+	if !strings.HasPrefix(rule, prefix) || !strings.HasSuffix(rule, "]") {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(rule, prefix), "]"))
+	value = strings.Trim(value, "'\"")
+	if value == "" || strings.Contains(value, ",") {
+		return "", false
+	}
+	return value, true
 }
 
 // scoreCluster computes a placement score for the cluster based on the
