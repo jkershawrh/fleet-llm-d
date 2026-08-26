@@ -46,8 +46,30 @@ type ScalingRef struct {
 	PolicyRef PolicyReference `json:"policyRef,omitempty"`
 }
 type ServingSpec struct {
+	Target                ServingTarget         `json:"target,omitempty"`
 	InferencePoolTemplate InferencePoolTemplate `json:"inferencePoolTemplate"`
+	KServe                *KServeServingSpec    `json:"kserve,omitempty"`
 }
+type ServingTarget string
+
+const (
+	ServingTargetInferencePool             ServingTarget = "inferencePool"
+	ServingTargetKServeLLMInferenceService ServingTarget = "kserveLLMInferenceService"
+)
+
+type KServeServingSpec struct {
+	ModelURI    string `json:"modelURI,omitempty"`
+	Replicas    int    `json:"replicas,omitempty"`
+	Criticality string `json:"criticality,omitempty"`
+}
+
+func (s ServingSpec) EffectiveTarget() ServingTarget {
+	if s.Target == "" {
+		return ServingTargetInferencePool
+	}
+	return s.Target
+}
+
 type InferencePoolTemplate struct {
 	Spec InferencePoolTemplateSpec `json:"spec"`
 }

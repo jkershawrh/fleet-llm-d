@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
 	"github.com/llm-d/fleet-llm-d/pkg/classifier"
 
 	"github.com/llm-d/fleet-llm-d/pkg/autoscaling/actuator"
@@ -29,6 +30,7 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/balancer"
 	"github.com/llm-d/fleet-llm-d/pkg/routing/policy"
+	"github.com/llm-d/fleet-llm-d/pkg/serving"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
 	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 	"github.com/llm-d/fleet-llm-d/pkg/tenant/metering"
@@ -311,7 +313,31 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 	// The callback deliberately dereferences repositories through fc. This is
 	// important because production persistence is wired after construction.
 	fc.configureReconcilerOnChange(kubeAPI, namespace)
+	fc.configureServingActuator(namespace)
 	return fc, nil
+}
+
+func (fc *FleetController) configureServingActuator(namespace string) {
+	renderer := serving.KServeRenderer{Namespace: namespace}
+	fc.Reconciler.SetServingActuator(func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) error {
+		if pool.Serving.EffectiveTarget() != v1alpha1.ServingTargetKServeLLMInferenceService {
+			return nil
+		}
+		applier, ok := fc.ClusterClient.(client.ResourceApplier)
+		if !ok {
+			return fmt.Errorf("KServe serving target requires a cluster client with resource apply capability")
+		}
+		resource, err := renderer.Render(pool.Model.Name, pool)
+		if err != nil {
+			return err
+		}
+		for _, clusterID := range desired {
+			if err := applier.ApplyResource(ctx, clusterID, resource); err != nil {
+				return fmt.Errorf("apply KServe LLMInferenceService to %s: %w", clusterID, err)
+			}
+		}
+		return nil
+	})
 }
 
 // configureReconcilerOnChange wires placement side effects through the

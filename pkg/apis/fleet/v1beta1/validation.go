@@ -25,6 +25,9 @@ func DefaultFleetInferencePool(spec *FleetInferencePoolSpec) {
 	if spec.InfrastructureProvider == "" {
 		spec.InfrastructureProvider = InfrastructureProviderModelPlane
 	}
+	if spec.Serving.Target == "" {
+		spec.Serving.Target = ServingTargetInferencePool
+	}
 }
 func DefaultFleetRoutingPolicy(spec *FleetRoutingPolicySpec) {
 	if spec.Provider == "" {
@@ -63,6 +66,12 @@ func ValidateFleetInferencePool(spec FleetInferencePoolSpec) []error {
 	}
 	if !validInfrastructureProvider(spec.InfrastructureProvider) {
 		errs = append(errs, ValidationError{"spec.infrastructureProvider", "must be ModelPlane or DirectAgent"})
+	}
+	if target := spec.Serving.EffectiveTarget(); target != ServingTargetInferencePool && target != ServingTargetKServeLLMInferenceService {
+		errs = append(errs, ValidationError{"spec.serving.target", "must be inferencePool or kserveLLMInferenceService"})
+	}
+	if spec.Serving.EffectiveTarget() == ServingTargetKServeLLMInferenceService && spec.Serving.KServe != nil && spec.Serving.KServe.Replicas < 0 {
+		errs = append(errs, ValidationError{"spec.serving.kserve.replicas", "must be non-negative"})
 	}
 	errs = append(errs, ValidateAuthorizationReference(spec.AuthorizationRef)...)
 	return errs

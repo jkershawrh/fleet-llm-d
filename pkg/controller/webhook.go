@@ -35,12 +35,16 @@ var validRolloutStrategies = map[string]bool{
 //   - rolloutStrategy is a valid enum value
 func ValidateFleetInferencePool(spec v1alpha1.FleetInferencePoolSpec) ValidationResult {
 	var details []string
+	target := spec.Serving.EffectiveTarget()
+	if target != v1alpha1.ServingTargetInferencePool && target != v1alpha1.ServingTargetKServeLLMInferenceService {
+		details = append(details, "serving.target must be inferencePool or kserveLLMInferenceService")
+	}
 
 	if spec.Model.Name == "" {
 		details = append(details, "model name must not be empty")
 	}
 
-	if len(spec.Serving.InferencePoolTemplate.Spec.TargetPorts) == 0 {
+	if target == v1alpha1.ServingTargetInferencePool && len(spec.Serving.InferencePoolTemplate.Spec.TargetPorts) == 0 {
 		details = append(details, "at least one target port is required")
 	} else {
 		for i, port := range spec.Serving.InferencePoolTemplate.Spec.TargetPorts {

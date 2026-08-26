@@ -35,6 +35,7 @@ type Reconciler struct {
 	clusters  func(ctx context.Context) ([]solver.ClusterInfo, error) // function to list available clusters
 	policies  func(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error)
 	observe   func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error)
+	actuate   func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) error
 	onChange  func(pool *FleetPoolState) // callback when state changes
 }
 
@@ -51,7 +52,16 @@ func NewReconciler(s solver.ConstraintSolver, clusterLister func(ctx context.Con
 		observe: func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) ([]string, error) {
 			return nil, nil
 		},
+		actuate: func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) error { return nil },
 	}
+}
+
+// SetServingActuator configures the product-specific serving-resource writer.
+// The placement solver remains authoritative for the target cluster set.
+func (r *Reconciler) SetServingActuator(fn func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.actuate = fn
 }
 
 // SetClusterLister replaces the cluster observation source. It is used when
@@ -118,6 +128,7 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	clusterLister := r.clusters
 	policyResolver := r.policies
 	actualObserver := r.observe
+	servingActuator := r.actuate
 	r.mu.RUnlock()
 
 	clusters, err := clusterLister(ctx)
@@ -149,7 +160,11 @@ func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInfer
 	for _, d := range decisions {
 		desired = append(desired, d.ClusterID)
 	}
+	actuateErr := servingActuator(ctx, pool, desired)
 	actual, observeErr := actualObserver(ctx, pool, desired)
+	if actuateErr != nil {
+		observeErr = actuateErr
+	}
 
 	// 3. Acquire lock for state mutation only.
 	r.mu.Lock()

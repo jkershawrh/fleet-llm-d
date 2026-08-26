@@ -162,9 +162,30 @@ spec:
                   description: >-
                     Serving configuration defining how the model is exposed
                     within each cluster.
-                  required:
-                    - inferencePoolTemplate
+                  x-kubernetes-validations:
+                    - rule: "has(self.target) && self.target == 'kserveLLMInferenceService' || has(self.inferencePoolTemplate)"
+                      message: inferencePoolTemplate is required unless target is kserveLLMInferenceService
                   properties:
+                    target:
+                      type: string
+                      enum: [inferencePool, kserveLLMInferenceService]
+                      default: inferencePool
+                      description: >-
+                        Cluster-local serving lifecycle owner. inferencePool
+                        preserves the existing llm-d path; KServe owns model
+                        workload and Router lifecycle for kserveLLMInferenceService.
+                    kserve:
+                      type: object
+                      description: Optional KServe LLMInferenceService settings.
+                      properties:
+                        modelURI:
+                          type: string
+                        replicas:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                        criticality:
+                          type: string
                     inferencePoolTemplate:
                       type: object
                       description: >-

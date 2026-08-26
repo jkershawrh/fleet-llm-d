@@ -28,6 +28,12 @@ type MultiClusterClient interface {
 	GetClusterClient(ctx context.Context, clusterID string) (interface{}, error)
 }
 
+// ResourceApplier is an optional capability implemented by cluster clients
+// that can reconcile product-owned Kubernetes resources on member clusters.
+type ResourceApplier interface {
+	ApplyResource(ctx context.Context, clusterID string, resource []byte) error
+}
+
 // clusterRegistry is the shared, package-level registry used by all
 // defaultMultiClusterClient instances so that clusters registered through
 // one client instance are visible from another.

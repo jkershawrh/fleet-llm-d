@@ -397,3 +397,42 @@ func TestWatchEndpoint_BadJSON(t *testing.T) {
 		t.Errorf("expected status 400, got %d", resp.StatusCode)
 	}
 }
+
+func TestReconcilePoolInvokesServingActuatorWithQualifiedClusters(t *testing.T) {
+	r := newObservedTestReconciler()
+	var gotTarget v1alpha1.ServingTarget
+	var gotClusters []string
+	r.SetServingActuator(func(_ context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) error {
+		gotTarget = pool.Serving.EffectiveTarget()
+		gotClusters = append([]string(nil), desired...)
+		return nil
+	})
+	pool := testPool("kserve-model")
+	pool.Serving.Target = v1alpha1.ServingTargetKServeLLMInferenceService
+	pool.Serving.KServe = &v1alpha1.KServeServingSpec{ModelURI: "hf://models/kserve"}
+	if err := r.ReconcilePool(context.Background(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if gotTarget != v1alpha1.ServingTargetKServeLLMInferenceService || len(gotClusters) == 0 {
+		t.Fatalf("actuator got target=%q clusters=%v", gotTarget, gotClusters)
+	}
+}
+
+func TestServingActuatorFailureDegradesObservedPool(t *testing.T) {
+	r := newObservedTestReconciler()
+	r.SetServingActuator(func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) error {
+		return context.DeadlineExceeded
+	})
+	pool := testPool("failed-kserve")
+	pool.Serving.Target = v1alpha1.ServingTargetKServeLLMInferenceService
+	if err := r.ReconcilePool(context.Background(), pool); err != nil {
+		t.Fatal(err)
+	}
+	state, err := r.GetPoolState(pool.Model.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != v1alpha1.FleetPhaseDegraded {
+		t.Fatalf("phase = %q, want Degraded", state.Phase)
+	}
+}
