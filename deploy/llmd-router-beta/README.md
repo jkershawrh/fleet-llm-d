@@ -5,6 +5,12 @@ controller-owned `fleet-router-endpoints` ConfigMap and do not expose a client
 proxy, so the validated Praxis path remains unchanged during discovery and
 configuration qualification.
 
+The shadow EPPs scrape each provider's optional Grid Signals endpoint over
+verified mTLS. The current direct OVMS and vLLM providers publish health only,
+so this profile retains random selection within the fleet-qualified provider
+set. Queue and KV scorers must not be enabled until cluster-local EPPs publish
+those aggregates; missing load signals are not replaced with synthetic data.
+
 The beta currently tracks the upstream `main` EPP image because
 `multicluster-file-discovery` landed after the v0.10.0 release. Resolve and
 record the pulled image digest during qualification; do not promote this

@@ -24,12 +24,24 @@ router:
             parameters:
               path: /var/run/fleet-router/endpoints-25edf1e35996.json
               watchFile: true
+          - type: multicluster-metrics-data-source
+            name: grid-signals
+            parameters:
+              scheme: https
+              path: /metrics
+              interval: 5s
+              insecureSkipVerify: false
+              caCertPath: /var/run/grid-signals/ca/ca.crt
+              clientCertPath: /var/run/grid-signals/client/tls.crt
+              clientKeyPath: /var/run/grid-signals/client/tls.key
           - type: openai-parser
           - type: random-picker
         dataLayer:
           discovery:
             endpoints:
               pluginRef: discovery
+          sources:
+            - pluginRef: grid-signals
         requestHandler:
           parsers:
             - pluginRef: openai-parser
@@ -41,9 +53,21 @@ router:
       - name: fleet-router-endpoints
         configMap:
           name: fleet-router-endpoints
+      - name: grid-signals-route-ca
+        secret:
+          secretName: grid-signals-route-ca
+      - name: grid-signals-epp-client
+        secret:
+          secretName: grid-signals-epp-client
     volumeMounts:
       - name: fleet-router-endpoints
         mountPath: /var/run/fleet-router
+        readOnly: true
+      - name: grid-signals-route-ca
+        mountPath: /var/run/grid-signals/ca
+        readOnly: true
+      - name: grid-signals-epp-client
+        mountPath: /var/run/grid-signals/client
         readOnly: true
     resources:
       requests:
