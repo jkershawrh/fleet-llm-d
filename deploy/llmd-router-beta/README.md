@@ -28,6 +28,14 @@ helm upgrade --install fleet-router-gpu \
   -f deploy/llmd-router-beta/values-gpu.yaml
 ```
 
-The next qualification step adds an HTTPS-capable proxy. The stock standalone
-Envoy profile is plaintext upstream and must not be pointed directly at the
-re-encrypt OpenShift Routes.
+`router-proxies.yaml` adds isolated CPU and GPU Envoy Services for inference
+qualification. Each proxy uses the EPP as a fail-closed external processor,
+removes caller-supplied destination headers before EPP processing, rewrites
+authority from the EPP-selected endpoint, and verifies the selected Route with
+dynamic SNI against the mounted `fleet-route-ca` bundle. The Services have no
+Route; only the qualification gateway NetworkPolicy identity may call them.
+
+The proxy permits one retry for connection failures, resets, or refused
+streams. Envoy retries only before response headers are returned; an active
+stream is never replayed. The stock standalone Envoy profile remains
+unsuitable because it sends plaintext upstream.
