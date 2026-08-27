@@ -100,6 +100,8 @@ class LevelResult:
     routed_counts: dict[str, int] = field(default_factory=dict)
     model_counts: dict[str, int] = field(default_factory=dict)
     data_plane_counts: dict[str, int] = field(default_factory=dict)
+    status_counts: dict[str, int] = field(default_factory=dict)
+    error_samples: list[str] = field(default_factory=list)
     resources: list[ResourceSample] = field(default_factory=list)
     stop_reasons: list[str] = field(default_factory=list)
 
@@ -110,6 +112,25 @@ class LevelResult:
     @property
     def rps(self) -> float:
         return self.requests / max(0.001, self.duration_seconds)
+
+    def record(self, request: RequestResult) -> None:
+        self.requests += 1
+        status_key = str(request.status) if request.status else "transport_error"
+        self.status_counts[status_key] = self.status_counts.get(status_key, 0) + 1
+        if request.status != 200:
+            self.errors += 1
+            if len(self.error_samples) < 5:
+                self.error_samples.append(request.error or f"HTTP {request.status}")
+        else:
+            self.latencies_ms.append(request.latency_ms)
+            self.ttft_ms.append(request.ttft_ms)
+            self.completion_tokens += request.completion_tokens
+        for value, counts in (
+            (request.routed_to, self.routed_counts),
+            (request.actual_model, self.model_counts),
+            (request.data_plane, self.data_plane_counts),
+        ):
+            counts[value or "missing"] = counts.get(value or "missing", 0) + 1
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -133,6 +154,8 @@ class LevelResult:
             "routed_counts": self.routed_counts,
             "model_counts": self.model_counts,
             "data_plane_counts": self.data_plane_counts,
+            "status_counts": self.status_counts,
+            "error_samples": self.error_samples,
             "resources": [asdict(sample) for sample in self.resources],
             "stop_reasons": self.stop_reasons,
         }
@@ -231,19 +254,7 @@ async def run_level(client: httpx.AsyncClient, args: argparse.Namespace, concurr
         ]
         index += concurrency
         for request in await asyncio.gather(*batch):
-            result.requests += 1
-            if request.status != 200:
-                result.errors += 1
-            else:
-                result.latencies_ms.append(request.latency_ms)
-                result.ttft_ms.append(request.ttft_ms)
-                result.completion_tokens += request.completion_tokens
-            for value, counts in (
-                (request.routed_to, result.routed_counts),
-                (request.actual_model, result.model_counts),
-                (request.data_plane, result.data_plane_counts),
-            ):
-                counts[value or "missing"] = counts.get(value or "missing", 0) + 1
+            result.record(request)
         if args.request_interval > 0:
             await asyncio.sleep(args.request_interval)
     result.duration_seconds = time.monotonic() - started

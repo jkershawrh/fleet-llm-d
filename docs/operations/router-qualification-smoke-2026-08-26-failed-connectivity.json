@@ -1,0 +1,64 @@
+{
+  "certification_rps": 0,
+  "data_plane": "llm-d-router",
+  "gpu_utilization_external_required": false,
+  "levels": [
+    {
+      "concurrency": 1,
+      "data_plane_counts": {
+        "llm-d-router": 1,
+        "missing": 19
+      },
+      "duration_seconds": 909.054,
+      "error_percent": 95.0,
+      "errors": 19,
+      "latency_ms": {
+        "p50": 3745.793,
+        "p95": 3745.793,
+        "p99": 3745.793
+      },
+      "model_counts": {
+        "granite-2b-cpu": 1,
+        "missing": 19
+      },
+      "requests": 20,
+      "resources": [
+        {
+          "cpu_percent": 0.0,
+          "error": "Command '['oc', '-n', 'fleet-llm-d', 'get', 'pods', '-l', 'app=ovms-granite-2b', '-o', 'json']' timed out after 20 seconds",
+          "memory_percent": 0.0,
+          "restarts": 0,
+          "target": "oberon-cpu"
+        },
+        {
+          "cpu_percent": 0.0,
+          "error": "Command '['oc', '-n', 'fleet-llm-d', 'get', 'pods', '-l', 'app=ovms-granite-2b', '-o', 'json']' timed out after 20 seconds",
+          "memory_percent": 0.0,
+          "restarts": 0,
+          "target": "arena-cpu"
+        }
+      ],
+      "routed_counts": {
+        "arena-xeon6": 1,
+        "missing": 19
+      },
+      "rps": 0.022,
+      "stop_reasons": [
+        "error rate 95.00% reached guardrail",
+        "resource telemetry unavailable for oberon-cpu: Command '['oc', '-n', 'fleet-llm-d', 'get', 'pods', '-l', 'app=ovms-granite-2b', '-o', 'json']' timed out after 20 seconds",
+        "resource telemetry unavailable for arena-cpu: Command '['oc', '-n', 'fleet-llm-d', 'get', 'pods', '-l', 'app=ovms-granite-2b', '-o', 'json']' timed out after 20 seconds"
+      ],
+      "tokens_per_second": 0.006,
+      "ttft_ms": {
+        "p50": 3745.793,
+        "p95": 3745.793,
+        "p99": 3745.793
+      }
+    }
+  ],
+  "model": "granite-2b-cpu",
+  "resource_guardrail_percent": 70.0,
+  "safe_concurrency": 0,
+  "safe_rps": 0,
+  "schema_version": "fleet-scale-v1"
+}

@@ -37,12 +37,14 @@ def test_level_summary_includes_routing_and_resource_evidence():
         latencies_ms=[10, 20, 30, 40],
         routed_counts={"arena": 2, "oberon": 2},
         data_plane_counts={"llm-d-router": 4},
+        status_counts={"200": 4},
         resources=[MODULE.ResourceSample(target="oberon", cpu_percent=20, memory_percent=30)],
     )
     summary = result.summary()
     assert summary["rps"] == 2
     assert summary["tokens_per_second"] == 4
     assert summary["routed_counts"] == {"arena": 2, "oberon": 2}
+    assert summary["status_counts"] == {"200": 4}
     assert summary["resources"][0]["target"] == "oberon"
 
 
@@ -72,3 +74,11 @@ def test_request_interval_throttles_batches(monkeypatch):
     except RuntimeError as exc:
         assert str(exc) == "stop"
     assert sleeps == [2.5]
+
+
+def test_level_records_bounded_transport_error_samples():
+    result = MODULE.LevelResult(concurrency=1)
+    for index in range(8):
+        result.record(MODULE.RequestResult(0, 1, 0, 0, error=f"timeout-{index + 1}"))
+    assert result.status_counts == {"transport_error": 8}
+    assert len(result.error_samples) == 5
