@@ -1,0 +1,180 @@
+{
+  "certification_rps": 0.813,
+  "data_plane": "llm-d-router",
+  "gpu_utilization_external_required": false,
+  "levels": [
+    {
+      "concurrency": 1,
+      "data_plane_counts": {
+        "llm-d-router": 280,
+        "missing": 2
+      },
+      "duration_seconds": 300.002,
+      "error_percent": 0.709,
+      "error_samples": [
+        "Server disconnected without sending a response.",
+        "Server disconnected without sending a response."
+      ],
+      "errors": 2,
+      "latency_ms": {
+        "p50": 988.741,
+        "p95": 1743.181,
+        "p99": 2180.967
+      },
+      "model_counts": {
+        "granite-2b-cpu": 280,
+        "missing": 2
+      },
+      "requests": 282,
+      "resources": [
+        {
+          "cpu_percent": 42.05,
+          "error": "",
+          "memory_percent": 20.886,
+          "restarts": 0,
+          "target": "oberon-cpu"
+        },
+        {
+          "cpu_percent": 24.2,
+          "error": "",
+          "memory_percent": 21.667,
+          "restarts": 0,
+          "target": "arena-cpu"
+        }
+      ],
+      "routed_counts": {
+        "arena-xeon6": 143,
+        "missing": 2,
+        "oberon-cpu": 137
+      },
+      "rps": 0.94,
+      "status_counts": {
+        "200": 280,
+        "transport_error": 2
+      },
+      "stop_reasons": [],
+      "tokens_per_second": 6.527,
+      "ttft_ms": {
+        "p50": 988.741,
+        "p95": 1743.181,
+        "p99": 2180.967
+      }
+    },
+    {
+      "concurrency": 2,
+      "data_plane_counts": {
+        "llm-d-router": 488
+      },
+      "duration_seconds": 300.004,
+      "error_percent": 0.0,
+      "error_samples": [],
+      "errors": 0,
+      "latency_ms": {
+        "p50": 942.446,
+        "p95": 1909.749,
+        "p99": 2532.001
+      },
+      "model_counts": {
+        "granite-2b-cpu": 488
+      },
+      "requests": 488,
+      "resources": [
+        {
+          "cpu_percent": 46.425,
+          "error": "",
+          "memory_percent": 20.935,
+          "restarts": 0,
+          "target": "oberon-cpu"
+        },
+        {
+          "cpu_percent": 50.525,
+          "error": "",
+          "memory_percent": 21.765,
+          "restarts": 0,
+          "target": "arena-cpu"
+        }
+      ],
+      "routed_counts": {
+        "arena-xeon6": 236,
+        "oberon-cpu": 252
+      },
+      "rps": 1.627,
+      "status_counts": {
+        "200": 488
+      },
+      "stop_reasons": [],
+      "tokens_per_second": 11.383,
+      "ttft_ms": {
+        "p50": 942.446,
+        "p95": 1909.749,
+        "p99": 2532.001
+      }
+    },
+    {
+      "concurrency": 4,
+      "data_plane_counts": {
+        "llm-d-router": 740,
+        "missing": 4
+      },
+      "duration_seconds": 300.01,
+      "error_percent": 0.538,
+      "error_samples": [
+        "Server disconnected without sending a response.",
+        "Server disconnected without sending a response.",
+        "Server disconnected without sending a response.",
+        "Server disconnected without sending a response."
+      ],
+      "errors": 4,
+      "latency_ms": {
+        "p50": 1195.589,
+        "p95": 2162.587,
+        "p99": 2750.512
+      },
+      "model_counts": {
+        "granite-2b-cpu": 740,
+        "missing": 4
+      },
+      "requests": 744,
+      "resources": [
+        {
+          "cpu_percent": 70.175,
+          "error": "",
+          "memory_percent": 21.069,
+          "restarts": 0,
+          "target": "oberon-cpu"
+        },
+        {
+          "cpu_percent": 50.525,
+          "error": "",
+          "memory_percent": 21.936,
+          "restarts": 0,
+          "target": "arena-cpu"
+        }
+      ],
+      "routed_counts": {
+        "arena-xeon6": 384,
+        "missing": 4,
+        "oberon-cpu": 356
+      },
+      "rps": 2.48,
+      "status_counts": {
+        "200": 740,
+        "transport_error": 4
+      },
+      "stop_reasons": [
+        "oberon-cpu reached resource guardrail"
+      ],
+      "tokens_per_second": 17.273,
+      "ttft_ms": {
+        "p50": 1195.589,
+        "p95": 2162.587,
+        "p99": 2750.512
+      }
+    }
+  ],
+  "model": "granite-2b-cpu",
+  "resource_guardrail_percent": 70.0,
+  "safe_concurrency": 2,
+  "safe_rps": 1.627,
+  "schema_version": "fleet-scale-v1"
+}
