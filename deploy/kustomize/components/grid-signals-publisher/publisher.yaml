@@ -28,6 +28,8 @@ spec:
               value: configure-provider
             - name: GRID_SIGNALS_SOURCE_URL
               value: http://configure-epp-metrics:9090/metrics
+            - name: GRID_SIGNALS_HEALTH_URL
+              value: http://configure-provider/health
             - name: GRID_SIGNALS_TLS_CERT
               value: /var/run/grid-signals/tls/tls.crt
             - name: GRID_SIGNALS_TLS_KEY
@@ -101,4 +103,3 @@ spec:
     - name: https
       port: 443
       targetPort: mtls-metrics
-

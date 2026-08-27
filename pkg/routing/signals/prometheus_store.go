@@ -21,6 +21,56 @@ type PrometheusStore struct {
 	Now              func() time.Time
 }
 
+// ProviderStore combines an optional metrics scrape with an active provider
+// health probe. A successful probe publishes one ready provider even when the
+// model server does not expose llm-d EPP metrics. It never fabricates queue,
+// KV, or saturation values.
+type ProviderStore struct {
+	Metrics   *PrometheusStore
+	HealthURL string
+	HTTP      *http.Client
+	Now       func() time.Time
+}
+
+func (s *ProviderStore) Samples(ctx context.Context) ([]Sample, error) {
+	var samples []Sample
+	var metricsErr error
+	if s.Metrics != nil && strings.TrimSpace(s.Metrics.Endpoint) != "" {
+		samples, metricsErr = s.Metrics.Samples(ctx)
+	}
+	if strings.TrimSpace(s.HealthURL) == "" {
+		return samples, metricsErr
+	}
+	client := s.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.HealthURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, probeErr := client.Do(req)
+	ready := 0.0
+	if probeErr == nil {
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+			ready = 1
+		}
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	filtered := samples[:0]
+	for _, sample := range samples {
+		if sample.Name != "llm_d_epp_ready_endpoints" {
+			filtered = append(filtered, sample)
+		}
+	}
+	return append(filtered, Sample{Name: "llm_d_epp_ready_endpoints", Value: ready, CollectedAt: now}), nil
+}
+
 type signalAccumulator struct {
 	priority int
 	values   []float64

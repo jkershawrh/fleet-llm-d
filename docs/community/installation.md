@@ -66,6 +66,12 @@ only the pool-level queue, KV-cache utilization, ready-endpoint, and saturation
 signals used by fleet and the multi-cluster Router plugins. All source labels
 are discarded before publication.
 
+When a serving implementation does not expose compatible EPP metrics, an
+operator may configure `GRID_SIGNALS_HEALTH_URL`. A successful active health
+probe then publishes exactly one ready provider. This fallback does not invent
+queue, KV-cache, or saturation values; those signals remain absent until a
+compatible source is installed.
+
 The publisher requires a server certificate, a client CA, and an explicit
 SHA-256 allowlist of client certificate fingerprints. It refuses to start if
 any of those identity controls are absent. Its `/metrics` listener uses TLS

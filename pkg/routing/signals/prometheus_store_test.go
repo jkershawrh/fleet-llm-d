@@ -65,3 +65,26 @@ func TestPrometheusStoreRejectsOversizedResponse(t *testing.T) {
 		t.Fatal("oversized response accepted")
 	}
 }
+
+func TestProviderStorePublishesHonestHealthFallback(t *testing.T) {
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer healthy.Close()
+	brokenMetrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "unsupported", http.StatusBadRequest) }))
+	defer brokenMetrics.Close()
+	store := &ProviderStore{Metrics: &PrometheusStore{Endpoint: brokenMetrics.URL}, HealthURL: healthy.URL}
+	samples, err := store.Samples(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 || samples[0].Name != "llm_d_epp_ready_endpoints" || samples[0].Value != 1 {
+		t.Fatalf("samples = %#v", samples)
+	}
+
+	unhealthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusServiceUnavailable) }))
+	defer unhealthy.Close()
+	store.HealthURL = unhealthy.URL
+	samples, err = store.Samples(context.Background())
+	if err != nil || len(samples) != 1 || samples[0].Value != 0 {
+		t.Fatalf("unhealthy samples = %#v, %v", samples, err)
+	}
+}

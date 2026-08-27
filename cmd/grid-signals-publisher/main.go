@@ -21,6 +21,7 @@ import (
 
 type config struct {
 	site, provider, sourceURL       string
+	healthURL                       string
 	listenAddress, healthAddress    string
 	certPath, keyPath, clientCAPath string
 	peerFingerprints                string
@@ -31,6 +32,7 @@ func main() {
 	flag.StringVar(&cfg.site, "site", env("GRID_SIGNALS_SITE", ""), "fleet site identity")
 	flag.StringVar(&cfg.provider, "provider", env("GRID_SIGNALS_PROVIDER", ""), "pool/provider identity")
 	flag.StringVar(&cfg.sourceURL, "source-url", env("GRID_SIGNALS_SOURCE_URL", "http://127.0.0.1:9090/metrics"), "local EPP Prometheus URL")
+	flag.StringVar(&cfg.healthURL, "health-url", env("GRID_SIGNALS_HEALTH_URL", ""), "optional provider health URL")
 	flag.StringVar(&cfg.listenAddress, "listen-address", env("GRID_SIGNALS_LISTEN_ADDRESS", ":9443"), "mTLS listen address")
 	flag.StringVar(&cfg.healthAddress, "health-address", env("GRID_SIGNALS_HEALTH_ADDRESS", "127.0.0.1:8081"), "local plaintext health address")
 	flag.StringVar(&cfg.certPath, "tls-cert", env("GRID_SIGNALS_TLS_CERT", ""), "server certificate path")
@@ -62,9 +64,13 @@ func run(cfg config) error {
 		"llm_d_epp_ready_endpoints":              {},
 		"llm_d_epp_flow_control_pool_saturation": {},
 	}
+	store := &gridsignals.ProviderStore{
+		Metrics:   &gridsignals.PrometheusStore{Endpoint: cfg.sourceURL},
+		HealthURL: cfg.healthURL,
+	}
 	publisher := &gridsignals.Publisher{
 		Site: cfg.site, Provider: cfg.provider,
-		Store:          &gridsignals.PrometheusStore{Endpoint: cfg.sourceURL},
+		Store:          store,
 		AllowedMetrics: allowed, AllowedPeerFingerprints: peers,
 	}
 	mux := http.NewServeMux()
