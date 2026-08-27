@@ -16,3 +16,6 @@ certificate issuer, or external secret implementation. Add the transport and
 identity resources appropriate to the target platform in an overlay. The
 transport must preserve TLS through to the publisher so it can verify the
 client certificate itself.
+
+The plaintext health listener is for Kubernetes probes only. Do not expose
+port `8081` through a Service, Route, Ingress, or Gateway.

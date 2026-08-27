@@ -34,7 +34,7 @@ func main() {
 	flag.StringVar(&cfg.sourceURL, "source-url", env("GRID_SIGNALS_SOURCE_URL", "http://127.0.0.1:9090/metrics"), "local EPP Prometheus URL")
 	flag.StringVar(&cfg.healthURL, "health-url", env("GRID_SIGNALS_HEALTH_URL", ""), "optional provider health URL")
 	flag.StringVar(&cfg.listenAddress, "listen-address", env("GRID_SIGNALS_LISTEN_ADDRESS", ":9443"), "mTLS listen address")
-	flag.StringVar(&cfg.healthAddress, "health-address", env("GRID_SIGNALS_HEALTH_ADDRESS", "127.0.0.1:8081"), "local plaintext health address")
+	flag.StringVar(&cfg.healthAddress, "health-address", env("GRID_SIGNALS_HEALTH_ADDRESS", ":8081"), "Kubernetes probe health address")
 	flag.StringVar(&cfg.certPath, "tls-cert", env("GRID_SIGNALS_TLS_CERT", ""), "server certificate path")
 	flag.StringVar(&cfg.keyPath, "tls-key", env("GRID_SIGNALS_TLS_KEY", ""), "server private key path")
 	flag.StringVar(&cfg.clientCAPath, "client-ca", env("GRID_SIGNALS_CLIENT_CA", ""), "trusted client CA path")
