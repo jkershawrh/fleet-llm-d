@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fleet-certification-traffic
+  namespace: fleet-llm-d
+  labels:
+    app.kubernetes.io/name: fleet-certification
+    app.kubernetes.io/component: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-certification
+        app.kubernetes.io/component: traffic
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: traffic
+          image: fleet-certification:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/opt/fleet-certification/bounded_inference_scale.py"]
+          args:
+            - --fleet-url=http://fleet-inference-gateway.fleet-llm-d.svc:8080
+            - --model=$(FLEET_CERT_MODEL)
+            - --data-plane=$(FLEET_CERT_DATA_PLANE)
+            - --max-concurrency=$(FLEET_CERT_CONCURRENCY)
+            - --duration-per-level=$(FLEET_CERT_DURATION)
+            - --max-tokens=$(FLEET_CERT_MAX_TOKENS)
+            - --request-interval=$(FLEET_CERT_INTERVAL)
+            - --traffic-only
+          env:
+            - name: FLEET_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-certification-credentials
+                  key: token
+            - name: FLEET_CERT_MODEL
+              value: granite-2b-cpu
+            - name: FLEET_CERT_DATA_PLANE
+              value: praxis
+            - name: FLEET_CERT_CONCURRENCY
+              value: "1"
+            - name: FLEET_CERT_DURATION
+              value: "300"
+            - name: FLEET_CERT_MAX_TOKENS
+              value: "8"
+            - name: FLEET_CERT_INTERVAL
+              value: "6.7"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 48Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi

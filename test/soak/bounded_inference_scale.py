@@ -57,6 +57,13 @@ def concurrency_levels(maximum: int) -> list[int]:
     return levels
 
 
+def validate_resource_mode(traffic_only: bool, targets: list[ResourceTarget]) -> None:
+    if traffic_only and targets:
+        raise ValueError("--traffic-only cannot be combined with --resource-target")
+    if not traffic_only and not targets:
+        raise ValueError("at least one --resource-target is required unless --traffic-only is set")
+
+
 def response_error(body: bytes, status: int) -> str:
     """Return a bounded structured error label without retaining response data."""
     try:
@@ -299,7 +306,7 @@ async def run_level(client: httpx.AsyncClient, args: argparse.Namespace, concurr
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fleet-url", required=True)
-    parser.add_argument("--token", default="")
+    parser.add_argument("--token", default=os.environ.get("FLEET_AUTH_TOKEN", ""), help="Bearer token; prefer FLEET_AUTH_TOKEN")
     parser.add_argument("--model", required=True)
     parser.add_argument("--data-plane", choices=("praxis", "llm-d-router"), required=True)
     parser.add_argument("--max-concurrency", type=int, default=16)
@@ -312,12 +319,15 @@ async def main() -> int:
     parser.add_argument("--ca-file", default="", help="PEM CA bundle used to verify the gateway")
     parser.add_argument("--request-interval", type=float, default=0.0, help="Seconds to wait between request batches")
     parser.add_argument("--resource-target", action="append", default=[], help="JSON ResourceTarget; repeat per cluster")
+    parser.add_argument("--traffic-only", action="store_true", help="Run traffic in-cluster; resource evidence is collected by cluster-local Jobs")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
     args.url = args.fleet_url.rstrip("/") + "/v1/chat/completions"
     args.resource_targets = [ResourceTarget(**json.loads(raw)) for raw in args.resource_target]
-    if not args.resource_targets:
-        parser.error("at least one --resource-target is required; bounded runs cannot proceed without resource telemetry")
+    try:
+        validate_resource_mode(args.traffic_only, args.resource_targets)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.insecure and args.ca_file:
         parser.error("--insecure and --ca-file are mutually exclusive")
     if args.request_interval < 0:
@@ -365,6 +375,7 @@ async def main() -> int:
         "safe_rps": round(clean[-1].rps, 3) if clean else 0,
         "certification_rps": round(clean[-1].rps * 0.5, 3) if clean else 0,
         "gpu_utilization_external_required": any(target.gpu for target in args.resource_targets),
+        "cluster_local_resource_evidence_required": args.traffic_only,
         "levels": [result.summary() for result in results],
     }
     encoded = json.dumps(report, indent=2, sort_keys=True)

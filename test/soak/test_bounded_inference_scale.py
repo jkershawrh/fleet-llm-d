@@ -4,6 +4,8 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
+
 
 MODULE_PATH = Path(__file__).with_name("bounded_inference_scale.py")
 SPEC = importlib.util.spec_from_file_location("bounded_inference_scale", MODULE_PATH)
@@ -16,6 +18,14 @@ SPEC.loader.exec_module(MODULE)
 def test_concurrency_levels_are_bounded_powers_of_two():
     assert MODULE.concurrency_levels(1) == [1]
     assert MODULE.concurrency_levels(10) == [1, 2, 4, 8]
+
+
+def test_traffic_only_requires_separate_cluster_local_evidence():
+    MODULE.validate_resource_mode(True, [])
+    with pytest.raises(ValueError, match="cannot be combined"):
+        MODULE.validate_resource_mode(True, [MODULE.ResourceTarget("x", "n", "s")])
+    with pytest.raises(ValueError, match="at least one"):
+        MODULE.validate_resource_mode(False, [])
 
 
 def test_quantity_parsing():
