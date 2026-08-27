@@ -4,12 +4,18 @@
 **Environment:** Demo Cluster OpenShift cluster (in-cluster harness) + local Go microbenchmarks
 **Controller version:** fleet-controller (Go 1.26+, UBI base image)
 **Legacy composite rubric score:** 90.35 (historical prototype rubric only)
+**Profile:** Historical controller/API prototype; optional integrations vary by section
+**Routing provider:** Not qualified by this report
+**Cross-cluster transport:** Not qualified by this report
+**Source/image identity:** Not recorded; historical evidence only
 
 > **Evidence scope:** these results predate the current capability-specific
 > promotion contract. They do not establish Green, Blue, or Gold status because
 > they lack the required three-cluster Kind/OpenShift matrices, all seven
 > observed provider workflows, a 72-hour soak, signed external evidence, and a
 > qualifying security audit.
+> See `test/benchmarks/reports/README.md` for the current provenance and
+> interpretation rules. Numeric values below are preserved unchanged.
 
 ---
 

@@ -4,6 +4,14 @@
 
 **Red Hat Internal: Engineering and Leadership Audiences**
 
+> **Profile and evidence notice (August 2026):** This paper documents the
+> optional governed-observability profile and preserves its July measurements.
+> It is not the portable OSS-core product definition. DeepField, GCL,
+> immutable-ledger, ModelPlane, and semantic classification are optional
+> integrations; the current product boundary is defined in
+> `docs/architecture/product-boundary.md`. Historical measurements are not
+> evidence for the beta llm-d Router adapter unless explicitly identified.
+
 ---
 
 ## Table of Contents
@@ -26,9 +34,18 @@
 
 ## 1. Executive Summary
 
-llm-d solves AI inference scheduling within a single Kubernetes cluster. fleet-llm-d extends llm-d across the fleet boundary: coordinated model placement, cross-cluster traffic routing, fleet autoscaling, tenant governance, lifecycle management, and auditable decision records across dozens of clusters. Fourteen enterprise customers have independently requested this capability, and no existing open-source project provides it.
+llm-d solves AI inference scheduling within a Kubernetes cluster. fleet-llm-d
+adds fleet eligibility and operations: cluster registration, exact-model
+resolution, placement constraints, health and draining, tenant admission, and
+eligible-provider reconciliation across failure domains. The selected routing
+provider chooses among those qualified providers; KServe and llm-d retain
+cluster-local serving and endpoint selection.
 
-fleet-llm-d is a Go control plane and Rust data plane that manages fleet inference operations through 10 declarative CRDs on Red Hat OpenShift. It provides 7 capabilities (placement, routing, autoscaling, observability, tenant governance, lifecycle, KV cache transfer) and a v2 intent admission boundary that accepts cryptographically signed governance proposals and tracks operations through a 17-phase lifecycle.
+fleet-llm-d is an Apache-2.0 Go control plane with Rust spoke-agent and transfer
+components. Its portable core is Kubernetes-oriented and does not require
+OpenShift APIs. The validated Red Hat deployment uses OpenShift Routes as its
+transport adapter. Praxis is the validated routing provider; llm-d Router is
+an upstream-native beta receiving the same qualified provider set.
 
 To validate the architecture, fleet-llm-d has been integrated with an ecosystem of supporting systems that exercise its full API surface: a predictive signal intelligence layer (deepfield-fleet), a governed decision-synthesis layer (governed-cognitive-loop), and a tamper-evident evidence layer (ARE immutable ledger). This ecosystem demonstrates what fleet-llm-d's extensible architecture enables: external governance systems submit signed proposals, fleet-llm-d independently verifies and actuates, and an independent ledger records the evidence.
 
@@ -72,7 +89,11 @@ Fourteen enterprise engagements independently describe the same unmet need. Thre
 
 Fleet decisions are consequential. A misconfigured placement wastes $32/hr per idle H100 GPU. An ungoverned scaling decision can cascade SLO breaches across tenants. A routing change without audit evidence fails regulatory review. The cost of an ungoverned fleet decision dwarfs the cost of governance overhead.
 
-The platform enforces a simple principle: an LLM may interpret objectives, but a deterministic controller computes actions, a falsification gate challenges every proposal, cryptographic signatures bind decisions to their evidence, and an immutable ledger records what happened. Governance is not optional; it is structural.
+The governed profile enforces a simple principle: an LLM may interpret
+objectives, but a deterministic controller computes actions, a falsification
+gate challenges every proposal, cryptographic signatures bind decisions to
+their evidence, and an external immutable ledger records what happened. This
+profile is intentionally stricter than the default OSS-core installation.
 
 ---
 
@@ -130,7 +151,12 @@ intent admission, metrics federation, and cost modeling. It uses the standard
 library HTTP server with HMAC-SHA256 bearer-token compatibility authentication,
 per-key rate limiting, and configurable TLS 1.3.
 
-**Rust data plane and Praxis AI.** fleet-agent (spoke cluster management) and KV transfer coordinator (cache state migration) are Rust binaries using tokio async runtime, tonic for gRPC, and axum for HTTP. Praxis AI handles cross-cluster inference routing as the programmable data plane (model-based dispatch, token counting, access logging).
+**Spoke components and routing adapters.** fleet-agent and the KV transfer
+libraries use Rust. The controller sends its normalized eligible-provider set
+to one authoritative routing adapter. Praxis handles the validated inference
+path. The llm-d Router adapter is beta and retains EPP ownership of queue, KV,
+prefix, session, and endpoint scoring. OpenShift Route objects remain
+environment-overlay resources rather than OSS-core APIs.
 
 **Cost model.** 6 GPU types (A100-40GB through MI300X-192GB) across 3 pricing tiers (on-demand, reserved, spot) with per-tenant cost attribution, chargeback reports, and budget alert projections.
 
@@ -402,9 +428,15 @@ This section is mandatory. It describes the boundaries of what the evidence supp
 
 The placement solver, autoscaler, and governance pipeline produce feasible actions under hard constraints. They do not produce provably optimal actions. The constraint solver finds a valid placement; it does not guarantee the globally cheapest or lowest-latency placement. The autoscaler respects budget ceilings and SLO floors; it does not solve a global optimization problem.
 
-### 7.2 No Multi-Cluster Monitoring Evidence
+### 7.2 Multi-Cluster Signal Evidence Is Adapter-Specific
 
-The fleet-agent `reporter.rs` in the Rust data plane is entirely stubbed. No test has run with real spoke clusters reporting metrics to the fleet controller. The monitoring architecture is designed and the code structure exists, but the actual telemetry pipeline from spoke cluster agents to the hub controller has not been exercised. All current evidence comes from single-cluster deployments or simulated cluster state.
+The fleet-agent reporter now scrapes local metrics and reports real spoke
+status from Oberon, Arena, and Brutus. The controller also implements optional
+mTLS Grid Signals polling and a portable publisher that strips pod-level
+labels. This corrects the July statement that the reporter was entirely
+stubbed. However, the llm-d Router multi-cluster metrics extractor and
+TLS-capable proxy have not completed direct inference qualification. Existing
+Praxis monitoring evidence must not be presented as Router-adapter evidence.
 
 ### 7.3 No 72-Hour Soak
 

@@ -4,7 +4,7 @@
 
 **Authors:** Jonathan Kershaw, Naina Singh
 **Date:** August 2026
-**Version:** Draft 0.6
+**Version:** Draft 0.7
 
 ---
 
@@ -14,7 +14,17 @@ Production AI inference runs on a well-understood four-layer stack: cluster prov
 
 fleet-llm-d fills this gap with a data-plane-neutral Go control plane and PostgreSQL-backed persistence. It qualifies exact-model providers across failure domains and hands that eligible set to one routing adapter. Praxis is the validated adapter for the measured deployment; llm-d Router is the upstream-native beta. KServe and llm-d retain cluster-local serving and endpoint selection. ModelPack, DeepField, GCL, semantic classification, and immutable evidence are optional integrations. The existing governed-evidence production mode requires signed GCL admission and an authenticated external ledger, while the default community installation does not.
 
-All seven capabilities have been validated on a 3-cluster production topology (Arena 5-node hub, Oberon SNO spoke, Brutus H100 GPU spoke) running real inference backends on physical OpenShift clusters. Key results: 83.7 RPS GPU saturation on H100 NVL with 0% errors, 34,027-operation variable-intensity soak with zero crashes, 32/32 live security tests, and 268,738-operation 24-hour soak at 99.0%. The platform has cleared the Blue production gate; Gold remains open on a 72-hour soak, signed external evidence, and a formal security audit. fleet-llm-d ships as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.
+The repository contains capability-specific evidence from a physical
+three-cluster topology (Arena, Oberon, and Brutus), including real CPU and GPU
+inference. Key historical results include 83.7 RPS GPU saturation on H100 NVL
+with 0% errors, a 34,027-operation variable-intensity soak with zero crashes,
+32/32 live security tests, and a 268,738-operation 24-hour soak at 99.0%.
+Those results have different scopes and do not collectively certify every
+capability or routing adapter. Praxis is the validated path for the current
+three-cluster release; llm-d Router remains beta and is undergoing separate
+TLS, signal, and failover qualification. Gold remains open on longer-duration
+and adapter-specific evidence, signed external evidence for the governed
+profile, and a formal security audit.
 
 ## 2. Problem Statement
 
@@ -44,7 +54,12 @@ Six principles govern all architectural decisions in fleet-llm-d:
 
 2. **Framework, Not Product.** fleet-llm-d is a composable framework of capabilities, not a monolithic product. Each capability (placement, routing, autoscaling, etc.) operates independently and can be adopted incrementally. Operators choose which CRDs to deploy and which capabilities to enable. A customer running only multi-cluster observability need not deploy the placement engine.
 
-3. **Composition Over Embedding.** fleet-llm-d composes with llm-d's existing within-cluster primitives (InferencePool, EPP, WVA) rather than replacing them. The FleetInferencePool CRD wraps llm-d's InferencePool with fleet-level metadata; the fleet autoscaler coordinates with llm-d's WVA rather than bypassing it. This principle extends to external systems: ModelPack and the ARE Ledger are integrated via client libraries, never embedded.
+3. **Composition Over Embedding.** fleet-llm-d composes with llm-d and KServe
+   rather than replacing them. `FleetInferencePool` can target an existing
+   `InferencePool` or KServe `LLMInferenceService`. KEDA over EPP metrics is the
+   default local autoscaling path; WVA is an optional heterogeneous-variant
+   optimizer feeding KEDA/HPA. ModelPack, evidence ledgers, and observation or
+   governance systems remain external integrations.
 
 4. **No-Fork Commitment.** fleet-llm-d never forks llm-d. All within-cluster intelligence remains in the upstream llm-d project. fleet-llm-d operates strictly above the cluster boundary, consuming llm-d's APIs and metrics without modifying its code. When a fleet-level need implies a within-cluster change, that change is proposed upstream to llm-d.
 
@@ -89,7 +104,26 @@ The data plane uses a combination of Rust components for per-cluster operations 
 - *Enforcer* (`enforcer.rs`) -- Receives placement and scaling directives from the fleet controller and applies them to the local cluster by creating, updating, or deleting InferencePool resources and adjusting replica counts.
 - *Proxy* (`proxy.rs`) -- Provides a local gRPC endpoint for health checks and routing decisions, abstracting the cluster's internal topology.
 
-**Praxis AI Gateway.** Praxis AI is the programmable inference data plane for fleet-llm-d, deployed on the hub cluster (Oberon). It handles cross-cluster inference routing, providing model-based request dispatch via header-matching filter pipeline, token counting, access logging, and load balancing across endpoints. Cross-cluster backends (Arena CPU, Brutus GPU) are reached via NodePort bridges with Kubernetes ExternalName Services. The fleet-controller dynamically updates Praxis config from placement decisions via ConfigMap overlay (`pkg/routing/praxis_overlay.go`); Praxis's file watcher reloads the config atomically at runtime. The upstream Praxis Grid runtime (SWIM membership discovery and mTLS) is not yet available; fleet-llm-d's Grid CRD translator and SWIM sync adapter are implemented and gated behind the `GRID_NETWORK` env var. See [`docs/architecture/praxis-integration.md`](../architecture/praxis-integration.md) for the integration architecture.
+**Routing-provider adapters.** Exactly one adapter is authoritative in a
+deployment. Praxis is the validated default and consumes derived `GridSite`
+and `InferenceProvider` resources without changing their existing contract.
+The llm-d Router beta adapter emits deterministic watched endpoint files, one
+per exact physical model. Both receive the same fleet-qualified provider set;
+neither may add an incompatible provider or substitute a physical model.
+
+The current physical deployment reaches Arena CPU and Brutus GPU through
+verified TLS OpenShift Routes. The earlier NodePort/ExternalName path is
+historical evidence only. The normalized transport contract contains routing
+and metrics URLs, TLS server identity, trust and authentication references,
+health freshness, and failure-domain data. OpenShift Routes are the validated
+Red Hat implementation, not an OSS-core requirement; Gateway API and other
+end-to-end TLS transports can publish the same contract.
+
+The optional Grid Signals publisher exports only allowlisted pool-level
+metrics over mTLS and strips all source topology labels. SWIM remains the
+membership/capability source; dynamic load signals are optional. See
+[`docs/architecture/product-boundary.md`](../architecture/product-boundary.md)
+for the normative ownership boundary.
 
 **KV Cache Transfer Coordinator (`crates/kv-transfer/`).** Manages cross-cluster KV cache state transfer for hot failover, warm migration, and prefix tree synchronization.
 
@@ -251,9 +285,23 @@ promotion.
 
 Model placement determines which clusters in the fleet should host a given model based on regulatory constraints, hardware requirements, cost optimization, and affinity preferences. The placement engine (`pkg/placement/`) operates in two phases: the constraint solver evaluates hard constraints expressed as label-selector constraints against cluster labels and state (e.g., `sovereignty.zone=eu-sovereign`), producing a set of feasible clusters; the cluster scorer then ranks feasible clusters by weighted affinity criteria including GPU utilization, cost efficiency, and data locality. When a FleetInferencePool specifies an `ociRef`, the placement engine first queries ModelPack to resolve GPU memory requirements and compatible GPU types, ensuring that only clusters with sufficient GPU capacity and correct hardware are considered. When ModelPlane is present, placement decisions are also propagated as annotations on ModelDeployment resources via the policy injector, allowing ModelPlane's reconciliation loop to apply fleet-level constraints during infrastructure provisioning. In the sovereign cloud pattern, regulatory placement constraints enforce data residency at the CRD level -- no model weights or inference data can be placed outside the designated zone. The Financial Services Provider reference architecture is designed to use regulatory constraints to ensure all models remain within US-only clusters. The placement engine targets sub-100ms p99 decision latency across a 15-cluster fleet; single-cluster placement benchmarks measure 3.9ms p99 (see section 5.2).
 
-### 4.2 Cross-Cluster Traffic Routing
+### 4.2 Cross-Cluster Eligibility and Traffic Routing
 
-Cross-cluster traffic routing directs inference requests to the optimal cluster based on geographic proximity, cluster health, load distribution, and KV cache state. The Praxis AI gateway evaluates FleetRoutingPolicy rules at the network edge with sub-5ms routing decision latency. Geographic routing prefers the closest healthy cluster to minimize network latency; failover chains define ordered fallback targets when the primary cluster is unhealthy (detected within 30 seconds via configurable health check intervals and unhealthy thresholds); KV cache affinity routing directs requests to clusters that already hold relevant KV cache state, avoiding redundant prefill computation. The Praxis AI gateway maintains a real-time health map of all clusters and integrates with llm-d's EPP (Endpoint Picker Protocol) for within-cluster routing decisions. In the telco AI grid deployment pattern, geographic routing across 30+ edge sites is designed to ensure that Method of Procedure (MOP) execution requests route to the nearest edge cluster, targeting sub-50ms TTFT, while failover chains would enable a site outage to transparently redirect traffic to the regional hub within seconds. Praxis Grid extends Praxis AI to multi-site with SWIM membership discovery, CRDT state propagation, and mTLS between sites. These are design targets for the multi-cluster topology; measured evidence exists only for single-cluster routing (see section 5.2).
+fleet-llm-d applies exact-model compatibility, tenant policy, placement,
+authorization, health freshness, draining, and failure-domain constraints to
+produce an eligible provider set. The selected routing provider then scores or
+chooses among that set. Praxis performs this role in the validated deployment;
+the llm-d Router adapter delegates queue, KV, prefix, session, and endpoint
+scoring to EPP. Fleet filtering remains authoritative and adapters cannot
+silently downgrade a request to another physical model. When no compatible
+healthy provider remains, the supported behavior is a structured
+`503 no_compatible_capacity`.
+
+The three-cluster Praxis path has direct inference and soak evidence. Router
+file discovery and exact-model filtering are proven, but direct Router proxy
+inference is not yet qualified because verified TLS forwarding and the
+pool-level signal path remain in progress. Thirty-site geographic routing and
+sub-50ms TTFT remain design targets rather than measured claims.
 
 ### 4.3 Fleet Autoscaling
 
