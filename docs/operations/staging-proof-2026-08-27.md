@@ -84,3 +84,21 @@ multi-cluster telemetry does not depend on each kubeconfig's current context.
 - Observed convergence was below 20 seconds and met the 30-second objective,
   but the pre-convergence 502 proves bounded pre-header retry is still required
   to satisfy the stronger surviving-traffic acceptance criterion.
+
+## Pre-header retry remediation
+
+- The gateway now performs at most one retry to a different fleet-qualified,
+  healthy CPU provider when the first attempt fails before client headers are
+  written. Client cancellation prevents retry, and exact GPU requests are
+  never retried or substituted.
+- Unit tests cover alternate-provider success and exact-GPU non-retry behavior.
+- The production canary passed CPU and exact-GPU requests before promotion.
+- During the repeated Oberon backend loss, all 10 requests returned HTTP 200
+  from Arena. Four stale Oberon selections returned with routing reason
+  `health-failover`; no client-visible 502 remained.
+- Metric `fleet_inference_retries_total{reason="provider_failure"}` was present
+  and incremented on a production gateway replica.
+- Controller and gateway converged on image digest
+  `sha256:880e35236fcba885d0fbbc34b4aa813372327a1705aa670b838dc33b40290760`.
+  Controller remained 3/3 with exactly one ready leader Service endpoint;
+  gateway remained 2/2 and Praxis 2/2.
