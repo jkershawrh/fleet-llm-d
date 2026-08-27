@@ -244,6 +244,8 @@ async def run_level(client: httpx.AsyncClient, args: argparse.Namespace, concurr
                 (request.data_plane, result.data_plane_counts),
             ):
                 counts[value or "missing"] = counts.get(value or "missing", 0) + 1
+        if args.request_interval > 0:
+            await asyncio.sleep(args.request_interval)
     result.duration_seconds = time.monotonic() - started
     result.resources = await asyncio.gather(*[asyncio.to_thread(sample_resources, target) for target in args.resource_targets])
     return result
@@ -262,6 +264,8 @@ async def main() -> int:
     parser.add_argument("--error-guardrail", type=float, default=2.0)
     parser.add_argument("--stream", action="store_true")
     parser.add_argument("--insecure", action="store_true")
+    parser.add_argument("--ca-file", default="", help="PEM CA bundle used to verify the gateway")
+    parser.add_argument("--request-interval", type=float, default=0.0, help="Seconds to wait between request batches")
     parser.add_argument("--resource-target", action="append", default=[], help="JSON ResourceTarget; repeat per cluster")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
@@ -269,12 +273,17 @@ async def main() -> int:
     args.resource_targets = [ResourceTarget(**json.loads(raw)) for raw in args.resource_target]
     if not args.resource_targets:
         parser.error("at least one --resource-target is required; bounded runs cannot proceed without resource telemetry")
+    if args.insecure and args.ca_file:
+        parser.error("--insecure and --ca-file are mutually exclusive")
+    if args.request_interval < 0:
+        parser.error("--request-interval cannot be negative")
 
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     results: list[LevelResult] = []
     baseline_p99 = 0.0
     latency_breaches = 0
-    async with httpx.AsyncClient(verify=not args.insecure, http2=True, headers=headers) as client:
+    verify: bool | str = args.ca_file or not args.insecure
+    async with httpx.AsyncClient(verify=verify, http2=True, headers=headers) as client:
         for concurrency in concurrency_levels(args.max_concurrency):
             result = await run_level(client, args, concurrency)
             p99 = percentile(result.latencies_ms, 0.99)

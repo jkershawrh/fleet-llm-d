@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 
@@ -43,3 +44,31 @@ def test_level_summary_includes_routing_and_resource_evidence():
     assert summary["tokens_per_second"] == 4
     assert summary["routed_counts"] == {"arena": 2, "oberon": 2}
     assert summary["resources"][0]["target"] == "oberon"
+
+
+def test_request_interval_throttles_batches(monkeypatch):
+    sleeps = []
+
+    async def fake_infer(*_args, **_kwargs):
+        return MODULE.RequestResult(200, 1, 1, 1, data_plane="llm-d-router")
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        raise RuntimeError("stop")
+
+    args = Namespace(
+        duration_per_level=60,
+        url="https://gateway.example/v1/chat/completions",
+        model="model",
+        max_tokens=1,
+        stream=False,
+        request_interval=2.5,
+        resource_targets=[],
+    )
+    monkeypatch.setattr(MODULE, "infer", fake_infer)
+    monkeypatch.setattr(MODULE.asyncio, "sleep", fake_sleep)
+    try:
+        MODULE.asyncio.run(MODULE.run_level(object(), args, 1))
+    except RuntimeError as exc:
+        assert str(exc) == "stop"
+    assert sleeps == [2.5]
