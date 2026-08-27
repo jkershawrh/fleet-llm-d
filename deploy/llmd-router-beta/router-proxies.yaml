@@ -79,7 +79,6 @@ data:
                           grpc_service:
                             envoy_grpc:
                               cluster_name: ext_proc
-                              authority: fleet-router-cpu-epp.fleet-llm-d.svc:9002
                             timeout: 10s
                           processing_mode:
                             request_header_mode: SEND
@@ -89,6 +88,23 @@ data:
                             request_trailer_mode: SEND
                             response_trailer_mode: SEND
                           message_timeout: 180s
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          default_source_code:
+                            inline_string: |
+                              function envoy_on_request(handle)
+                                local destination = handle:headers():get("x-gateway-destination-endpoint")
+                                if destination ~= nil then
+                                  handle:headers():replace(":authority", destination)
+                                end
+                              end
+                      - name: envoy.filters.http.dynamic_forward_proxy
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                          dns_cache_config:
+                            name: fleet_route_dns
+                            dns_lookup_family: V4_ONLY
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -99,12 +115,15 @@ data:
                       headers_with_underscores_action: REJECT_REQUEST
       clusters:
         - name: selected_route
-          type: ORIGINAL_DST
           connect_timeout: 10s
           lb_policy: CLUSTER_PROVIDED
-          original_dst_lb_config:
-            use_http_header: true
-            http_header_name: x-gateway-destination-endpoint
+          cluster_type:
+            name: envoy.clusters.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+              dns_cache_config:
+                name: fleet_route_dns
+                dns_lookup_family: V4_ONLY
           circuit_breakers:
             thresholds:
               - max_connections: 256
@@ -135,6 +154,17 @@ data:
               "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
               explicit_http_config:
                 http2_protocol_options: {}
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              common_tls_context:
+                alpn_protocols: [h2]
+                # The current upstream EPP generates an ephemeral self-signed
+                # certificate when secure-serving is enabled without cert-path.
+                # This mirrors the llm-d Router chart's Envoy integration. The
+                # connection remains confined by NetworkPolicy on port 9002.
+                validation_context: {}
           load_assignment:
             cluster_name: ext_proc
             endpoints:
@@ -226,7 +256,6 @@ data:
                           grpc_service:
                             envoy_grpc:
                               cluster_name: ext_proc
-                              authority: fleet-router-gpu-epp.fleet-llm-d.svc:9002
                             timeout: 10s
                           processing_mode:
                             request_header_mode: SEND
@@ -236,6 +265,23 @@ data:
                             request_trailer_mode: SEND
                             response_trailer_mode: SEND
                           message_timeout: 180s
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          default_source_code:
+                            inline_string: |
+                              function envoy_on_request(handle)
+                                local destination = handle:headers():get("x-gateway-destination-endpoint")
+                                if destination ~= nil then
+                                  handle:headers():replace(":authority", destination)
+                                end
+                              end
+                      - name: envoy.filters.http.dynamic_forward_proxy
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                          dns_cache_config:
+                            name: fleet_route_dns
+                            dns_lookup_family: V4_ONLY
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -246,12 +292,15 @@ data:
                       headers_with_underscores_action: REJECT_REQUEST
       clusters:
         - name: selected_route
-          type: ORIGINAL_DST
           connect_timeout: 10s
           lb_policy: CLUSTER_PROVIDED
-          original_dst_lb_config:
-            use_http_header: true
-            http_header_name: x-gateway-destination-endpoint
+          cluster_type:
+            name: envoy.clusters.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+              dns_cache_config:
+                name: fleet_route_dns
+                dns_lookup_family: V4_ONLY
           circuit_breakers:
             thresholds:
               - max_connections: 256
@@ -282,6 +331,13 @@ data:
               "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
               explicit_http_config:
                 http2_protocol_options: {}
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              common_tls_context:
+                alpn_protocols: [h2]
+                validation_context: {}
           load_assignment:
             cluster_name: ext_proc
             endpoints:
@@ -324,7 +380,7 @@ spec:
       containers:
         - name: envoy
           image: docker.io/envoyproxy/envoy@sha256:0d8c8b3fc3250b5f664dd93ac305738f9c4e6ff38fcb8499088cca1b827f787e
-          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info", "--concurrency", "2", "--disable-hot-restart"]
           ports:
             - {name: http, containerPort: 8081}
             - {name: readiness, containerPort: 19001}
@@ -383,7 +439,7 @@ spec:
       containers:
         - name: envoy
           image: docker.io/envoyproxy/envoy@sha256:0d8c8b3fc3250b5f664dd93ac305738f9c4e6ff38fcb8499088cca1b827f787e
-          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info", "--concurrency", "2", "--disable-hot-restart"]
           ports:
             - {name: http, containerPort: 8081}
             - {name: readiness, containerPort: 19001}
@@ -460,8 +516,34 @@ spec:
         - {port: 5353, protocol: UDP}
         - {port: 5353, protocol: TCP}
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: fleet-llm-d}
+          podSelector:
             matchExpressions:
-              - {key: app.kubernetes.io/name, operator: In, values: [fleet-router-cpu-epp, fleet-router-gpu-epp]}
+              - {key: llm-d-router-standalone, operator: In, values: [fleet-router-cpu-epp, fleet-router-gpu-epp]}
       ports: [{port: 9002, protocol: TCP}]
+    - ports: [{port: 443, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fleet-router-proxies-to-epp, namespace: fleet-llm-d}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: llm-d-router-standalone, operator: In, values: [fleet-router-cpu-epp, fleet-router-gpu-epp]}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: fleet-llm-d}
+          podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [fleet-router-cpu-proxy, fleet-router-gpu-proxy]}
+      ports: [{port: 9002, protocol: TCP}]
+  egress:
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+        - {port: 5353, protocol: UDP}
+        - {port: 5353, protocol: TCP}
     - ports: [{port: 443, protocol: TCP}]
