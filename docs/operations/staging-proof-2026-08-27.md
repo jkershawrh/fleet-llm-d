@@ -60,9 +60,10 @@ multi-cluster telemetry does not depend on each kubeconfig's current context.
   cluster-wide pod service-network failure. Build pods on both `rhgnr1` and
   `gnr2` could not reach `172.30.0.1:443` or cluster DNS. The existing Arena
   agent remains ready on its prior digest.
-- Brutus inference is healthy and exact-model routing is proven, but its API
-  endpoint currently refuses TCP connections on port 6443. The Brutus agent
-  cannot be inspected or upgraded until API service is restored.
+- Brutus inference is healthy and exact-model routing is proven. Its API
+  endpoint recovered during the checkpoint, but its build pod then reproduced
+  the same inability to reach `172.30.0.1:443`. Build 5 was cancelled and the
+  existing Brutus agent remains ready on its prior digest.
 - Two obsolete overlapping Oberon PDBs (`fleet-core-services-pdb` and
   `praxis-ai-pdb`) were removed. The current workload-specific PDBs remain.
 - This checkpoint does not certify failover convergence, Router beta, GPU
