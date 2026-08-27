@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -82,15 +83,20 @@ func (p *ProviderHealthCache) Healthy(ctx context.Context, clusterID string) (bo
 func (p *ProviderHealthCache) probe(ctx context.Context, clusterID, url string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	probeSucceeded := false
+	statusCode := 0
+	probeErr := err
 	if err == nil {
 		resp, requestErr := p.client.Do(req)
+		probeErr = requestErr
 		if requestErr == nil {
+			statusCode = resp.StatusCode
 			probeSucceeded = resp.StatusCode >= 200 && resp.StatusCode < 300
 			_ = resp.Body.Close()
 		}
 	}
 	p.mu.Lock()
 	entry := p.entries[clusterID]
+	wasHealthy := entry.healthy
 	entry.checkedAt = p.now()
 	if probeSucceeded {
 		entry.consecutiveSuccesses++
@@ -107,6 +113,16 @@ func (p *ProviderHealthCache) probe(ctx context.Context, clusterID, url string) 
 	}
 	p.entries[clusterID] = entry
 	p.mu.Unlock()
+	if probeSucceeded && entry.healthy && !wasHealthy {
+		slog.Info("inference provider health recovered", "provider", clusterID, "url", url)
+	}
+	if !probeSucceeded && (entry.consecutiveFailures == 1 || (wasHealthy && !entry.healthy)) {
+		attrs := []any{"provider", clusterID, "url", url, "status", statusCode, "consecutive_failures", entry.consecutiveFailures}
+		if probeErr != nil {
+			attrs = append(attrs, "error", probeErr)
+		}
+		slog.Warn("inference provider health probe failed", attrs...)
+	}
 	return entry.healthy
 }
 

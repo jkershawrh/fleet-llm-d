@@ -66,3 +66,33 @@ func TestProviderHealthCacheLeavesUnconfiguredProviderToRepositoryHealth(t *test
 		t.Fatalf("unconfigured provider = healthy %v, configured %v", healthy, configured)
 	}
 }
+
+func TestProviderHealthCacheRecordsHTTPFailureBeforeRecovery(t *testing.T) {
+	status := http.StatusServiceUnavailable
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	}))
+	defer backend.Close()
+
+	cache, err := NewProviderHealthCache(map[string]string{"provider-a": backend.URL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.ttl = 0
+	if healthy := cache.probe(context.Background(), "provider-a", backend.URL); healthy {
+		t.Fatal("failed first probe reported healthy")
+	}
+	entry := cache.entries["provider-a"]
+	if entry.consecutiveFailures != 1 || entry.consecutiveSuccesses != 0 {
+		t.Fatalf("failure counters = %+v", entry)
+	}
+
+	status = http.StatusOK
+	for range providerHealthyThreshold {
+		cache.probe(context.Background(), "provider-a", backend.URL)
+	}
+	entry = cache.entries["provider-a"]
+	if !entry.healthy || entry.consecutiveSuccesses != providerHealthyThreshold || entry.consecutiveFailures != 0 {
+		t.Fatalf("recovered entry = %+v", entry)
+	}
+}
