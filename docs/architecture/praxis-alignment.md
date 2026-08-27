@@ -13,7 +13,12 @@
 
 ## Executive Summary
 
-Jason Greene's architecture establishes three layers inside a single cluster, each with one routing authority. fleet-llm-d adds the fleet layer above all three -- deciding which cluster receives a request before Praxis and EPP decide how to handle it within that cluster. This document maps fleet-llm-d's implemented capabilities to the AI Gateway architecture, identifies the clean contract between the two systems, and traces both to the enterprise customer requirements Greene's document catalogues.
+Jason Greene's architecture establishes three layers inside a single cluster,
+each with one routing authority. fleet-llm-d adds the fleet eligibility and
+operations layer above them: it determines which clusters are compatible and
+permitted before the authoritative routing provider scores that qualified set.
+This document maps fleet-llm-d's implemented capabilities to the AI Gateway
+architecture and identifies the contract between the systems.
 
 ---
 
@@ -23,22 +28,25 @@ The AI Gateway architecture enforces a single routing authority at each layer of
 
 | Layer | Authority | Scope | Decides |
 |-------|-----------|-------|---------|
-| **L4 -- Fleet orchestration** | **fleet-llm-d** | Cross-cluster | Which cluster gets the request |
+| **L4 -- Fleet orchestration** | **fleet-llm-d** | Cross-cluster | Which clusters are eligible and operational |
 | L3 -- Front door | Envoy + Praxis | Cluster ingress | TLS termination, admission, rate limiting |
 | L2 -- AI data plane | Praxis | Request lifecycle | Policy, filters, guardrails, protocol translation |
 | L1 -- Placement | llm-d EPP | Pod selection | KV-cache-aware pod routing within a cluster |
 
-No layer reaches into another's authority. fleet-llm-d never selects a pod. Praxis never selects a cluster. EPP never enforces tenant quotas. Each layer owns exactly one routing decision.
+No layer reaches into another's authority. fleet-llm-d never selects a pod and
+does not reorder candidates inside an adapter. The selected routing provider
+chooses among the fleet-qualified clusters. Cluster-local EPP retains pod
+selection, and fleet admission retains tenant policy and exact-model authority.
 
 ```
                    Client Request
                          |
               +----------v----------+
-              |  fleet-llm-d (L4)   |   "Which cluster?"
-              |  RoutingPolicy      |
-              |  Evaluator          |
+              |  fleet-llm-d (L4)   |   "Which clusters qualify?"
+              |  Eligibility +      |
+              |  Operations Policy  |
               +----------+----------+
-                         |  cluster decision
+                         |  qualified provider set
               +----------v----------+
               |  Envoy + Praxis (L3)|   "Admitted? Rate-limited?"
               |  Front Door         |
@@ -109,16 +117,21 @@ Praxis is a within-cluster programmable proxy. fleet-llm-d is a cross-cluster op
 
 | Direction | What Flows | Mechanism |
 |-----------|-----------|-----------|
-| **Down:** fleet-llm-d to Praxis | Cluster routing weights, model placement, tenant class, session affinity hints | ConfigMap overlays rendered by fleet-controller |
-| **Up:** EPP/Praxis to fleet-llm-d | Pool saturation, queue depth, KV cache utilization, prefix hit ratio, request latency | fleet-agent `MetricsCollector` aggregates per-cluster EPP signals, reports to `BuildClusterHealth()` |
+| **Down:** fleet-llm-d to routing provider | Exact-model qualified providers, health, freshness, draining, failure domain, transport identity, and policy bounds | Selected `RoutingProvider` adapter |
+| **Up:** provider/EPP to fleet-llm-d | Membership, capability, active health, and optional pool-level load signals | Agent/SWIM state plus optional mTLS Grid Signals polling |
 
 ### Boundary Rules
 
-1. fleet-llm-d makes the **cluster** decision; Praxis routes the request **within** that cluster.
-2. Praxis consults EPP for **pod** selection; fleet-llm-d never addresses individual pods.
-3. EPP signals flow **up** through fleet-agent to inform cross-cluster decisions.
-4. fleet-llm-d session hints flow **down** so Praxis can honor conversation affinity within the selected cluster.
-5. fleet-llm-d renders Praxis configuration (ConfigMap overlays) that Praxis consumes as read-only input.
+1. fleet-llm-d owns compatibility, authorization, placement constraints,
+   draining, and the **eligible provider set**.
+2. The authoritative routing provider selects a cluster from that set; a
+   cluster-local EPP selects a pod when present.
+3. Exact-model filtering occurs before adapter scoring and cannot be weakened
+   by an adapter.
+4. Dynamic pool signals are optional and cannot override compatibility or
+   policy. Missing signals fall back to qualified health and capacity state.
+5. Praxis consumes derived Grid resources; llm-d Router consumes deterministic
+   watched endpoint files. Neither adapter may add a rejected provider.
 
 ---
 
@@ -132,7 +145,11 @@ When Praxis becomes the within-cluster AI data plane, fleet-llm-d cedes three ca
 | Semantic router (`semantic.go`) | `pkg/routing/` | Prompt classification and content-based routing become Praxis filters | Praxis filter pipeline (L2) |
 | Fleet gateway (`crates/fleet-gateway/`) | Rust data plane | Cross-cluster request forwarding replaced by Praxis Grid mesh | Praxis Grid (L2-L3) |
 
-fleet-llm-d retains everything above these: placement decisions, tenant governance, lifecycle management, session-to-cluster affinity, drain orchestration, and the governed autonomy pipeline. The line is clean -- fleet-llm-d decides where; Praxis decides how.
+fleet-llm-d retains placement constraints, tenant admission, lifecycle state,
+session policy, drain orchestration, and eligible-provider reconciliation. The
+line is clean: fleet decides what is allowed and operational; the selected
+routing provider decides among those candidates; KServe and llm-d own the
+cluster-local serving and endpoint lifecycle.
 
 ---
 
@@ -154,7 +171,10 @@ Greene's document identifies specific enterprise asks. Each maps to implemented 
 
 Greene's document states: *"A workstream is evaluating a multi-cluster capability for 3.6, leveraging llm-d and Praxis."*
 
-fleet-llm-d is that capability. The following components are implemented and tested.
+fleet-llm-d is a prototype of the fleet eligibility and operations portion of
+that capability. The following components have implementation evidence; their
+individual evidence level is not a claim that every adapter is production
+qualified.
 
 | Component | Package | Function |
 |-----------|---------|----------|
@@ -210,4 +230,9 @@ fleet-llm-d is that capability. The following components are implemented and tes
 
 ## Summary
 
-fleet-llm-d and Praxis are complementary, not competing. Praxis provides the programmable AI data plane within a cluster. fleet-llm-d provides the operations control plane across clusters. The contract is clean: decisions flow down as ConfigMap overlays, signals flow up through fleet-agent metrics collection. One authority per layer. No overlap. Together they form the AI Grid capability that enterprise customers are asking for.
+fleet-llm-d and Praxis are complementary, not competing. fleet-llm-d provides
+fleet eligibility and operations policy; Praxis is the validated routing data
+plane for the current deployment. The upstream-native llm-d Router adapter
+receives the same qualified set and remains beta until its TLS proxy and signal
+path complete qualification. OpenShift Routes are one validated Red Hat
+transport implementation, while the OSS contract remains portable.

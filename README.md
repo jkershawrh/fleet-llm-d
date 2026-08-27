@@ -105,6 +105,14 @@ Exactly one routing adapter is authoritative per deployment. Select it with
 `disabled`. Adapters receive the same fleet-qualified provider set and cannot
 add an incompatible cluster or rewrite the exact physical model.
 
+Routing providers consume a platform-neutral endpoint contract containing the
+routing and metrics URLs, TLS server identity, trust reference, authentication
+reference, health freshness, failure domain, and exact physical model.
+OpenShift re-encrypt Routes are the validated transport for the current Red
+Hat deployment, but they are not required by the OSS core. Gateway API is the
+preferred portable Kubernetes target; MCS, service meshes, and external
+gateways can publish the same contract without changing fleet policy.
+
 ### Praxis AI Gateway
 
 [Praxis AI](https://github.com/praxis-proxy/ai) is the validated reference data plane for the current physical deployment. Its `GridSite` and `InferenceProvider` resources are emitted by the Praxis adapter without changing their existing contract. It provides:
@@ -128,6 +136,12 @@ selection remain Router/EPP responsibilities. `FleetInferencePool` also
 supports the additive `kserveLLMInferenceService` serving target; KServe then
 owns model workload, revision, readiness, draining, Gateway, and local Router
 lifecycle. The existing `inferencePool` target remains the default.
+
+The optional `grid-signals-publisher` converts a cluster-local Prometheus or
+active provider-health source into a small, pool-level contract over strict
+mTLS. It discards source labels and never exports pod, container, instance, or
+rank identity. Missing queue/KV signals reduce scoring quality but do not
+invent load data or make an otherwise qualified provider incompatible.
 
 ### ModelPack (CNCF model-spec)
 

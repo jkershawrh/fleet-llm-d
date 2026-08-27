@@ -11,6 +11,8 @@
 > OpenAI-compatible ingress, and accepted requests are forwarded to external
 > Praxis. Any earlier fallback or A/B instructions involving `fleet-gateway`
 > are superseded by the August update near the end of this document.
+> It is not the portable OSS architecture or the current product boundary;
+> see `product-boundary.md` for those normative definitions.
 
 ---
 
@@ -36,14 +38,12 @@ discovery that complements RHACM's hub-spoke topology. ConnectLink extends this
 architecture downward into the accelerator fabric, providing NIXL-based
 GPU-to-GPU KV cache transfer with TCP fallback for CPU-only environments.
 
-Integrating these three layers produces an architecture that no competitor can
-assemble from a single vendor: fleet-level operations control (fleet-llm-d) +
-programmable AI data plane (Praxis) + accelerator-native cache transfer
-(ConnectLink), all governed by DeepField observability and GCL decision
-governance, with tamper-evident proof from the ARE immutable ledger. The result
-is a fully open-source (Apache 2.0 + MIT), hardware-agnostic platform that runs
-on Xeon CPUs today and extends to H100 GPUs, Gaudi3 accelerators, and
-mixed-fabric deployments without architectural change.
+The original combined design paired fleet-level operations control with
+Praxis and accelerator-native cache transfer, then demonstrated optional
+DeepField, GCL, and immutable-evidence integrations. Those integrations are
+not OSS-core prerequisites and are outside the initial upstream llm-d
+acceptance criteria. Current packaging keeps them independently deployable;
+the governed-evidence profile enables them explicitly.
 
 ---
 
