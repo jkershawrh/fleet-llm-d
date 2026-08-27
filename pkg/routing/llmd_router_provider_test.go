@@ -90,6 +90,34 @@ func TestLLMDProviderOutputIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestLLMDProviderUsesPortableTransportContract(t *testing.T) {
+	dir := t.TempDir()
+	p, _ := NewLLMDProvider(LLMDProviderOptions{Directory: dir, RequireTLS: true})
+	clusters := []FleetClusterInfo{{
+		ID: "portable", Status: "Running", Authorized: true,
+		EgressAddress: "http://legacy.invalid",
+		Transport: EndpointTransport{
+			RoutingURL: "https://router.example", MetricsURL: "https://signals.example:9443",
+			TLSServerName: "router.internal", TrustRef: "secret/route-ca", AuthRef: "secret/router-token",
+		},
+	}}
+	pools := []FleetPoolInfo{{Name: "pool", ModelName: "model", Clusters: []string{"portable"}}}
+	if err := p.Sync(context.Background(), clusters, pools); err != nil {
+		t.Fatal(err)
+	}
+	var index llmdModelIndex
+	readJSON(t, filepath.Join(dir, "index.json"), &index)
+	var endpoints llmdEndpointsFile
+	readJSON(t, filepath.Join(dir, index.Models["model"]), &endpoints)
+	got := endpoints.Endpoints[0]
+	if got.Address != "router.example" || got.Labels["metricsAddress"] != "signals.example" {
+		t.Fatalf("endpoint = %#v", got)
+	}
+	if got.Labels["fleet.llm-d.ai/tls-server-name"] != "router.internal" || got.Labels["fleet.llm-d.ai/trust-ref"] != "secret/route-ca" || got.Labels["fleet.llm-d.ai/auth-ref"] != "secret/router-token" {
+		t.Fatalf("transport labels = %#v", got.Labels)
+	}
+}
+
 func readJSON(t *testing.T, path string, out interface{}) {
 	t.Helper()
 	data, err := os.ReadFile(path)

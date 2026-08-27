@@ -169,23 +169,23 @@ func (p *LLMDProvider) eligible(cluster FleetClusterInfo) bool {
 	if !cluster.UpdatedAt.IsZero() && p.opts.Now().Sub(cluster.UpdatedAt) > p.opts.MaxStaleness {
 		return false
 	}
-	return strings.TrimSpace(cluster.EgressAddress) != ""
+	return cluster.routingEndpoint() != ""
 }
 
 func (p *LLMDProvider) endpoint(cluster FleetClusterInfo, pool FleetPoolInfo, model string) (LLMDClusterEndpoint, error) {
-	routingURL, err := parseEndpoint(cluster.EgressAddress, pool.TargetPorts)
+	routingURL, err := parseEndpoint(cluster.routingEndpoint(), pool.TargetPorts)
 	if err != nil {
 		return LLMDClusterEndpoint{}, err
 	}
 	if p.opts.RequireTLS && routingURL.Scheme != "https" {
 		return LLMDClusterEndpoint{}, fmt.Errorf("routing endpoint must use HTTPS")
 	}
-	metricsRaw := cluster.MetricsEndpoint
+	metricsRaw := cluster.metricsEndpoint()
 	if metricsRaw == "" && cluster.Labels != nil {
 		metricsRaw = cluster.Labels["fleet.llm-d.ai/metrics-endpoint"]
 	}
 	if metricsRaw == "" {
-		metricsRaw = cluster.EgressAddress
+		metricsRaw = cluster.routingEndpoint()
 	}
 	metricsURL, err := parseEndpoint(metricsRaw, pool.TargetPorts)
 	if err != nil {
@@ -205,8 +205,14 @@ func (p *LLMDProvider) endpoint(cluster FleetClusterInfo, pool FleetPoolInfo, mo
 		"metricsAddress":                metricsURL.Hostname(),
 		"metricsPort":                   endpointPort(metricsURL),
 	}
-	if serverName := cluster.Labels["fleet.llm-d.ai/tls-server-name"]; serverName != "" {
+	if serverName := cluster.tlsServerName(); serverName != "" {
 		labels["fleet.llm-d.ai/tls-server-name"] = serverName
+	}
+	if cluster.Transport.TrustRef != "" {
+		labels["fleet.llm-d.ai/trust-ref"] = cluster.Transport.TrustRef
+	}
+	if cluster.Transport.AuthRef != "" {
+		labels["fleet.llm-d.ai/auth-ref"] = cluster.Transport.AuthRef
 	}
 	return LLMDClusterEndpoint{
 		Name:      cluster.ID + "--" + pool.Name,

@@ -53,6 +53,20 @@ func TestTranslateClusterNoEgress(t *testing.T) {
 	}
 }
 
+func TestTranslateClusterUsesPortableTransportContract(t *testing.T) {
+	translator := NewGridCRDTranslator("https://k8s.local", "fleet-llm-d", "", "net")
+	spec := translator.TranslateClusterToGridSite(FleetClusterInfo{
+		ID:        "portable",
+		Transport: EndpointTransport{RoutingURL: "https://gateway.example", TLSServerName: "backend.internal"},
+	})
+	if spec.Egress == nil || spec.Egress.Address != "https://gateway.example" {
+		t.Fatalf("egress = %#v", spec.Egress)
+	}
+	if spec.Egress.TLS == nil || spec.Egress.TLS.ServerName != "backend.internal" {
+		t.Fatalf("tls = %#v", spec.Egress.TLS)
+	}
+}
+
 func TestTranslatePoolToInferenceProvider(t *testing.T) {
 	translator := NewGridCRDTranslator("https://k8s.local", "fleet-llm-d", "", "test-network")
 

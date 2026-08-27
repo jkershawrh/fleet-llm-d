@@ -26,6 +26,30 @@ prefix, session, flow-control, and endpoint-selection ownership. HTTPS is
 required unless `LLMD_ROUTER_ALLOW_INSECURE=true` is explicitly selected for
 development.
 
+## Endpoint transport adapters
+
+The fleet core does not require OpenShift Routes. It qualifies a provider and
+passes a normalized transport contract to the selected routing adapter:
+
+- routing and pool-metrics URLs;
+- TLS server identity and a reference to trust material;
+- a reference to authentication material; and
+- cluster, failure-domain, health, freshness, draining, and exact-model data.
+
+An endpoint publisher may satisfy that contract with an OpenShift re-encrypt
+Route, Kubernetes Gateway API, Multi-Cluster Services, a service mesh, or an
+externally managed gateway. These are deployment choices: an endpoint
+publisher cannot add a provider rejected by fleet policy, weaken TLS or
+authentication requirements, or substitute a physical model.
+
+The three-cluster reference deployment uses re-encrypt OpenShift Routes
+because they are the validated Red Hat transport. Route objects, service-CA
+annotations, and router-specific certificate wiring belong in OpenShift
+overlays. The portable OSS core and community manifests remain usable without
+the OpenShift API. Gateway API is the preferred Kubernetes-native portability
+target; MCS and mesh integrations can be added when their operational contract
+is required rather than embedded in the controller preemptively.
+
 ## Serving targets
 
 `FleetInferencePool.spec.serving.target` defaults to `inferencePool`. The

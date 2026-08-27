@@ -65,12 +65,19 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 			Labels:          c.Labels,
 			EgressAddress:   egressAddress,
 			MetricsEndpoint: c.Labels["fleet.llm-d.ai/metrics-endpoint"],
-			Status:          c.Status,
-			UpdatedAt:       c.UpdatedAt,
-			Draining:        c.Labels["fleet.llm-d.ai/draining"] == "true",
-			Authorized:      c.Labels["fleet.llm-d.ai/authorized"] != "false",
-			GPUAvailable:    c.GPUAvailable,
-			GPUTotal:        c.GPUTotal,
+			Transport: routing.EndpointTransport{
+				RoutingURL:    egressAddress,
+				MetricsURL:    c.Labels["fleet.llm-d.ai/metrics-endpoint"],
+				TLSServerName: c.Labels["fleet.llm-d.ai/tls-server-name"],
+				TrustRef:      c.Labels["fleet.llm-d.ai/trust-ref"],
+				AuthRef:       c.Labels["fleet.llm-d.ai/auth-ref"],
+			},
+			Status:       c.Status,
+			UpdatedAt:    c.UpdatedAt,
+			Draining:     c.Labels["fleet.llm-d.ai/draining"] == "true",
+			Authorized:   c.Labels["fleet.llm-d.ai/authorized"] != "false",
+			GPUAvailable: c.GPUAvailable,
+			GPUTotal:     c.GPUTotal,
 		})
 	}
 

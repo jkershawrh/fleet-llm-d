@@ -6,6 +6,19 @@ import (
 	"strings"
 )
 
+// EndpointTransport is the portable connection contract between fleet policy
+// and a routing adapter. Platform-specific reconcilers (for example an
+// OpenShift Route or a Gateway API implementation) publish these values; the
+// routing provider consumes them without needing to know which platform
+// produced the endpoint.
+type EndpointTransport struct {
+	RoutingURL    string
+	MetricsURL    string
+	TLSServerName string
+	TrustRef      string
+	AuthRef       string
+}
+
 // ProviderName identifies the single routing data-plane adapter that receives
 // fleet-qualified provider state from the controller.
 type ProviderName string

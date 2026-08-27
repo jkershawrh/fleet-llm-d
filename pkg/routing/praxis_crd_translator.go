@@ -121,6 +121,7 @@ type FleetClusterInfo struct {
 	Labels          map[string]string
 	EgressAddress   string
 	MetricsEndpoint string
+	Transport       EndpointTransport
 	Status          string
 	UpdatedAt       time.Time
 	Draining        bool
@@ -128,6 +129,27 @@ type FleetClusterInfo struct {
 	GPUTypes        []string
 	GPUAvailable    int
 	GPUTotal        int
+}
+
+func (c FleetClusterInfo) routingEndpoint() string {
+	if value := strings.TrimSpace(c.Transport.RoutingURL); value != "" {
+		return value
+	}
+	return strings.TrimSpace(c.EgressAddress)
+}
+
+func (c FleetClusterInfo) metricsEndpoint() string {
+	if value := strings.TrimSpace(c.Transport.MetricsURL); value != "" {
+		return value
+	}
+	return strings.TrimSpace(c.MetricsEndpoint)
+}
+
+func (c FleetClusterInfo) tlsServerName() string {
+	if value := strings.TrimSpace(c.Transport.TLSServerName); value != "" {
+		return value
+	}
+	return strings.TrimSpace(c.Labels["fleet.llm-d.ai/tls-server-name"])
 }
 
 // FleetPoolInfo holds the fleet-llm-d pool state needed for translation.
@@ -153,10 +175,10 @@ func (t *GridCRDTranslator) TranslateClusterToGridSite(cluster FleetClusterInfo)
 	if sz, ok := cluster.Labels["fleet.llm-d.ai/sovereignty-zone"]; ok {
 		spec.SovereigntyZone = sz
 	}
-	if cluster.EgressAddress != "" {
+	if endpoint := cluster.routingEndpoint(); endpoint != "" {
 		spec.Egress = &GridEgress{
-			Address: cluster.EgressAddress,
-			TLS:     &GridEgressTLS{Mode: "Mutual"},
+			Address: endpoint,
+			TLS:     &GridEgressTLS{Mode: "Mutual", ServerName: cluster.tlsServerName()},
 		}
 	}
 	return spec
