@@ -63,6 +63,7 @@ class ResourceTarget:
     namespace: str
     selector: str
     kubeconfig: str = ""
+    context: str = ""
     gpu: bool = False
 
 
@@ -165,7 +166,10 @@ def _oc(target: ResourceTarget, *args: str) -> str:
     env = os.environ.copy()
     if target.kubeconfig:
         env["KUBECONFIG"] = target.kubeconfig
-    command = ["oc", "-n", target.namespace, *args]
+    command = ["oc"]
+    if target.context:
+        command.extend(("--context", target.context))
+    command.extend(("-n", target.namespace, *args))
     return subprocess.run(command, env=env, check=True, capture_output=True, text=True, timeout=20).stdout
 
 

@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import sys
 from argparse import Namespace
 from pathlib import Path
@@ -103,3 +104,33 @@ def test_level_records_bounded_transport_error_samples():
         result.record(MODULE.RequestResult(0, 1, 0, 0, error=f"timeout-{index + 1}"))
     assert result.status_counts == {"transport_error": 8}
     assert len(result.error_samples) == 5
+
+
+def test_oc_uses_explicit_context(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0, stdout="ok")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    target = MODULE.ResourceTarget(
+        name="oberon",
+        namespace="fleet-llm-d",
+        selector="app=model",
+        kubeconfig="/tmp/kubeconfig",
+        context="oberon-admin",
+    )
+
+    assert MODULE._oc(target, "get", "pods") == "ok"
+    assert captured["command"] == [
+        "oc",
+        "--context",
+        "oberon-admin",
+        "-n",
+        "fleet-llm-d",
+        "get",
+        "pods",
+    ]
+    assert captured["env"]["KUBECONFIG"] == "/tmp/kubeconfig"
