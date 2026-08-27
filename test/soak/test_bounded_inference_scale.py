@@ -29,6 +29,12 @@ def test_percentile_is_deterministic():
     assert MODULE.percentile([], 0.99) == 0
 
 
+def test_response_error_captures_structured_code_without_unbounded_body():
+    body = b'{"error":{"code":"quota_exceeded","message":"token budget exhausted"}}'
+    assert MODULE.response_error(body, 429) == "HTTP 429 quota_exceeded: token budget exhausted"
+    assert MODULE.response_error(b"not-json", 502) == "HTTP 502"
+
+
 def test_level_summary_includes_routing_and_resource_evidence():
     result = MODULE.LevelResult(
         concurrency=2,

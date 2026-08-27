@@ -57,6 +57,23 @@ def concurrency_levels(maximum: int) -> list[int]:
     return levels
 
 
+def response_error(body: bytes, status: int) -> str:
+    """Return a bounded structured error label without retaining response data."""
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return f"HTTP {status}"
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        code = str(error.get("code", "")).strip()
+        message = str(error.get("message", "")).strip()
+        if code and message:
+            return f"HTTP {status} {code}: {message[:160]}"
+        if code:
+            return f"HTTP {status} {code}"
+    return f"HTTP {status}"
+
+
 @dataclass
 class ResourceTarget:
     name: str
@@ -220,7 +237,10 @@ async def infer(client: httpx.AsyncClient, url: str, model: str, prompt: str, ma
     completion_tokens = 0
     try:
         async with client.stream("POST", url, json=payload, timeout=60.0) as response:
-            if stream:
+            body = b""
+            if response.status_code != 200:
+                body = await response.aread()
+            elif stream:
                 async for line in response.aiter_lines():
                     if line.startswith("data:") and line != "data: [DONE]" and not first_token:
                         first_token = time.monotonic()
@@ -240,6 +260,7 @@ async def infer(client: httpx.AsyncClient, url: str, model: str, prompt: str, ma
                 actual_model=response.headers.get("x-fleet-actual-model", ""),
                 data_plane=response.headers.get("x-fleet-data-plane", ""),
                 request_id=response.headers.get("x-request-id", ""),
+                error=response_error(body, response.status_code) if response.status_code != 200 else "",
             )
     except Exception as exc:
         finished = time.monotonic()
