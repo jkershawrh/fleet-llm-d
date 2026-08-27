@@ -24,6 +24,7 @@ deploy/kustomize/base-spoke
 deploy/kustomize/overlays/community
 deploy/kustomize/components/community-postgres
 deploy/kustomize/components/grid-signals-publisher
+deploy/kustomize/components/llmd-router-endpoints
 deploy/migrations
 deploy/mock-inference
 deploy/prometheus

@@ -5,6 +5,30 @@
 
 fleet-llm-d is a data-plane-neutral operations control plane for enterprise AI inference fleets. It owns cluster registration, capability inventory, exact-model resolution, tenant admission, placement constraints, provider health, draining, failure-domain status, and eligible-provider reconciliation. Praxis is the validated routing adapter for the current release; the llm-d Router adapter is the upstream-native beta. KServe, llm-d Router/EPP, KEDA, and optionally WVA retain cluster-local serving, endpoint selection, and pod-scaling ownership. DeepField, GCL, the immutable ledger, llm-d-sc, ModelPack, and ModelPlane are optional integrations rather than OSS-core prerequisites.
 
+## Distribution and deployment profiles
+
+This repository develops one OSS codebase. Scale, high availability, and
+governed evidence are additive deployment profiles—not separate editions or
+forks:
+
+- **OSS core** is the portable Apache-2.0 control plane, agent, APIs, CLI,
+  community manifests, tests, and routing-provider contracts. Optional
+  ecosystem services are absent and disabled by default.
+- **Routing adapters** add either Praxis (validated default) or llm-d Router
+  (upstream-native beta) without changing fleet eligibility policy.
+- **Production scale/HA** adds stateless gateway and routing replicas, external
+  durable state, topology controls, secure transport, capacity guardrails, and
+  failure certification. These capabilities remain OSS and portable.
+- **Governed evidence** optionally adds authenticated GCL proposals, an
+  external immutable ledger, DeepField observations, and related integrations.
+  It is not required by OSS core or scale/HA.
+- **Environment overlays and evidence** contain physical-cluster names,
+  endpoints, image pins, and raw qualification results. They validate the OSS
+  capabilities but are not part of the portable source release.
+
+See [deployment profiles](docs/community/deployment-profiles.md) and the
+[community release boundary](docs/community/release-boundary.md).
+
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8.svg)](https://go.dev/)
 [![Rust](https://img.shields.io/badge/Rust-1.90+-DEA584.svg)](https://www.rust-lang.org/)

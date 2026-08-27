@@ -22,6 +22,8 @@ required=(
   go.mod Cargo.toml api/crds charts/fleet-llm-d
   cmd/fleet-controller cmd/grid-signals-publisher crates/fleet-agent pkg
   deploy/kustomize/overlays/community
+  deploy/kustomize/components/llmd-router-endpoints
+  docs/community/deployment-profiles.md
 )
 for path in "${required[@]}"; do
   if [[ ! -e "$bundle_root/$path" ]]; then

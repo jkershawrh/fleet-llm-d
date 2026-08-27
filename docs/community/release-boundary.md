@@ -4,11 +4,19 @@ The portable OSS artifact is an allowlisted projection of the full source
 repository. Building it never deletes, moves, or edits environment material.
 The definitive include list is `release/oss-include.txt`.
 
+The artifact is the complete portable source distribution. Production scale
+and HA are supported deployment profiles of this same OSS codebase; they are
+not a closed or separate "scale edition." Governed-evidence integrations are
+optional composition, while physical deployment overlays and raw evidence stay
+outside the portable artifact.
+
 ## Included
 
 - Apache-2.0 controller (including OpenAI-compatible ingress), agent, CLI, API,
   and dashboard source.
 - Generic Helm and Kustomize deployment resources.
+- Generic Praxis and llm-d Router adapter contracts and endpoint-discovery
+  resources.
 - Community PostgreSQL evaluation component.
 - Mock inference backend and portable automated tests.
 - Observability dashboards and alert definitions.
