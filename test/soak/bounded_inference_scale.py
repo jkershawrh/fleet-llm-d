@@ -248,15 +248,24 @@ async def run_level(client: httpx.AsyncClient, args: argparse.Namespace, concurr
     started = time.monotonic()
     index = 0
     while time.monotonic() - started < args.duration_per_level:
+        remaining = args.duration_per_level - (time.monotonic() - started)
+        if remaining <= 0:
+            break
         batch = [
             infer(client, args.url, args.model, prompts[(index + offset) % len(prompts)], args.max_tokens, args.stream)
             for offset in range(concurrency)
         ]
         index += concurrency
-        for request in await asyncio.gather(*batch):
+        try:
+            requests = await asyncio.wait_for(asyncio.gather(*batch), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        for request in requests:
             result.record(request)
         if args.request_interval > 0:
-            await asyncio.sleep(args.request_interval)
+            remaining = args.duration_per_level - (time.monotonic() - started)
+            if remaining > 0:
+                await asyncio.sleep(min(args.request_interval, remaining))
     result.duration_seconds = time.monotonic() - started
     result.resources = await asyncio.gather(*[asyncio.to_thread(sample_resources, target) for target in args.resource_targets])
     return result

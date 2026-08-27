@@ -76,6 +76,27 @@ def test_request_interval_throttles_batches(monkeypatch):
     assert sleeps == [2.5]
 
 
+def test_level_cancels_batch_at_deadline(monkeypatch):
+    async def slow_infer(*_args, **_kwargs):
+        await MODULE.asyncio.sleep(1)
+        return MODULE.RequestResult(200, 1, 1, 1, data_plane="llm-d-router")
+
+    args = Namespace(
+        duration_per_level=0.05,
+        url="https://gateway.example/v1/chat/completions",
+        model="model",
+        max_tokens=1,
+        stream=False,
+        request_interval=0,
+        resource_targets=[],
+    )
+    monkeypatch.setattr(MODULE, "infer", slow_infer)
+    started = MODULE.time.monotonic()
+    result = MODULE.asyncio.run(MODULE.run_level(object(), args, 1))
+    assert MODULE.time.monotonic() - started < 0.5
+    assert result.requests == 0
+
+
 def test_level_records_bounded_transport_error_samples():
     result = MODULE.LevelResult(concurrency=1)
     for index in range(8):
