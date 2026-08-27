@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-router-qualification-gateway
+  namespace: fleet-llm-d
+  labels: &gatewayLabels
+    app.kubernetes.io/name: fleet-router-qualification-gateway
+    app.kubernetes.io/part-of: fleet-llm-d
+    app.kubernetes.io/component: router-qualification
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-router-qualification-gateway}
+  template:
+    metadata:
+      labels: *gatewayLabels
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: fleet-controller
+      securityContext: {runAsNonRoot: true}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: fleet-router-qualification-gateway}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: {app.kubernetes.io/name: fleet-router-qualification-gateway}
+      containers:
+        - name: gateway
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller@sha256:6dba26abdd649fe86d8470b5a9008c028065963215608c03d220c8e078cdb04a
+          args:
+            - --mode=inference
+            - --port=8080
+            - --metrics-port=9091
+            - --inference-provider=llm-d-router
+            - --llm-d-router-cpu-url=http://fleet-router-cpu-proxy.fleet-llm-d.svc:8081
+            - --llm-d-router-gpu-url=http://fleet-router-gpu-proxy.fleet-llm-d.svc:8081
+            - --ledger-mode=disabled
+            - --inference-max-inflight=50
+            - --rate-limit=25
+            - --rate-burst=50
+            - --trust-proxy-headers=true
+          env:
+            - name: FLEET_AUTH_SECRET
+              valueFrom:
+                secretKeyRef: {name: fleet-identity, key: hmac-secret}
+            - name: PG_URL
+              valueFrom:
+                secretKeyRef: {name: fleet-postgres-credentials, key: pg-url}
+            - name: SEMANTIC_CLASSIFIER_URL
+              value: llm-d-semantic-classifier.fleet-llm-d.svc:50051
+            - name: SEMANTIC_CLASSIFIER_INSECURE
+              value: "true"
+            - name: FLEET_PROVIDER_HEALTH_URLS_JSON
+              value: '{"oberon-cpu":"http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready","arena-xeon6":"https://ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com/v2/health/ready","brutus-h100":"https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com/health"}'
+            - name: FLEET_PROVIDER_CA_FILE
+              value: /etc/fleet/route-ca/ca-bundle.crt
+            - name: FLEET_ROUTER_UPSTREAM_CLUSTERS_JSON
+              value: '{"ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com:443":"oberon-cpu","ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com:443":"arena-xeon6","vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com:443":"brutus-h100"}'
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: metrics, containerPort: 9091}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {cpu: "2", memory: 1Gi}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: route-ca, mountPath: /etc/fleet/route-ca, readOnly: true}
+      volumes:
+        - name: route-ca
+          configMap: {name: fleet-route-ca}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fleet-router-qualification-gateway, namespace: fleet-llm-d}
+spec:
+  selector: {app.kubernetes.io/name: fleet-router-qualification-gateway}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+    - {name: metrics, port: 9091, targetPort: metrics}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: fleet-router-qualification-gateway
+  namespace: fleet-llm-d
+  annotations: {haproxy.router.openshift.io/timeout: 180s}
+spec:
+  to: {kind: Service, name: fleet-router-qualification-gateway}
+  port: {targetPort: http}
+  tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: fleet-router-qualification-gateway, namespace: fleet-llm-d}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-router-qualification-gateway}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fleet-router-qualification-gateway, namespace: fleet-llm-d}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: fleet-router-qualification-gateway}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {network.openshift.io/policy-group: ingress}
+      ports: [{port: 8080, protocol: TCP}]
+  egress:
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+        - {port: 5353, protocol: UDP}
+        - {port: 5353, protocol: TCP}
+    - to:
+        - podSelector:
+            matchLabels: {app: fleet-postgres}
+      ports: [{port: 5432, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: llm-d-semantic-classifier}
+      ports: [{port: 50051, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [fleet-router-cpu-proxy, fleet-router-gpu-proxy]}
+      ports: [{port: 8081, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchLabels: {app: ovms-granite-2b}
+      ports: [{port: 8080, protocol: TCP}]
+    - to:
+        - ipBlock: {cidr: 192.168.1.106/32}
+        - ipBlock: {cidr: 192.168.1.75/32}
+      ports: [{port: 443, protocol: TCP}]

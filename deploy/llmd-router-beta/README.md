@@ -35,6 +35,14 @@ authority from the EPP-selected endpoint, and verifies the selected Route with
 dynamic SNI against the mounted `fleet-route-ca` bundle. The Services have no
 Route; only the qualification gateway NetworkPolicy identity may call them.
 
+`qualification-gateway.yaml` deploys that isolated gateway with the
+`llm-d-router` inference provider and a separate OpenShift Route. It retains
+tenant authentication, PostgreSQL state, semantic classification, exact-model
+resolution, and provider health checks while disabling the optional ledger for
+core data-plane qualification. Replace `QUALIFICATION_IMAGE_DIGEST` with the
+controller digest built from the commit under test before applying it. The
+production `fleet-inference-gateway` and Praxis resources are not modified.
+
 The proxy permits one retry for connection failures, resets, or refused
 streams. Envoy retries only before response headers are returned; an active
 stream is never replayed. The stock standalone Envoy profile remains
