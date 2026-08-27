@@ -102,3 +102,14 @@ multi-cluster telemetry does not depend on each kubeconfig's current context.
   `sha256:880e35236fcba885d0fbbc34b4aa813372327a1705aa670b838dc33b40290760`.
   Controller remained 3/3 with exactly one ready leader Service endpoint;
   gateway remained 2/2 and Praxis 2/2.
+
+## Exact GPU provider loss
+
+- Brutus GPU serving was scaled from one replica to zero under an automatic
+  restoration guard.
+- All seven measured requests, beginning 17 seconds after the event, returned
+  structured HTTP 503 with error code `no_compatible_capacity`.
+- No request reported a routed cluster or substituted CPU model.
+- Brutus restored to 1/1 after the expected 8B model cold start. After health
+  recovery, an exact-model request returned HTTP 200 from `brutus-h100` with
+  `ibm-granite/granite-3.1-8b-instruct` in both headers and response metadata.
