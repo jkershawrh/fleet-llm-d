@@ -371,3 +371,66 @@ func TestInferenceGatewayNormalizesProvider503(t *testing.T) {
 		t.Fatalf("expected structured 503, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestInferenceGatewayRetriesAlternateCPUProviderBeforeHeaders(t *testing.T) {
+	var targets []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targets = append(targets, r.Header.Get("X-Fleet-Target-Cluster"))
+		if len(targets) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer upstream.Close()
+
+	fc := newTestFleetController(t)
+	fc.PraxisURL = upstream.URL
+	for _, cluster := range []string{"cpu-provider-a", "cpu-provider-b"} {
+		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected retry success, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(targets) != 2 || targets[0] == targets[1] {
+		t.Fatalf("retry targets = %v", targets)
+	}
+	if got := rr.Header().Get("X-Fleet-Routed-To"); got != targets[1] {
+		t.Fatalf("routed-to = %q, retry target = %q", got, targets[1])
+	}
+	if got := rr.Header().Get("X-Fleet-Routing-Reason"); got != "health-failover" {
+		t.Fatalf("routing reason = %q", got)
+	}
+}
+
+func TestInferenceGatewayDoesNotRetryExactGPUProvider(t *testing.T) {
+	attempts := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer upstream.Close()
+
+	fc := newTestFleetController(t)
+	fc.PraxisURL = upstream.URL
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: testGPUProvider, Name: testGPUProvider, Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"ibm-granite/granite-3.1-8b-instruct","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadGateway || attempts != 1 {
+		t.Fatalf("status = %d, attempts = %d", rr.Code, attempts)
+	}
+}

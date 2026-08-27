@@ -22,13 +22,17 @@ func (fc *FleetController) providerServesModel(provider, model string) bool {
 }
 
 func (fc *FleetController) nextHealthyProvider(ctx context.Context, model string) string {
+	return fc.nextHealthyProviderExcluding(ctx, model, "")
+}
+
+func (fc *FleetController) nextHealthyProviderExcluding(ctx context.Context, model, excluded string) string {
 	allowed := make(map[string]bool, len(fc.ModelProviderClusters[model]))
 	for _, provider := range fc.ModelProviderClusters[model] {
 		allowed[provider] = true
 	}
 	providers := make([]string, 0, len(allowed))
 	for _, cluster := range fc.BuildInferenceClusterHealth(ctx) {
-		if allowed[cluster.ClusterID] && cluster.Healthy {
+		if cluster.ClusterID != excluded && allowed[cluster.ClusterID] && cluster.Healthy {
 			providers = append(providers, cluster.ClusterID)
 		}
 	}

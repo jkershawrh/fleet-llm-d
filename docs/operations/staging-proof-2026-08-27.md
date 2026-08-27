@@ -62,11 +62,25 @@ multi-cluster telemetry does not depend on each kubeconfig's current context.
   registry access. Build 5 completed and Arena rolled out agent digest
   `sha256:0329e3b7d8ecd91498bb3856368e499ac14ff05bbe788541b93de64d6e65d928`.
   Four post-rollout CPU requests succeeded and reached both Arena and Oberon.
-- Brutus inference is healthy and exact-model routing is proven. Its failed
-  build reproduced the same missing build-pod egress policy. The manifest fix
-  is prepared; live application and agent rollout remain pending API access.
+- Brutus reproduced the same missing build-pod egress policy. Applying the
+  scoped policy allowed build 6 to complete, and Brutus rolled out agent digest
+  `sha256:671370936daf593aef5d2350b30525b8b76c594eab1beb5bc23b6cf923c0caff`.
+  Two post-rollout exact-model requests returned HTTP 200 from `brutus-h100`.
 - Two obsolete overlapping Oberon PDBs (`fleet-core-services-pdb` and
   `praxis-ai-pdb`) were removed. The current workload-specific PDBs remain.
-- This checkpoint does not certify failover convergence, Router beta, GPU
-  resource telemetry, external HA PostgreSQL, or the governed ledger profile.
-  Those remain release gates rather than failures of this bounded proof.
+- This checkpoint does not certify Router beta, GPU resource telemetry,
+  external HA PostgreSQL, or the governed ledger profile. Those remain release
+  gates rather than failures of this bounded proof.
+
+## Controlled CPU provider loss
+
+- Arena loss: all 12 requests succeeded on Oberon. The first measured request
+  began 12 seconds after scale-down. Arena restored to 1/1, both gateway
+  replicas logged health recovery, and subsequent traffic reached both sites.
+- Oberon backend loss: request 1 succeeded on Arena at 12 seconds; request 2
+  received HTTP 502 from stale Oberon selection at 16 seconds. Requests 3-12
+  all succeeded on Arena from 20 seconds onward. Oberon restored to 1/1 and
+  traffic distribution recovered.
+- Observed convergence was below 20 seconds and met the 30-second objective,
+  but the pre-convergence 502 proves bounded pre-header retry is still required
+  to satisfy the stronger surviving-traffic acceptance criterion.

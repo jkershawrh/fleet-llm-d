@@ -159,6 +159,7 @@ var (
 	routingDecisions  = newLabeledCounter()
 	inferenceRequests = newLabeledCounter()
 	inferenceErrors   = newLabeledCounter()
+	inferenceRetries  = newLabeledCounter()
 	inferenceActive   = &gauge{}
 
 	// Placement solver duration (seconds)
@@ -252,6 +253,7 @@ func handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 	writeCounterVec(w, "fleet_routing_decisions_total", "Routing decisions by strategy", "strategy", routingDecisions.snapshot())
 	writeCounterVec(w, "fleet_inference_requests_total", "Inference requests by selected cluster and physical model", "target", inferenceRequests.snapshot())
 	writeCounterVec(w, "fleet_inference_errors_total", "Inference gateway errors by reason", "reason", inferenceErrors.snapshot())
+	writeCounterVec(w, "fleet_inference_retries_total", "Pre-header inference retries by reason", "reason", inferenceRetries.snapshot())
 	writeGauge(w, "fleet_inference_active_streams", "Active inference streams", inferenceActive.Value())
 
 	// Solver duration histogram

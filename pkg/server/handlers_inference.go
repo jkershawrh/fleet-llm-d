@@ -210,6 +210,25 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	inferenceActive.Inc()
 	defer inferenceActive.Dec()
 	resp, err := client.Do(upstream)
+	if r.Context().Err() == nil && physicalModel == fc.cpuPhysicalModel() && retryableInferenceFailure(resp, err) {
+		if retryCluster := fc.nextHealthyProviderExcluding(r.Context(), physicalModel, decision.TargetCluster); retryCluster != "" {
+			if resp != nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+			retryBody, bodyErr := upstream.GetBody()
+			if bodyErr == nil {
+				retryRequest := upstream.Clone(r.Context())
+				retryRequest.Body = retryBody
+				retryRequest.Header.Set("X-Fleet-Target-Cluster", retryCluster)
+				inferenceRetries.Inc("provider_failure")
+				slog.Warn("retrying inference on alternate provider", "request_id", requestID, "failed_cluster", decision.TargetCluster, "retry_cluster", retryCluster)
+				decision.TargetCluster = retryCluster
+				decision.Reason = "health-failover"
+				resp, err = client.Do(retryRequest)
+			}
+		}
+	}
 	if err != nil {
 		inferenceErrors.Inc("upstream_unavailable")
 		slog.Warn("inference upstream failed", "request_id", requestID, "cluster", decision.TargetCluster, "error", err)
@@ -249,6 +268,13 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		inferenceErrors.Inc("stream_interrupted")
 	}
 	inferenceRequests.Inc(decision.TargetCluster + ":" + physicalModel)
+}
+
+func retryableInferenceFailure(resp *http.Response, err error) bool {
+	if err != nil {
+		return true
+	}
+	return resp != nil && (resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout)
 }
 
 func isTimeout(err error) bool {
