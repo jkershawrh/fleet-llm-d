@@ -56,14 +56,15 @@ multi-cluster telemetry does not depend on each kubeconfig's current context.
 
 ## Infrastructure findings and remaining gates
 
-- Arena inference is healthy, but new image builds are blocked by Arena's
-  cluster-wide pod service-network failure. Build pods on both `rhgnr1` and
-  `gnr2` could not reach `172.30.0.1:443` or cluster DNS. The existing Arena
-  agent remains ready on its prior digest.
-- Brutus inference is healthy and exact-model routing is proven. Its API
-  endpoint recovered during the checkpoint, but its build pod then reproduced
-  the same inability to reach `172.30.0.1:443`. Build 5 was cancelled and the
-  existing Brutus agent remains ready on its prior digest.
+- Arena's failed builds were caused by `default-deny-all` selecting ephemeral
+  OpenShift build pods without a corresponding egress allowance. The scoped
+  `allow-openshift-build-egress` policy restored API, DNS, HTTPS, and internal
+  registry access. Build 5 completed and Arena rolled out agent digest
+  `sha256:0329e3b7d8ecd91498bb3856368e499ac14ff05bbe788541b93de64d6e65d928`.
+  Four post-rollout CPU requests succeeded and reached both Arena and Oberon.
+- Brutus inference is healthy and exact-model routing is proven. Its failed
+  build reproduced the same missing build-pod egress policy. The manifest fix
+  is prepared; live application and agent rollout remain pending API access.
 - Two obsolete overlapping Oberon PDBs (`fleet-core-services-pdb` and
   `praxis-ai-pdb`) were removed. The current workload-specific PDBs remain.
 - This checkpoint does not certify failover convergence, Router beta, GPU
