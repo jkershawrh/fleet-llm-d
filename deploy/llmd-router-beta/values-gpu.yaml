@@ -4,15 +4,24 @@ router:
   proxy:
     enabled: false
   epp:
-    replicas: 1
+    replicas: 2
     image:
       registry: ghcr.io/llm-d
       repository: llm-d-router-endpoint-picker
-      tag: main
-      pullPolicy: Always
+      tag: main@sha256:b1eb81f01ea9b56271f0fd536380454d0d82bc03bc59dab7197764da11ffa2ff
+      pullPolicy: IfNotPresent
     flags:
       allow-experimental-plugins: true
       v: 2
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  llm-d-router-standalone: fleet-router-gpu-epp
     pluginsConfigFile: multicluster.yaml
     pluginsCustomConfig:
       multicluster.yaml: |
