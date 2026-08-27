@@ -48,6 +48,9 @@ func main() {
 	rateLimitExempt := flag.String("rate-limit-exempt", "/healthz,/readyz,/metrics", "Comma-separated exact paths exempt from rate limiting and auth")
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", false, "Honour X-Forwarded-For when identifying clients for rate limiting. Enable ONLY when every request arrives through a proxy that overwrites the header; otherwise clients can forge their own rate-limit identity")
 	praxisURL := flag.String("praxis-url", "", "Internal Praxis inference endpoint")
+	inferenceProvider := flag.String("inference-provider", "", "Inference data plane: praxis (default) or llm-d-router")
+	llmdCPUURL := flag.String("llm-d-router-cpu-url", "", "Internal llm-d Router CPU proxy endpoint")
+	llmdGPUURL := flag.String("llm-d-router-gpu-url", "", "Internal llm-d Router GPU proxy endpoint")
 	routingProvider := flag.String("routing-provider", "", "Authoritative routing adapter: praxis (default), llm-d-router, or disabled")
 	inferenceMaxInflight := flag.Int("inference-max-inflight", 100, "Maximum concurrent inference requests per gateway replica")
 	_ = flag.String("backends", "", "Deprecated: inference routing moved to Praxis")
@@ -56,6 +59,20 @@ func main() {
 	flag.Parse()
 	if *praxisURL == "" {
 		*praxisURL = os.Getenv("PRAXIS_URL")
+	}
+	if *inferenceProvider == "" {
+		*inferenceProvider = os.Getenv("FLEET_INFERENCE_PROVIDER")
+	}
+	parsedInferenceProvider, err := server.ParseInferenceProviderName(*inferenceProvider)
+	if err != nil {
+		slog.Error("invalid inference provider", "error", err)
+		os.Exit(1)
+	}
+	if *llmdCPUURL == "" {
+		*llmdCPUURL = os.Getenv("FLEET_LLMD_ROUTER_CPU_URL")
+	}
+	if *llmdGPUURL == "" {
+		*llmdGPUURL = os.Getenv("FLEET_LLMD_ROUTER_GPU_URL")
 	}
 	if *routingProvider == "" {
 		*routingProvider = os.Getenv("FLEET_ROUTING_PROVIDER")
@@ -107,7 +124,7 @@ func main() {
 		slog.Warn("authentication is DISABLED: every API request will be served unauthenticated. " +
 			"Set FLEET_AUTH_SECRET or FLEET_AUTH_SECRET_FILE before exposing this controller.")
 	}
-	if err := validateProductionConfig(*production, *mode, *pgURL, ledger.Mode(*ledgerMode), *ledgerEndpoint, authCfg.Enabled, *tlsCert, *tlsKey, *praxisURL, os.Getenv("GCL_DECISION_SIGNING_KEYS_JSON")); err != nil {
+	if err := validateProductionConfig(*production, *mode, *pgURL, ledger.Mode(*ledgerMode), *ledgerEndpoint, authCfg.Enabled, *tlsCert, *tlsKey, parsedInferenceProvider, *praxisURL, *llmdCPUURL, *llmdGPUURL, os.Getenv("GCL_DECISION_SIGNING_KEYS_JSON")); err != nil {
 		slog.Error("production configuration rejected", "error", err)
 		os.Exit(1)
 	}
@@ -157,8 +174,12 @@ func main() {
 	}
 
 	fc.AuthSecret = authCfg.Secret
+	fc.InferenceProviderName = parsedInferenceProvider
 	fc.PraxisURL = *praxisURL
 	fc.PraxisToken = os.Getenv("PRAXIS_API_TOKEN")
+	fc.LLMDCPUURL = *llmdCPUURL
+	fc.LLMDGPUURL = *llmdGPUURL
+	fc.LLMDToken = os.Getenv("FLEET_LLMD_ROUTER_API_TOKEN")
 	fc.CPUPhysicalModel = os.Getenv("FLEET_CPU_PHYSICAL_MODEL")
 	fc.GPUPhysicalModel = os.Getenv("FLEET_GPU_PHYSICAL_MODEL")
 	if raw := os.Getenv("FLEET_PROVIDER_HEALTH_URLS_JSON"); raw != "" {
@@ -221,7 +242,7 @@ func main() {
 	}
 }
 
-func validateProductionConfig(production bool, mode, pgURL string, ledgerMode ledger.Mode, ledgerEndpoint string, authEnabled bool, tlsCert, tlsKey, praxisURL, decisionKeys string) error {
+func validateProductionConfig(production bool, mode, pgURL string, ledgerMode ledger.Mode, ledgerEndpoint string, authEnabled bool, tlsCert, tlsKey string, inferenceProvider server.InferenceProviderName, praxisURL, llmdCPUURL, llmdGPUURL, decisionKeys string) error {
 	if !production {
 		return nil
 	}
@@ -241,8 +262,19 @@ func validateProductionConfig(production bool, mode, pgURL string, ledgerMode le
 	if decisionKeys == "" {
 		missing = append(missing, "GCL Ed25519 verification keys")
 	}
-	if (mode == "all" || mode == "inference") && praxisURL == "" {
-		missing = append(missing, "Praxis URL")
+	if mode == "all" || mode == "inference" {
+		switch inferenceProvider {
+		case server.InferenceProviderPraxis:
+			if praxisURL == "" {
+				missing = append(missing, "Praxis URL")
+			}
+		case server.InferenceProviderLLMD:
+			if llmdCPUURL == "" || llmdGPUURL == "" {
+				missing = append(missing, "llm-d Router CPU and GPU URLs")
+			}
+		default:
+			missing = append(missing, "supported inference provider")
+		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing or unsafe production requirements: %s", strings.Join(missing, ", "))

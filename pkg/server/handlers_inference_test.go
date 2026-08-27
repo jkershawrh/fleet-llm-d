@@ -64,6 +64,47 @@ func TestInferenceGatewayRoutesRewritesAndSanitizes(t *testing.T) {
 	if gotModel != defaultCPUModel || rr.Header().Get("X-Fleet-Actual-Model") != defaultCPUModel {
 		t.Fatalf("physical model not rewritten: body=%q header=%q", gotModel, rr.Header().Get("X-Fleet-Actual-Model"))
 	}
+	if got := rr.Header().Get("X-Fleet-Data-Plane"); got != string(InferenceProviderPraxis) {
+		t.Fatalf("data plane = %q", got)
+	}
+}
+
+func TestInferenceGatewayUsesRouterPoolAndStripsInternalHeaders(t *testing.T) {
+	var gotCluster, gotDestination, gotModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCluster = r.Header.Get("X-Fleet-Target-Cluster")
+		gotDestination = r.Header.Get("X-Gateway-Destination-Endpoint")
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotModel, _ = body["model"].(string)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	fc := newTestFleetController(t)
+	fc.InferenceProviderName = InferenceProviderLLMD
+	fc.LLMDCPUURL = upstream.URL
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("X-Fleet-Target-Cluster", "brutus-h100")
+	req.Header.Set("X-Gateway-Destination-Endpoint", "attacker.invalid:443")
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if gotCluster != "oberon-cpu" || gotDestination != "" || gotModel != defaultCPUModel {
+		t.Fatalf("sanitization/routing mismatch: cluster=%q destination=%q model=%q", gotCluster, gotDestination, gotModel)
+	}
+	if got := rr.Header().Get("X-Fleet-Data-Plane"); got != string(InferenceProviderLLMD) {
+		t.Fatalf("data plane = %q", got)
+	}
 }
 
 func TestInferenceGatewayNoCapacityIsStructured503(t *testing.T) {

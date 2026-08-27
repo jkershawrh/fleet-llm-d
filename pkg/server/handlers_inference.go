@@ -181,12 +181,12 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	delete(forwarded, "session_id")
 	delete(forwarded, "policy")
 	body, _ = json.Marshal(forwarded)
-	praxisURL := strings.TrimRight(fc.PraxisURL, "/")
-	if praxisURL == "" {
-		writeInferenceError(w, http.StatusServiceUnavailable, "gateway_not_configured", "Praxis endpoint is not configured", requestID)
+	target, err := fc.inferenceTarget(physicalModel)
+	if err != nil {
+		writeInferenceError(w, http.StatusServiceUnavailable, "gateway_not_configured", err.Error(), requestID)
 		return
 	}
-	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, praxisURL+r.URL.Path, bytes.NewReader(body))
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.BaseURL+r.URL.Path, bytes.NewReader(body))
 	if err != nil {
 		writeInferenceError(w, http.StatusInternalServerError, "proxy_error", "could not create upstream request", requestID)
 		return
@@ -196,8 +196,8 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	upstream.Header.Set("X-Request-ID", requestID)
 	upstream.Header.Set("X-Fleet-Target-Cluster", decision.TargetCluster)
 	upstream.Header.Set("X-Fleet-Routing-Reason", decision.Reason)
-	if fc.PraxisToken != "" {
-		upstream.Header.Set("Authorization", "Bearer "+fc.PraxisToken)
+	if target.APIToken != "" {
+		upstream.Header.Set("Authorization", "Bearer "+target.APIToken)
 	}
 	client := fc.InferenceClient
 	if client == nil {
@@ -228,6 +228,7 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("X-Fleet-Routed-To", decision.TargetCluster)
 	w.Header().Set("X-Fleet-Routing-Reason", decision.Reason)
 	w.Header().Set("X-Fleet-Actual-Model", physicalModel)
+	w.Header().Set("X-Fleet-Data-Plane", string(target.Provider))
 	w.WriteHeader(resp.StatusCode)
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		inferenceErrors.Inc("stream_interrupted")

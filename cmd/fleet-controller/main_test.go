@@ -22,7 +22,8 @@ func TestValidateProductionConfig(t *testing.T) {
 	t.Setenv("LEDGER_GATEWAY_API_TOKEN", "ledger-token")
 	valid := func() error {
 		return validateProductionConfig(true, "inference", "postgres://db/fleet?sslmode=verify-full", ledger.ModeHTTP,
-			"https://ledger.example", true, "/tls/tls.crt", "/tls/tls.key", "http://praxis-ai:8080", `{"gcl":"base64:key"}`)
+			"https://ledger.example", true, "/tls/tls.crt", "/tls/tls.key", server.InferenceProviderPraxis,
+			"http://praxis-ai:8080", "", "", `{"gcl":"base64:key"}`)
 	}
 	if err := valid(); err != nil {
 		t.Fatalf("valid production config rejected: %v", err)
@@ -34,8 +35,23 @@ func TestValidateProductionConfig(t *testing.T) {
 }
 
 func TestValidateProductionConfigDevelopmentBypass(t *testing.T) {
-	if err := validateProductionConfig(false, "all", "", ledger.ModeDisabled, "", false, "", "", "", ""); err != nil {
+	if err := validateProductionConfig(false, "all", "", ledger.ModeDisabled, "", false, "", "", server.InferenceProviderPraxis, "", "", "", ""); err != nil {
 		t.Fatalf("development configuration should remain supported: %v", err)
+	}
+}
+
+func TestValidateProductionConfigRouterRequiresBothPools(t *testing.T) {
+	t.Setenv("LEDGER_GATEWAY_API_TOKEN", "ledger-token")
+	base := func(cpu, gpu string) error {
+		return validateProductionConfig(true, "inference", "postgres://db/fleet?sslmode=verify-full", ledger.ModeHTTP,
+			"https://ledger.example", true, "/tls/tls.crt", "/tls/tls.key", server.InferenceProviderLLMD,
+			"", cpu, gpu, `{"gcl":"base64:key"}`)
+	}
+	if err := base("http://router-cpu:8081", "http://router-gpu:8081"); err != nil {
+		t.Fatalf("valid Router production config rejected: %v", err)
+	}
+	if err := base("http://router-cpu:8081", ""); err == nil || !strings.Contains(err.Error(), "Router CPU and GPU") {
+		t.Fatalf("expected missing Router pool error, got %v", err)
 	}
 }
 

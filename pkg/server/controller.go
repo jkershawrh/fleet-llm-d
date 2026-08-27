@@ -130,15 +130,19 @@ type FleetController struct {
 
 	// Inference gateway configuration. PraxisURL is intentionally internal;
 	// callers must enter through the authenticated fleet gateway.
-	PraxisURL        string
-	PraxisToken      string
-	InferenceClient  *http.Client
-	CPUPhysicalModel string
-	GPUPhysicalModel string
-	InferenceSlots   chan struct{}
-	ProviderHealth   *ProviderHealthCache
-	GridSignalPoller *gridsignals.Poller
-	cpuRouteCounter  atomic.Uint64
+	PraxisURL             string
+	PraxisToken           string
+	InferenceProviderName InferenceProviderName
+	LLMDCPUURL            string
+	LLMDGPUURL            string
+	LLMDToken             string
+	InferenceClient       *http.Client
+	CPUPhysicalModel      string
+	GPUPhysicalModel      string
+	InferenceSlots        chan struct{}
+	ProviderHealth        *ProviderHealthCache
+	GridSignalPoller      *gridsignals.Poller
+	cpuRouteCounter       atomic.Uint64
 
 	// Server state
 	ready atomic.Bool
