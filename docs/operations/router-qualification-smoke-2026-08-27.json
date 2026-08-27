@@ -1,0 +1,62 @@
+{
+  "certification_rps": 0.17,
+  "data_plane": "llm-d-router",
+  "gpu_utilization_external_required": false,
+  "levels": [
+    {
+      "concurrency": 1,
+      "data_plane_counts": {
+        "llm-d-router": 306
+      },
+      "duration_seconds": 900.001,
+      "error_percent": 0.0,
+      "error_samples": [],
+      "errors": 0,
+      "latency_ms": {
+        "p50": 869.975,
+        "p95": 1527.858,
+        "p99": 1728.629
+      },
+      "model_counts": {
+        "granite-2b-cpu": 306
+      },
+      "requests": 306,
+      "resources": [
+        {
+          "cpu_percent": 12.475,
+          "error": "",
+          "memory_percent": 20.886,
+          "restarts": 0,
+          "target": "oberon-cpu"
+        },
+        {
+          "cpu_percent": 9.075,
+          "error": "",
+          "memory_percent": 21.667,
+          "restarts": 0,
+          "target": "arena-cpu"
+        }
+      ],
+      "routed_counts": {
+        "arena-xeon6": 153,
+        "oberon-cpu": 153
+      },
+      "rps": 0.34,
+      "status_counts": {
+        "200": 306
+      },
+      "stop_reasons": [],
+      "tokens_per_second": 2.38,
+      "ttft_ms": {
+        "p50": 869.975,
+        "p95": 1527.858,
+        "p99": 1728.629
+      }
+    }
+  ],
+  "model": "granite-2b-cpu",
+  "resource_guardrail_percent": 70.0,
+  "safe_concurrency": 1,
+  "safe_rps": 0.34,
+  "schema_version": "fleet-scale-v1"
+}
