@@ -31,10 +31,12 @@ func (fc *FleetController) handleCapabilities(w http.ResponseWriter, r *http.Req
 	for _, site := range health {
 		healthy[site.ClusterID] = site.Healthy
 	}
-	cpu := capabilityFor(defaultCPUModel, []string{"oberon-cpu", "arena-xeon6"}, healthy)
-	gpu := capabilityFor(defaultGPUModel, []string{"brutus-h100"}, healthy)
-	cpu.Providers = fc.providerCapabilityDetails(r, defaultCPUModel, []string{"oberon-cpu", "arena-xeon6"}, healthy)
-	gpu.Providers = fc.providerCapabilityDetails(r, defaultGPUModel, []string{"brutus-h100"}, healthy)
+	cpuModel, gpuModel := fc.cpuPhysicalModel(), fc.gpuPhysicalModel()
+	cpuProviders, gpuProviders := fc.providersForModel(cpuModel), fc.providersForModel(gpuModel)
+	cpu := capabilityFor(cpuModel, cpuProviders, healthy)
+	gpu := capabilityFor(gpuModel, gpuProviders, healthy)
+	cpu.Providers = fc.providerCapabilityDetails(r, cpuModel, cpuProviders, healthy)
+	gpu.Providers = fc.providerCapabilityDetails(r, gpuModel, gpuProviders, healthy)
 	writeJSON(w, http.StatusOK, map[string]any{"capabilities": []capabilityStatus{cpu, gpu}})
 }
 

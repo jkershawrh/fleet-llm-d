@@ -70,9 +70,9 @@ func (fc *FleetController) classifyAndRoute(ctx context.Context, req routeReques
 		SessionID: req.SessionID,
 	}
 	if req.Model == defaultCPUModel || (fc.CPUPhysicalModel != "" && req.Model == fc.CPUPhysicalModel) {
-		routingReq.AllowedClusters = []string{"oberon-cpu", "arena-xeon6"}
+		routingReq.AllowedClusters = fc.providersForModel(fc.cpuPhysicalModel())
 	} else if req.Model == defaultGPUModel || (fc.GPUPhysicalModel != "" && req.Model == fc.GPUPhysicalModel) {
-		routingReq.AllowedClusters = []string{brutusGPUCluster}
+		routingReq.AllowedClusters = fc.providersForModel(fc.gpuPhysicalModel())
 	}
 	if result != nil {
 		routingReq.SemanticLabel = result.TopLabel

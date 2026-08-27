@@ -940,7 +940,7 @@ func TestA30_Compliance_AuthFailureRecordedToLedger(t *testing.T) {
 	fr := ledger.NewFleetRecorder(lc, "test-agent", "arch-test")
 	ctx := context.Background()
 
-	_, err := fr.RecordAuthFailure(ctx, "192.168.1.100", "invalid API key")
+	_, err := fr.RecordAuthFailure(ctx, "192.0.2.100", "invalid API key")
 	if err != nil {
 		t.Fatalf("RecordAuthFailure: %v", err)
 	}

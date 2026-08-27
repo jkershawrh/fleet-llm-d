@@ -137,13 +137,14 @@ type FleetController struct {
 	LLMDGPUURL             string
 	LLMDToken              string
 	RouterUpstreamClusters map[string]string
+	ModelProviderClusters  map[string][]string
 	InferenceClient        *http.Client
 	CPUPhysicalModel       string
 	GPUPhysicalModel       string
 	InferenceSlots         chan struct{}
 	ProviderHealth         *ProviderHealthCache
 	GridSignalPoller       *gridsignals.Poller
-	cpuRouteCounter        atomic.Uint64
+	providerRouteCounter   atomic.Uint64
 
 	// Server state
 	ready atomic.Bool

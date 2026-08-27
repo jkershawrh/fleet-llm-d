@@ -54,6 +54,14 @@ generated endpoint directory into one model-specific hub EPP and configure its
 `multicluster-file-discovery` plugin with `watchFile: true`. Use one hub EPP per
 exact model until upstream defines a multi-model discovery/filter contract.
 
+The inference gateway never assumes physical cluster names. Configure the
+authoritative exact-model provider set with `FLEET_MODEL_PROVIDERS_JSON`, for
+example `{"model-a":["cluster-a","cluster-b"],"model-b":["cluster-c"]}`.
+Every provider ID must correspond to registered fleet state and configured
+health/routing evidence. Missing mappings fail closed with
+`503 no_compatible_capacity`; a provider mapped to one physical model cannot
+execute another model.
+
 Semantic classification is also optional. The release contains the classifier
 client contract but does not distribute classifier model weights or an
 unpublished classifier server.

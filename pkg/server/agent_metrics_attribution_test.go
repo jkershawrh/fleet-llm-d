@@ -26,7 +26,7 @@ import (
 // selector finds the sample, so a regression on either side fails here.
 func TestAgentMetricsReachTheAutoscaler(t *testing.T) {
 	const (
-		clusterID = "brutus-h100"
+		clusterID = "gpu-provider-a"
 		poolName  = "llama-70b"
 	)
 

@@ -17,14 +17,14 @@ func TestLLMDProviderFiltersAndSeparatesExactModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	clusters := []FleetClusterInfo{
-		{ID: "oberon", Region: "central", Status: "Running", UpdatedAt: now, Authorized: true, EgressAddress: "https://oberon.example:443", MetricsEndpoint: "https://metrics.oberon.example:9443", Labels: map[string]string{"fleet.llm-d.ai/physical-models": "granite-cpu"}},
-		{ID: "arena", Status: "draining", UpdatedAt: now, Authorized: true, EgressAddress: "https://arena.example"},
-		{ID: "brutus", Status: "Running", UpdatedAt: now.Add(-time.Minute), Authorized: true, EgressAddress: "https://brutus.example"},
+		{ID: "site-a", Region: "central", Status: "Running", UpdatedAt: now, Authorized: true, EgressAddress: "https://site-a.example:443", MetricsEndpoint: "https://metrics.site-a.example:9443", Labels: map[string]string{"fleet.llm-d.ai/physical-models": "granite-cpu"}},
+		{ID: "cluster-b", Status: "draining", UpdatedAt: now, Authorized: true, EgressAddress: "https://cluster-b.example"},
+		{ID: "gpu-site", Status: "Running", UpdatedAt: now.Add(-time.Minute), Authorized: true, EgressAddress: "https://gpu-site.example"},
 		{ID: "wrong-model", Status: "Running", UpdatedAt: now, Authorized: true, EgressAddress: "https://wrong.example", Labels: map[string]string{"fleet.llm-d.ai/physical-models": "granite-gpu"}},
 	}
 	pools := []FleetPoolInfo{
-		{Name: "cpu", ModelName: "logical", PhysicalModel: "granite-cpu", Clusters: []string{"oberon", "arena", "wrong-model"}},
-		{Name: "gpu", ModelName: "logical", PhysicalModel: "granite-gpu", Clusters: []string{"brutus"}},
+		{Name: "cpu", ModelName: "logical", PhysicalModel: "granite-cpu", Clusters: []string{"site-a", "cluster-b", "wrong-model"}},
+		{Name: "gpu", ModelName: "logical", PhysicalModel: "granite-gpu", Clusters: []string{"gpu-site"}},
 	}
 	if err := p.Sync(context.Background(), clusters, pools); err != nil {
 		t.Fatal(err)
@@ -37,10 +37,10 @@ func TestLLMDProviderFiltersAndSeparatesExactModels(t *testing.T) {
 	}
 	var endpoints llmdEndpointsFile
 	readJSON(t, filepath.Join(dir, index.Models["granite-cpu"]), &endpoints)
-	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Name != "oberon--cpu" {
+	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Name != "site-a--cpu" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
 	}
-	if got := endpoints.Endpoints[0].Labels["metricsAddress"]; got != "metrics.oberon.example" {
+	if got := endpoints.Endpoints[0].Labels["metricsAddress"]; got != "metrics.site-a.example" {
 		t.Fatalf("metricsAddress = %q", got)
 	}
 	if got := endpoints.Endpoints[0].Labels["model"]; got != "granite-cpu" {

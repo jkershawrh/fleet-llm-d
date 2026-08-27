@@ -58,8 +58,8 @@ material, raw capacity reports, and operational observations belong to a lab or
 deployment repository. Sanitized topology-neutral conformance methodology and
 results may be published with the OSS project.
 
-Oberon, Arena, and Brutus are validation environments, not architectural
-requirements or supported names in the portable interface.
+Named physical validation environments are not architectural requirements or
+supported names in the portable interface.
 
 ## Repository naming
 

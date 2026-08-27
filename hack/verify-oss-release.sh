@@ -39,7 +39,7 @@ if tar -tzf "$archive" | grep -Eiq "$banned_paths"; then
   exit 1
 fi
 
-banned_content='fm2aihpcsed|image-registry\.openshift-image-registry|quay\.io/rh-ee-|/Users/jkershaw|kubeadmin'
+banned_content='fm2aihpcsed|image-registry\.openshift-image-registry|quay\.io/rh-ee-|/Users/jkershaw|kubeadmin|oberon|arena|brutus|192\.168\.1\.'
 if grep -RIEin --exclude='verify-oss-release.sh' "$banned_content" "$bundle_root"; then
   echo "portable release contains environment-specific content" >&2
   exit 1

@@ -76,12 +76,8 @@ func (fc *FleetController) routerClusterForUpstream(value, physicalModel string)
 	if cluster == "" {
 		return "", fmt.Errorf("Router returned an unrecognized upstream %q", value)
 	}
-	if physicalModel == fc.cpuPhysicalModel() {
-		if cluster != "oberon-cpu" && cluster != "arena-xeon6" {
-			return "", fmt.Errorf("Router selected incompatible CPU upstream %q", value)
-		}
-	} else if cluster != brutusGPUCluster {
-		return "", fmt.Errorf("Router selected incompatible GPU upstream %q", value)
+	if !fc.providerServesModel(cluster, physicalModel) {
+		return "", fmt.Errorf("Router selected upstream %q outside the exact-model provider set", value)
 	}
 	return cluster, nil
 }

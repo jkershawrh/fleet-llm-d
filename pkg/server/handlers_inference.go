@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -19,10 +18,9 @@ import (
 )
 
 const (
-	defaultCPUModel  = "granite-2b-cpu"
-	defaultGPUModel  = "ibm-granite/granite-3.1-8b-instruct"
-	defaultGPUAlias  = "granite-8b-gpu"
-	brutusGPUCluster = "brutus-h100"
+	defaultCPUModel = "granite-2b-cpu"
+	defaultGPUModel = "ibm-granite/granite-3.1-8b-instruct"
+	defaultGPUAlias = "granite-8b-gpu"
 )
 
 type inferenceEnvelope struct {
@@ -97,51 +95,57 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if modelClass == "gpu" {
-		if !fc.clusterIsHealthy(r.Context(), brutusGPUCluster) {
+		gpuProvider := fc.nextHealthyProvider(r.Context(), fc.gpuPhysicalModel())
+		if gpuProvider == "" {
 			inferenceErrors.Inc("no_eligible_provider")
 			writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the requested GPU model has no compatible healthy provider", requestID)
 			return
 		}
-		decision.TargetCluster = brutusGPUCluster
+		decision.TargetCluster = gpuProvider
 		decision.Reason = "explicit-model"
 		if envelope.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
 			fc.Routing.SessionTable.Unbind(envelope.SessionID)
-			fc.Routing.SessionTable.Bind(envelope.SessionID, brutusGPUCluster)
+			fc.Routing.SessionTable.Bind(envelope.SessionID, gpuProvider)
 		}
 	}
 	physicalModel := fc.CPUPhysicalModel
 	if physicalModel == "" {
 		physicalModel = defaultCPUModel
 	}
-	if modelClass == "gpu" || (modelClass == "" && (decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || strings.HasPrefix(decision.TargetCluster, "brutus"))) {
+	if modelClass == "gpu" || (modelClass == "" && (decision.SemanticLabel == "COMPLEX" || decision.SemanticLabel == "REASONING" || fc.providerServesModel(decision.TargetCluster, fc.gpuPhysicalModel()))) {
 		physicalModel = fc.GPUPhysicalModel
 		if physicalModel == "" {
 			physicalModel = defaultGPUModel
 		}
 	}
 	if physicalModel != fc.cpuPhysicalModel() {
-		if !fc.clusterIsHealthy(r.Context(), brutusGPUCluster) {
+		gpuProvider := fc.nextHealthyProvider(r.Context(), physicalModel)
+		if gpuProvider == "" {
 			inferenceErrors.Inc("no_eligible_provider")
 			writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the selected GPU model has no compatible healthy provider", requestID)
 			return
 		}
-		decision.TargetCluster = brutusGPUCluster
+		decision.TargetCluster = gpuProvider
 		if modelClass == "" {
 			decision.Reason = "semantic-escalation"
 		}
 		if envelope.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
 			fc.Routing.SessionTable.Unbind(envelope.SessionID)
-			fc.Routing.SessionTable.Bind(envelope.SessionID, brutusGPUCluster)
+			fc.Routing.SessionTable.Bind(envelope.SessionID, gpuProvider)
 		}
 	}
 	if physicalModel == fc.cpuPhysicalModel() && decision.Reason != "session-affinity" {
-		if selected := fc.nextHealthyCPUProvider(r.Context()); selected != "" {
+		if selected := fc.nextHealthyProvider(r.Context(), physicalModel); selected != "" {
 			decision.TargetCluster = selected
 			decision.Reason = "compatible-round-robin"
 			if envelope.SessionID != "" && fc.Routing != nil && fc.Routing.SessionTable != nil {
 				fc.Routing.SessionTable.Unbind(envelope.SessionID)
 				fc.Routing.SessionTable.Bind(envelope.SessionID, selected)
 			}
+		} else {
+			inferenceErrors.Inc("no_eligible_provider")
+			writeInferenceError(w, http.StatusServiceUnavailable, "no_compatible_capacity", "the requested CPU model has no compatible healthy provider", requestID)
+			return
 		}
 	}
 	if tenantID != "" && fc.QuotaEnforcer != nil {
@@ -263,10 +267,7 @@ func (fc *FleetController) requestedModelClass(requested string) string {
 	if requested == fc.cpuPhysicalModel() || requested == defaultCPUModel {
 		return "cpu"
 	}
-	gpuModel := fc.GPUPhysicalModel
-	if gpuModel == "" {
-		gpuModel = defaultGPUModel
-	}
+	gpuModel := fc.gpuPhysicalModel()
 	if requested == gpuModel || requested == defaultGPUModel || requested == defaultGPUAlias {
 		return "gpu"
 	}
@@ -280,20 +281,11 @@ func (fc *FleetController) cpuPhysicalModel() string {
 	return defaultCPUModel
 }
 
-func (fc *FleetController) nextHealthyCPUProvider(ctx context.Context) string {
-	allowed := map[string]bool{"oberon-cpu": true, "arena-xeon6": true}
-	providers := make([]string, 0, len(allowed))
-	for _, cluster := range fc.BuildInferenceClusterHealth(ctx) {
-		if allowed[cluster.ClusterID] && cluster.Healthy {
-			providers = append(providers, cluster.ClusterID)
-		}
+func (fc *FleetController) gpuPhysicalModel() string {
+	if fc.GPUPhysicalModel != "" {
+		return fc.GPUPhysicalModel
 	}
-	if len(providers) == 0 {
-		return ""
-	}
-	sort.Strings(providers)
-	index := (fc.cpuRouteCounter.Add(1) - 1) % uint64(len(providers))
-	return providers[index]
+	return defaultGPUModel
 }
 
 func (fc *FleetController) clusterIsHealthy(ctx context.Context, clusterID string) bool {

@@ -40,9 +40,9 @@ func TestGridSyncLoop_TranslatesAllClusters(t *testing.T) {
 	fc.SWIMSyncAdapter = nil
 
 	ctx := context.Background()
-	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "oberon", Name: "oberon", Region: "us-east-1", Status: "Running"})
-	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "arena", Name: "arena", Region: "us-east-1", Status: "Running"})
-	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "brutus", Name: "brutus", Region: "us-east-1", Status: "Running"})
+	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "site-a", Name: "site-a", Region: "us-east-1", Status: "Running"})
+	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "cluster-b", Name: "cluster-b", Region: "us-east-1", Status: "Running"})
+	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "gpu-site", Name: "gpu-site", Region: "us-east-1", Status: "Running"})
 
 	fc.runGridSyncCycle(ctx)
 
@@ -92,7 +92,7 @@ func TestGridSyncLoop_SWIMSyncUpdatesClusterStatus(t *testing.T) {
 	mockAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/apis/grid.praxis-proxy.io/v1alpha1/gridsites" && r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"items":[{"metadata":{"name":"arena"},"status":{"phase":"Unreachable"}}]}`))
+			w.Write([]byte(`{"items":[{"metadata":{"name":"cluster-b"},"status":{"phase":"Unreachable"}}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -104,16 +104,16 @@ func TestGridSyncLoop_SWIMSyncUpdatesClusterStatus(t *testing.T) {
 	fc.SWIMSyncAdapter = client.NewSWIMSyncAdapter(mockAPI.URL, "", fc.ClusterRepo)
 
 	ctx := context.Background()
-	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "arena", Name: "arena", Region: "us-east-1", Status: "Running"})
+	fc.ClusterRepo.Create(ctx, postgres.ClusterRecord{ID: "cluster-b", Name: "cluster-b", Region: "us-east-1", Status: "Running"})
 
 	fc.runGridSyncCycle(ctx)
 
-	record, err := fc.ClusterRepo.Get(ctx, "arena")
+	record, err := fc.ClusterRepo.Get(ctx, "cluster-b")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if record.Status != "Degraded" {
-		t.Fatalf("expected arena status Degraded after SWIM sync, got %q", record.Status)
+		t.Fatalf("expected cluster-b status Degraded after SWIM sync, got %q", record.Status)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestGridSyncLoop_DoesNotPublishSuccessAfterApplyFailure(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.GridCRDTranslator = routing.NewGridCRDTranslator(mockAPI.URL, "fleet-llm-d", "", "test-grid")
 	fc.SWIMSyncAdapter = nil
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "arena", Name: "arena", Status: "Running"}); err != nil {
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cluster-b", Name: "cluster-b", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 

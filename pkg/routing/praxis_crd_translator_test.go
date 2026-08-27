@@ -8,8 +8,8 @@ func TestTranslateClusterToGridSite(t *testing.T) {
 	translator := NewGridCRDTranslator("https://k8s.local", "fleet-llm-d", "token", "test-network")
 
 	cluster := FleetClusterInfo{
-		ID:     "oberon-sno",
-		Name:   "Oberon",
+		ID:     "site-a",
+		Name:   "Cluster A",
 		Region: "us-east-1",
 		Labels: map[string]string{
 			"topology.kubernetes.io/zone":     "us-east-1a",
@@ -73,7 +73,7 @@ func TestTranslatePoolToInferenceProvider(t *testing.T) {
 	pool := FleetPoolInfo{
 		Name:            "granite-2b-pool",
 		ModelName:       "granite-2b-cpu",
-		Clusters:        []string{"oberon-sno"},
+		Clusters:        []string{"site-a"},
 		TargetPorts:     []int{8080},
 		MetricsEndpoint: "http://fleet-agent.fleet-llm-d.svc:8090",
 	}
@@ -101,7 +101,7 @@ func TestTranslatePoolToInferenceProvider(t *testing.T) {
 	if spec.MetricsConfig.SignalNames["queueDepth"] != "llm_d_router_epp_average_queue_size" {
 		t.Errorf("SignalNames = %v", spec.MetricsConfig.SignalNames)
 	}
-	if spec.SiteSelector == nil || spec.SiteSelector.MatchLabels["fleet.llm-d.ai/cluster-id"] != "oberon-sno" {
+	if spec.SiteSelector == nil || spec.SiteSelector.MatchLabels["fleet.llm-d.ai/cluster-id"] != "site-a" {
 		t.Errorf("SiteSelector = %v", spec.SiteSelector)
 	}
 }

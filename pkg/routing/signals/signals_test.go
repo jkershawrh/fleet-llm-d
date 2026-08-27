@@ -21,7 +21,7 @@ func TestPublisherRequiresPeerAndFiltersAtSource(t *testing.T) {
 	cert := &x509.Certificate{Raw: []byte("peer")}
 	now := time.Now().UTC()
 	p := &Publisher{
-		Site: "arena", Provider: "pool-a",
+		Site: "cluster-b", Provider: "pool-a",
 		Store: staticStore{
 			{Name: "llm_d_epp_average_queue_size", Value: .5, CollectedAt: now},
 			{Name: "llm_d_epp_request_count", Value: 4, CollectedAt: now},
@@ -40,7 +40,7 @@ func TestPublisherRequiresPeerAndFiltersAtSource(t *testing.T) {
 	rr := httptest.NewRecorder()
 	p.ServeHTTP(rr, req)
 	body := rr.Body.String()
-	if !strings.Contains(body, "grid_site=\"arena\"") || strings.Contains(body, "_count") || strings.Contains(body, "secret-pod") {
+	if !strings.Contains(body, "grid_site=\"cluster-b\"") || strings.Contains(body, "_count") || strings.Contains(body, "secret-pod") {
 		t.Fatalf("unsafe output: %s", body)
 	}
 }
@@ -49,22 +49,22 @@ func TestClientEnforcesHTTPSSizeIdentityAndFreshness(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Date", now.Format(http.TimeFormat))
-		_, _ = io.WriteString(w, "metric{grid_site=\"arena\",grid_provider=\"pool\"} 1 "+strings.TrimSpace(timeToMillis(now.Add(-time.Second)))+"\n")
+		_, _ = io.WriteString(w, "metric{grid_site=\"cluster-b\",grid_provider=\"pool\"} 1 "+strings.TrimSpace(timeToMillis(now.Add(-time.Second)))+"\n")
 	}))
 	defer server.Close()
 	c := &Client{HTTP: server.Client(), MaxResponseBytes: 1024, MaxStaleness: 5 * time.Second}
-	samples, err := c.Poll(context.Background(), server.URL, "arena")
+	samples, err := c.Poll(context.Background(), server.URL, "cluster-b")
 	if err != nil || len(samples) != 1 {
 		t.Fatalf("Poll = %v, %v", samples, err)
 	}
-	if _, err := c.Poll(context.Background(), strings.Replace(server.URL, "https://", "http://", 1), "arena"); err == nil {
+	if _, err := c.Poll(context.Background(), strings.Replace(server.URL, "https://", "http://", 1), "cluster-b"); err == nil {
 		t.Fatal("plaintext endpoint accepted")
 	}
-	if _, err := c.Poll(context.Background(), server.URL, "oberon"); err == nil {
+	if _, err := c.Poll(context.Background(), server.URL, "site-a"); err == nil {
 		t.Fatal("peer identity mismatch accepted")
 	}
 	c.MaxResponseBytes = 8
-	if _, err := c.Poll(context.Background(), server.URL, "arena"); err == nil {
+	if _, err := c.Poll(context.Background(), server.URL, "cluster-b"); err == nil {
 		t.Fatal("oversized response accepted")
 	}
 }

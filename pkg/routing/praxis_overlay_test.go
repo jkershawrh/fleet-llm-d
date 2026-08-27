@@ -7,11 +7,11 @@ import (
 
 func TestRenderConfig_SingleModel(t *testing.T) {
 	overlay := NewPraxisOverlay([]PraxisClusterEndpoint{
-		{ClusterID: "oberon-sno", Endpoint: "ovms-granite-2b.fleet-llm-d.svc:8080"},
+		{ClusterID: "site-a", Endpoint: "ovms-granite-2b.fleet-llm-d.svc:8080"},
 	})
 
 	placements := []PoolPlacement{
-		{ModelName: "granite-2b-cpu", Clusters: []string{"oberon-sno"}},
+		{ModelName: "granite-2b-cpu", Clusters: []string{"site-a"}},
 	}
 
 	out, err := overlay.RenderConfig(placements)
@@ -32,20 +32,20 @@ func TestRenderConfig_SingleModel(t *testing.T) {
 
 func TestRenderConfig_MultiCluster(t *testing.T) {
 	overlay := NewPraxisOverlay([]PraxisClusterEndpoint{
-		{ClusterID: "oberon-sno", Endpoint: "ovms.fleet-llm-d.svc:8080"},
-		{ClusterID: "brutus-h100", Endpoint: "brutus-vllm-external.fleet-llm-d.svc:8000"},
+		{ClusterID: "site-a", Endpoint: "ovms.fleet-llm-d.svc:8080"},
+		{ClusterID: "gpu-provider-a", Endpoint: "gpu-site-vllm-external.fleet-llm-d.svc:8000"},
 	})
 
 	placements := []PoolPlacement{
 		{
 			ModelName:    "granite-2b-cpu",
 			ModelAliases: []string{"granite-sovereign"},
-			Clusters:     []string{"oberon-sno"},
+			Clusters:     []string{"site-a"},
 		},
 		{
 			ModelName:    "ibm-granite/granite-3.1-8b-instruct",
 			ModelAliases: []string{"granite-8b-gpu"},
-			Clusters:     []string{"brutus-h100"},
+			Clusters:     []string{"gpu-provider-a"},
 		},
 	}
 
@@ -60,20 +60,20 @@ func TestRenderConfig_MultiCluster(t *testing.T) {
 	if !strings.Contains(out, "granite-8b-gpu") {
 		t.Errorf("expected GPU alias in config")
 	}
-	if !strings.Contains(out, "brutus-vllm-external") {
-		t.Errorf("expected brutus endpoint in config")
+	if !strings.Contains(out, "gpu-site-vllm-external") {
+		t.Errorf("expected gpu-site endpoint in config")
 	}
 }
 
 func TestRenderConfig_TLSClusterIsIsolatedAndVerified(t *testing.T) {
 	overlay := NewPraxisOverlay([]PraxisClusterEndpoint{
-		{ClusterID: "arena", Endpoint: "model.apps.arena.example:443", TLS: true},
+		{ClusterID: "cluster-b", Endpoint: "model.apps.cluster-b.example:443", TLS: true},
 	})
-	out, err := overlay.RenderConfig([]PoolPlacement{{ModelName: "model", Clusters: []string{"arena"}}})
+	out, err := overlay.RenderConfig([]PoolPlacement{{ModelName: "model", Clusters: []string{"cluster-b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"x-fleet-target-cluster": "arena"`, `"sni": "model.apps.arena.example"`, `"verify": true`, `"health_check"`} {
+	for _, want := range []string{`"x-fleet-target-cluster": "cluster-b"`, `"sni": "model.apps.cluster-b.example"`, `"verify": true`, `"health_check"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %s in config:\n%s", want, out)
 		}
@@ -82,7 +82,7 @@ func TestRenderConfig_TLSClusterIsIsolatedAndVerified(t *testing.T) {
 
 func TestRenderConfig_UnknownClusterSkipped(t *testing.T) {
 	overlay := NewPraxisOverlay([]PraxisClusterEndpoint{
-		{ClusterID: "oberon-sno", Endpoint: "ovms:8080"},
+		{ClusterID: "site-a", Endpoint: "ovms:8080"},
 	})
 
 	placements := []PoolPlacement{

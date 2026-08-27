@@ -193,6 +193,29 @@ func main() {
 	}
 	fc.CPUPhysicalModel = os.Getenv("FLEET_CPU_PHYSICAL_MODEL")
 	fc.GPUPhysicalModel = os.Getenv("FLEET_GPU_PHYSICAL_MODEL")
+	if raw := os.Getenv("FLEET_MODEL_PROVIDERS_JSON"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &fc.ModelProviderClusters); err != nil {
+			slog.Error("invalid exact-model provider mapping", "error", err)
+			os.Exit(1)
+		}
+		for rawModel, providers := range fc.ModelProviderClusters {
+			model := strings.TrimSpace(rawModel)
+			clean := make([]string, 0, len(providers))
+			seen := make(map[string]bool, len(providers))
+			for _, provider := range providers {
+				if provider = strings.TrimSpace(provider); provider != "" && !seen[provider] {
+					clean = append(clean, provider)
+					seen[provider] = true
+				}
+			}
+			if model == "" || len(clean) == 0 {
+				slog.Error("exact-model provider mapping contains an empty model or provider set")
+				os.Exit(1)
+			}
+			delete(fc.ModelProviderClusters, rawModel)
+			fc.ModelProviderClusters[model] = clean
+		}
+	}
 	if raw := os.Getenv("FLEET_PROVIDER_HEALTH_URLS_JSON"); raw != "" {
 		var providerURLs map[string]string
 		if err := json.Unmarshal([]byte(raw), &providerURLs); err != nil {

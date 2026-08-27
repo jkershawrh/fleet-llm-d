@@ -64,6 +64,8 @@ spec:
               value: /etc/fleet/route-ca/ca-bundle.crt
             - name: FLEET_ROUTER_UPSTREAM_CLUSTERS_JSON
               value: '{"ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com:443":"oberon-cpu","ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com:443":"arena-xeon6","vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com:443":"brutus-h100"}'
+            - name: FLEET_MODEL_PROVIDERS_JSON
+              value: '{"granite-2b-cpu":["oberon-cpu","arena-xeon6"],"ibm-granite/granite-3.1-8b-instruct":["brutus-h100"]}'
           ports:
             - {name: http, containerPort: 8080}
             - {name: metrics, containerPort: 9091}

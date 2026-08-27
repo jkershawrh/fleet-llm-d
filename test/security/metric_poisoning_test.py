@@ -7,7 +7,7 @@ or manipulate cross-cluster routing decisions.
 
 Usage:
     python3 test/security/metric_poisoning_test.py \
-        --fleet-url https://fleet-controller.apps.oberon.example.com \
+        --fleet-url https://fleet-controller.example.com \
         --auth-secret changeme-fleet-secret
 """
 

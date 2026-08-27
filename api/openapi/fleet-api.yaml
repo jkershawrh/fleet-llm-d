@@ -1399,7 +1399,7 @@ components:
           format: double
           description: Time spent classifying and routing.
       example:
-        target_cluster: brutus-h100
+        target_cluster: gpu-provider-a
         reason: "tier REASONING requires GPU capacity"
         semantic_label: REASONING
         semantic_score: 0.91

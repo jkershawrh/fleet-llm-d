@@ -38,8 +38,8 @@ groups:
         annotations:
           summary: Fewer than two Praxis replicas are available
       - alert: FleetGPUModelNotHighlyAvailable
-        expr: fleet_ready_endpoints{cluster="brutus"} < 2
+        expr: fleet_ready_endpoints{capability="gpu",ha="required"} < 2
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: Brutus GPU capability is available but not highly available
+          summary: GPU capability is available but not highly available

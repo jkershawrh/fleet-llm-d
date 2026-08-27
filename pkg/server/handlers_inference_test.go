@@ -44,13 +44,13 @@ func TestInferenceGatewayRoutesRewritesAndSanitizes(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.PraxisURL = upstream.URL
 	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{
-		ID: "arena", Name: "arena", Status: "Running",
+		ID: "cluster-b", Name: "cluster-b", Status: "Running",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"model":"logical-model","tenant_id":"tenant-a","messages":[{"role":"user","content":"hello"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
-	req.Header.Set("X-Fleet-Target-Cluster", "brutus")
+	req.Header.Set("X-Fleet-Target-Cluster", "gpu-site")
 	req.Header.Set("X-Request-ID", "test-request")
 	rr := httptest.NewRecorder()
 	fc.SetupRoutes("inference").ServeHTTP(rr, req)
@@ -58,7 +58,7 @@ func TestInferenceGatewayRoutesRewritesAndSanitizes(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected upstream status, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if gotHeader != "arena" || rr.Header().Get("X-Fleet-Routed-To") != "arena" {
+	if gotHeader != "cluster-b" || rr.Header().Get("X-Fleet-Routed-To") != "cluster-b" {
 		t.Fatalf("spoofed target was not replaced: upstream=%q response=%q", gotHeader, rr.Header().Get("X-Fleet-Routed-To"))
 	}
 	if gotModel != defaultCPUModel || rr.Header().Get("X-Fleet-Actual-Model") != defaultCPUModel {
@@ -87,13 +87,13 @@ func TestInferenceGatewayUsesRouterPoolAndStripsInternalHeaders(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.InferenceProviderName = InferenceProviderLLMD
 	fc.LLMDCPUURL = upstream.URL
-	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "oberon-cpu"}
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "cpu-provider-a"}
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
 		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
-	req.Header.Set("X-Fleet-Target-Cluster", "brutus-h100")
+	req.Header.Set("X-Fleet-Target-Cluster", "gpu-provider-a")
 	req.Header.Set("X-Gateway-Destination-Endpoint", "attacker.invalid:443")
 	rr := httptest.NewRecorder()
 	fc.SetupRoutes("inference").ServeHTTP(rr, req)
@@ -101,7 +101,7 @@ func TestInferenceGatewayUsesRouterPoolAndStripsInternalHeaders(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if gotCluster != "oberon-cpu" || gotDestination != "" || gotModel != defaultCPUModel {
+	if gotCluster != "cpu-provider-a" || gotDestination != "" || gotModel != defaultCPUModel {
 		t.Fatalf("sanitization/routing mismatch: cluster=%q destination=%q model=%q", gotCluster, gotDestination, gotModel)
 	}
 	if got := rr.Header().Get("X-Fleet-Data-Plane"); got != string(InferenceProviderLLMD) {
@@ -119,8 +119,8 @@ func TestInferenceGatewayRejectsUnknownRouterExecutionEvidence(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.InferenceProviderName = InferenceProviderLLMD
 	fc.LLMDCPUURL = upstream.URL
-	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "oberon-cpu"}
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "cpu-provider-a"}
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
@@ -166,7 +166,7 @@ func TestInferenceGatewayExactGPUModelCannotDowngrade(t *testing.T) {
 
 	fc := newTestFleetController(t)
 	fc.PraxisURL = upstream.URL
-	for _, cluster := range []string{"oberon-cpu", brutusGPUCluster} {
+	for _, cluster := range []string{"cpu-provider-a", testGPUProvider} {
 		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
 			t.Fatal(err)
 		}
@@ -179,7 +179,7 @@ func TestInferenceGatewayExactGPUModelCannotDowngrade(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if gotCluster != brutusGPUCluster || gotModel != defaultGPUModel {
+	if gotCluster != testGPUProvider || gotModel != defaultGPUModel {
 		t.Fatalf("GPU request downgraded: cluster=%q model=%q", gotCluster, gotModel)
 	}
 	if got := rr.Header().Get("X-Fleet-Routing-Reason"); got != "explicit-model" {
@@ -189,7 +189,7 @@ func TestInferenceGatewayExactGPUModelCannotDowngrade(t *testing.T) {
 
 func TestInferenceGatewayExactGPUModelUnavailableIsStructured503(t *testing.T) {
 	fc := newTestFleetController(t)
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
@@ -216,7 +216,7 @@ func TestInferenceGatewayGPUAliasCannotDowngradeToCPU(t *testing.T) {
 
 	fc := newTestFleetController(t)
 	fc.PraxisURL = upstream.URL
-	for _, cluster := range []string{"oberon-cpu", brutusGPUCluster} {
+	for _, cluster := range []string{"cpu-provider-a", testGPUProvider} {
 		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
 			t.Fatal(err)
 		}
@@ -229,12 +229,12 @@ func TestInferenceGatewayGPUAliasCannotDowngradeToCPU(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if gotCluster != brutusGPUCluster || gotModel != defaultGPUModel {
+	if gotCluster != testGPUProvider || gotModel != defaultGPUModel {
 		t.Fatalf("GPU alias downgraded: cluster=%q model=%q", gotCluster, gotModel)
 	}
 }
 
-func TestInferenceGatewaySemanticEscalationPinsGPUToBrutus(t *testing.T) {
+func TestInferenceGatewaySemanticEscalationPinsGPUToExactProvider(t *testing.T) {
 	var gotCluster, gotModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCluster = r.Header.Get("X-Fleet-Target-Cluster")
@@ -250,7 +250,7 @@ func TestInferenceGatewaySemanticEscalationPinsGPUToBrutus(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.PraxisURL = upstream.URL
 	fc.Routing.ClassifierClient = staticClassifier{label: "REASONING"}
-	for _, cluster := range []string{"oberon-cpu", brutusGPUCluster} {
+	for _, cluster := range []string{"cpu-provider-a", testGPUProvider} {
 		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
 			t.Fatal(err)
 		}
@@ -263,7 +263,7 @@ func TestInferenceGatewaySemanticEscalationPinsGPUToBrutus(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if gotCluster != brutusGPUCluster || gotModel != defaultGPUModel {
+	if gotCluster != testGPUProvider || gotModel != defaultGPUModel {
 		t.Fatalf("semantic GPU escalation mismatched: cluster=%q model=%q", gotCluster, gotModel)
 	}
 	if got := rr.Header().Get("X-Fleet-Routing-Reason"); got != "semantic-escalation" {
@@ -273,7 +273,7 @@ func TestInferenceGatewaySemanticEscalationPinsGPUToBrutus(t *testing.T) {
 
 func TestInferenceGatewayExactCPUModelCannotEscalateToGPU(t *testing.T) {
 	fc := newTestFleetController(t)
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: brutusGPUCluster, Name: brutusGPUCluster, Status: "Running"}); err != nil {
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: testGPUProvider, Name: testGPUProvider, Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
@@ -287,14 +287,14 @@ func TestInferenceGatewayExactCPUModelCannotEscalateToGPU(t *testing.T) {
 
 func TestInferenceGatewayDistributesAcrossHealthyCPUProviders(t *testing.T) {
 	fc := newTestFleetController(t)
-	for _, cluster := range []string{"oberon-cpu", "arena-xeon6"} {
+	for _, cluster := range []string{"cpu-provider-a", "cpu-provider-b"} {
 		if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: cluster, Name: cluster, Status: "Running"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	first := fc.nextHealthyCPUProvider(context.Background())
-	second := fc.nextHealthyCPUProvider(context.Background())
-	if first != "arena-xeon6" || second != "oberon-cpu" {
+	first := fc.nextHealthyProvider(context.Background(), fc.cpuPhysicalModel())
+	second := fc.nextHealthyProvider(context.Background(), fc.cpuPhysicalModel())
+	if first != "cpu-provider-a" || second != "cpu-provider-b" {
 		t.Fatalf("CPU distribution = %q, %q", first, second)
 	}
 }
@@ -318,7 +318,7 @@ func TestInferenceGatewayRejectsInvalidPayloads(t *testing.T) {
 
 func TestInferenceGatewayEnforcesTenantQuota(t *testing.T) {
 	fc := newTestFleetController(t)
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
@@ -339,7 +339,7 @@ func TestInferenceGatewayMapsTimeoutTo504(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.PraxisURL = upstream.URL
 	fc.InferenceClient = &http.Client{Timeout: 10 * time.Millisecond}
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
@@ -360,7 +360,7 @@ func TestInferenceGatewayNormalizesProvider503(t *testing.T) {
 	defer upstream.Close()
 	fc := newTestFleetController(t)
 	fc.PraxisURL = upstream.URL
-	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
