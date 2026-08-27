@@ -14,6 +14,7 @@ charts
 cmd/fleet-controller
 cmd/fleetctl
 cmd/inference-mock
+cmd/grid-signals-publisher
 crates
 pkg
 web

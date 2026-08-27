@@ -5,6 +5,10 @@ llm-d deployments. This portable release contains the controller, agent,
 OpenAI-compatible controller ingress, API definitions, Helm chart, generic
 Kubernetes manifests, mock inference backend, and portable tests.
 
+The source bundle also includes the optional `grid-signals-publisher`, a
+platform-neutral mTLS service that converts local llm-d EPP metrics into an
+allowlisted pool-level contract without publishing pod identities.
+
 The community release is intentionally environment-neutral. It does not
 contain cluster credentials, model weights, customer configuration, private
 registry references, or the deployment overlays and evidence used by the

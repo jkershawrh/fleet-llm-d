@@ -58,6 +58,28 @@ Semantic classification is also optional. The release contains the classifier
 client contract but does not distribute classifier model weights or an
 unpublished classifier server.
 
+## Optional Grid Signals publisher
+
+`grid-signals-publisher` is a portable sidecar or standalone service for a
+cluster-local llm-d EPP. It scrapes a local Prometheus endpoint and exposes
+only the pool-level queue, KV-cache utilization, ready-endpoint, and saturation
+signals used by fleet and the multi-cluster Router plugins. All source labels
+are discarded before publication.
+
+The publisher requires a server certificate, a client CA, and an explicit
+SHA-256 allowlist of client certificate fingerprints. It refuses to start if
+any of those identity controls are absent. Its `/metrics` listener uses TLS
+1.3 and requires a verified client certificate; a separate loopback health
+listener is available for container probes.
+
+The binary has no OpenShift dependency. On OpenShift, expose it with a
+passthrough Route so the publisher—not the ingress router—performs client
+certificate authentication. On portable Kubernetes, use Gateway API, a
+LoadBalancer, a service mesh, or another transport that preserves end-to-end
+TLS. Do not use an edge- or re-encrypt-terminated ingress for this mTLS
+endpoint unless an authenticated client identity is securely propagated and
+verified by an approved intermediary.
+
 ## Production boundary
 
 Production deployments require operator-managed authentication, TLS, durable

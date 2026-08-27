@@ -9,6 +9,7 @@ build: build-go build-rust build-web
 build-go:
 	go build -o bin/fleet-controller ./cmd/fleet-controller
 	go build -o bin/fleetctl ./cmd/fleetctl
+	go build -o bin/grid-signals-publisher ./cmd/grid-signals-publisher
 
 build-rust:
 	cargo build --workspace --release
@@ -100,6 +101,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 docker-build:
 	docker build -t $(REGISTRY)/fleet-controller:$(VERSION) -f deploy/docker/Dockerfile.controller .
 	docker build -t $(REGISTRY)/fleet-agent:$(VERSION) -f deploy/docker/Dockerfile.agent .
+	docker build -t $(REGISTRY)/grid-signals-publisher:$(VERSION) -f deploy/docker/Dockerfile.grid-signals .
 
 # ──────────────────────────────────────────────
 # Portable OSS release

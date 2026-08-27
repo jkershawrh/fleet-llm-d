@@ -20,7 +20,7 @@ bundle_root=$(find "$extract_root" -mindepth 1 -maxdepth 1 -type d -name 'fleet-
 required=(
   README.md LICENSE NOTICE OSS-CONTENTS.txt VERSION
   go.mod Cargo.toml api/crds charts/fleet-llm-d
-  cmd/fleet-controller crates/fleet-agent pkg
+  cmd/fleet-controller cmd/grid-signals-publisher crates/fleet-agent pkg
   deploy/kustomize/overlays/community
 )
 for path in "${required[@]}"; do
