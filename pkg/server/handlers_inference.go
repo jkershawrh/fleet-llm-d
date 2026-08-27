@@ -217,6 +217,17 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer resp.Body.Close()
+	if target.Provider == InferenceProviderLLMD {
+		actualCluster, evidenceErr := fc.routerClusterForUpstream(resp.Header.Get("X-Fleet-Router-Upstream"), physicalModel)
+		if evidenceErr != nil {
+			inferenceErrors.Inc("routing_evidence_mismatch")
+			_, _ = io.Copy(io.Discard, resp.Body)
+			slog.Error("Router execution evidence rejected", "request_id", requestID, "error", evidenceErr)
+			writeInferenceError(w, http.StatusBadGateway, "routing_evidence_mismatch", "Router execution identity did not match the fleet-qualified provider set", requestID)
+			return
+		}
+		decision.TargetCluster = actualCluster
+	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		inferenceErrors.Inc("no_eligible_provider")
 		_, _ = io.Copy(io.Discard, resp.Body)

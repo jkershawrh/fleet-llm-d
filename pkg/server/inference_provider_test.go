@@ -45,3 +45,16 @@ func TestInferenceTargetFailsClosedWhenRouterPoolMissing(t *testing.T) {
 		t.Fatal("expected missing Router endpoint to fail closed")
 	}
 }
+
+func TestRouterClusterForUpstreamEnforcesExactModelPool(t *testing.T) {
+	fc := &FleetController{RouterUpstreamClusters: map[string]string{
+		"ovms.example:443": "arena-xeon6",
+		"vllm.example:443": brutusGPUCluster,
+	}}
+	if cluster, err := fc.routerClusterForUpstream("HTTPS://OVMS.EXAMPLE:443", defaultCPUModel); err != nil || cluster != "arena-xeon6" {
+		t.Fatalf("CPU evidence = %q, %v", cluster, err)
+	}
+	if _, err := fc.routerClusterForUpstream("vllm.example:443", defaultCPUModel); err == nil {
+		t.Fatal("expected GPU upstream to be rejected for CPU model")
+	}
+}

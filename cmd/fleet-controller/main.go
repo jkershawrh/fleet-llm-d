@@ -180,6 +180,17 @@ func main() {
 	fc.LLMDCPUURL = *llmdCPUURL
 	fc.LLMDGPUURL = *llmdGPUURL
 	fc.LLMDToken = os.Getenv("FLEET_LLMD_ROUTER_API_TOKEN")
+	if raw := os.Getenv("FLEET_ROUTER_UPSTREAM_CLUSTERS_JSON"); raw != "" {
+		var upstreamClusters map[string]string
+		if err := json.Unmarshal([]byte(raw), &upstreamClusters); err != nil {
+			slog.Error("invalid Router upstream cluster mapping", "error", err)
+			os.Exit(1)
+		}
+		fc.RouterUpstreamClusters = make(map[string]string, len(upstreamClusters))
+		for upstream, cluster := range upstreamClusters {
+			fc.RouterUpstreamClusters[strings.ToLower(strings.TrimSpace(upstream))] = strings.TrimSpace(cluster)
+		}
+	}
 	fc.CPUPhysicalModel = os.Getenv("FLEET_CPU_PHYSICAL_MODEL")
 	fc.GPUPhysicalModel = os.Getenv("FLEET_GPU_PHYSICAL_MODEL")
 	if raw := os.Getenv("FLEET_PROVIDER_HEALTH_URLS_JSON"); raw != "" {

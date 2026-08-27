@@ -79,6 +79,7 @@ func TestInferenceGatewayUsesRouterPoolAndStripsInternalHeaders(t *testing.T) {
 			t.Fatal(err)
 		}
 		gotModel, _ = body["model"].(string)
+		w.Header().Set("X-Fleet-Router-Upstream", "ovms.example:443")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
@@ -86,6 +87,7 @@ func TestInferenceGatewayUsesRouterPoolAndStripsInternalHeaders(t *testing.T) {
 	fc := newTestFleetController(t)
 	fc.InferenceProviderName = InferenceProviderLLMD
 	fc.LLMDCPUURL = upstream.URL
+	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "oberon-cpu"}
 	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +106,29 @@ func TestInferenceGatewayUsesRouterPoolAndStripsInternalHeaders(t *testing.T) {
 	}
 	if got := rr.Header().Get("X-Fleet-Data-Plane"); got != string(InferenceProviderLLMD) {
 		t.Fatalf("data plane = %q", got)
+	}
+}
+
+func TestInferenceGatewayRejectsUnknownRouterExecutionEvidence(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Fleet-Router-Upstream", "attacker.invalid:443")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"must not pass"}}]}`)
+	}))
+	defer upstream.Close()
+	fc := newTestFleetController(t)
+	fc.InferenceProviderName = InferenceProviderLLMD
+	fc.LLMDCPUURL = upstream.URL
+	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "oberon-cpu"}
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "oberon-cpu", Name: "oberon-cpu", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "routing_evidence_mismatch") || strings.Contains(rr.Body.String(), "must not pass") {
+		t.Fatalf("expected evidence mismatch 502, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

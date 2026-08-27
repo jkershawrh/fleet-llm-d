@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -59,4 +60,28 @@ func (fc *FleetController) inferenceTarget(physicalModel string) (inferenceTarge
 		return inferenceTarget{}, fmt.Errorf("%s endpoint is not configured for model %q", provider, physicalModel)
 	}
 	return target, nil
+}
+
+func normalizeRouterUpstream(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		value = parsed.Host
+	}
+	return strings.TrimSuffix(value, ".")
+}
+
+func (fc *FleetController) routerClusterForUpstream(value, physicalModel string) (string, error) {
+	upstream := normalizeRouterUpstream(value)
+	cluster := fc.RouterUpstreamClusters[upstream]
+	if cluster == "" {
+		return "", fmt.Errorf("Router returned an unrecognized upstream %q", value)
+	}
+	if physicalModel == fc.cpuPhysicalModel() {
+		if cluster != "oberon-cpu" && cluster != "arena-xeon6" {
+			return "", fmt.Errorf("Router selected incompatible CPU upstream %q", value)
+		}
+	} else if cluster != brutusGPUCluster {
+		return "", fmt.Errorf("Router selected incompatible GPU upstream %q", value)
+	}
+	return cluster, nil
 }
