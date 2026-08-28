@@ -27,7 +27,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python3", "/opt/fleet-certification/bounded_inference_scale.py"]
           args:
-            - --fleet-url=http://fleet-inference-gateway.fleet-llm-d.svc:8080
+            - --fleet-url=http://$(FLEET_INFERENCE_GATEWAY_SERVICE_HOST):$(FLEET_INFERENCE_GATEWAY_SERVICE_PORT_HTTP)
             - --model=$(FLEET_CERT_MODEL)
             - --data-plane=$(FLEET_CERT_DATA_PLANE)
             - --max-concurrency=$(FLEET_CERT_CONCURRENCY)
