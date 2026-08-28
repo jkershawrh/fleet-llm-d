@@ -1,13 +1,14 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-fleet-certification-traffic-egress
+  name: allow-arena-fleet-certification-route-egress
   namespace: fleet-llm-d
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: fleet-certification
       app.kubernetes.io/component: traffic
+      fleet.llm-d.ai/source-cluster: arena
   policyTypes:
     - Egress
   egress:
@@ -24,13 +25,8 @@ spec:
         - port: 53
           protocol: TCP
     - to:
-        - podSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values:
-                  - fleet-inference-gateway
-                  - fleet-router-qualification-gateway
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
-        - port: 8080
+        - port: 443
           protocol: TCP

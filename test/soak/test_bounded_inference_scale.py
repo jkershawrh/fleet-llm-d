@@ -1,6 +1,7 @@
 import importlib.util
 import subprocess
 import sys
+from unittest.mock import patch
 from argparse import Namespace
 from pathlib import Path
 
@@ -93,13 +94,13 @@ def test_request_interval_throttles_batches(monkeypatch):
     assert sleeps == [2.5]
 
 
-def test_level_cancels_batch_at_deadline(monkeypatch):
+def test_level_drains_admitted_batch_after_deadline(monkeypatch):
     async def slow_infer(*_args, **_kwargs):
-        await MODULE.asyncio.sleep(1)
+        await MODULE.asyncio.sleep(0.02)
         return MODULE.RequestResult(200, 1, 1, 1, data_plane="llm-d-router")
 
     args = Namespace(
-        duration_per_level=0.05,
+        duration_per_level=0.01,
         url="https://gateway.example/v1/chat/completions",
         model="model",
         max_tokens=1,
@@ -111,7 +112,8 @@ def test_level_cancels_batch_at_deadline(monkeypatch):
     started = MODULE.time.monotonic()
     result = MODULE.asyncio.run(MODULE.run_level(object(), args, 1))
     assert MODULE.time.monotonic() - started < 0.5
-    assert result.requests == 0
+    assert result.requests == 1
+    assert result.status_counts == {"200": 1}
 
 
 def test_level_records_bounded_transport_error_samples():
@@ -150,3 +152,38 @@ def test_oc_uses_explicit_context(monkeypatch):
         "pods",
     ]
     assert captured["env"]["KUBECONFIG"] == "/tmp/kubeconfig"
+
+
+def test_report_identifies_source_transport_and_gateway(capsys, monkeypatch):
+    async def fake_run_level(_client, _args, concurrency):
+        return MODULE.LevelResult(
+            concurrency=concurrency,
+            duration_seconds=1,
+            requests=1,
+            latencies_ms=[10],
+            ttft_ms=[10],
+            routed_counts={"arena-xeon6": 1},
+            model_counts={"granite-2b-cpu": 1},
+            data_plane_counts={"llm-d-router": 1},
+            status_counts={"200": 1},
+        )
+
+    monkeypatch.setattr(MODULE, "run_level", fake_run_level)
+    argv = [
+        "bounded_inference_scale.py",
+        "--fleet-url=https://router.example.test",
+        "--model=granite-2b-cpu",
+        "--data-plane=llm-d-router",
+        "--source-cluster=arena",
+        "--transport=external-route",
+        "--max-concurrency=1",
+        "--duration-per-level=1",
+        "--traffic-only",
+    ]
+    with patch.object(sys, "argv", argv):
+        assert MODULE.asyncio.run(MODULE.main()) == 0
+    output = capsys.readouterr().out
+    report = MODULE.json.loads(output[output.index("{\n") :])
+    assert report["source_cluster"] == "arena"
+    assert report["transport"] == "external-route"
+    assert report["gateway_host"] == "router.example.test"

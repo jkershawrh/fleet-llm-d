@@ -17,6 +17,7 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -280,18 +281,18 @@ async def run_level(client: httpx.AsyncClient, args: argparse.Namespace, concurr
     started = time.monotonic()
     index = 0
     while time.monotonic() - started < args.duration_per_level:
-        remaining = args.duration_per_level - (time.monotonic() - started)
-        if remaining <= 0:
+        if args.duration_per_level - (time.monotonic() - started) <= 0:
             break
         batch = [
             infer(client, args.url, args.model, prompts[(index + offset) % len(prompts)], args.max_tokens, args.stream)
             for offset in range(concurrency)
         ]
         index += concurrency
-        try:
-            requests = await asyncio.wait_for(asyncio.gather(*batch), timeout=remaining)
-        except asyncio.TimeoutError:
-            break
+        # The level deadline controls when new requests start. Once admitted,
+        # a request drains under infer()'s bounded 60-second HTTP timeout so a
+        # successful final response is not converted into a synthetic error at
+        # the measurement boundary.
+        requests = await asyncio.gather(*batch)
         for request in requests:
             result.record(request)
         if args.request_interval > 0:
@@ -309,6 +310,8 @@ async def main() -> int:
     parser.add_argument("--token", default=os.environ.get("FLEET_AUTH_TOKEN", ""), help="Bearer token; prefer FLEET_AUTH_TOKEN")
     parser.add_argument("--model", required=True)
     parser.add_argument("--data-plane", choices=("praxis", "llm-d-router"), required=True)
+    parser.add_argument("--source-cluster", default="", help="Cluster running the traffic generator")
+    parser.add_argument("--transport", choices=("internal-service", "external-route"), default="internal-service")
     parser.add_argument("--max-concurrency", type=int, default=16)
     parser.add_argument("--duration-per-level", type=int, default=300)
     parser.add_argument("--max-tokens", type=int, default=16)
@@ -370,6 +373,9 @@ async def main() -> int:
         "schema_version": "fleet-scale-v1",
         "model": args.model,
         "data_plane": args.data_plane,
+        "source_cluster": args.source_cluster,
+        "transport": args.transport,
+        "gateway_host": urlparse(args.fleet_url).hostname or "",
         "resource_guardrail_percent": args.resource_guardrail,
         "safe_concurrency": clean[-1].concurrency if clean else 0,
         "safe_rps": round(clean[-1].rps, 3) if clean else 0,

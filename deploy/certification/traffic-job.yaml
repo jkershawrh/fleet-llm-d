@@ -7,7 +7,16 @@ metadata:
     app.kubernetes.io/name: fleet-certification
     app.kubernetes.io/component: traffic
 spec:
-  backoffLimit: 0
+  # A saturated qualification cluster may preempt this low-priority workload.
+  # Ignore disruption-caused pod failures and retry genuine process failures;
+  # a replacement pod always runs the full requested interval from the start.
+  backoffLimit: 2
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+  activeDeadlineSeconds: 14400
   ttlSecondsAfterFinished: 604800
   template:
     metadata:
@@ -27,15 +36,19 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python3", "/opt/fleet-certification/bounded_inference_scale.py"]
           args:
-            - --fleet-url=http://$(FLEET_INFERENCE_GATEWAY_SERVICE_HOST):$(FLEET_INFERENCE_GATEWAY_SERVICE_PORT_HTTP)
+            - --fleet-url=$(FLEET_CERT_FLEET_URL)
             - --model=$(FLEET_CERT_MODEL)
             - --data-plane=$(FLEET_CERT_DATA_PLANE)
+            - --source-cluster=$(FLEET_CERT_SOURCE_CLUSTER)
+            - --transport=$(FLEET_CERT_TRANSPORT)
             - --max-concurrency=$(FLEET_CERT_CONCURRENCY)
             - --duration-per-level=$(FLEET_CERT_DURATION)
             - --max-tokens=$(FLEET_CERT_MAX_TOKENS)
             - --request-interval=$(FLEET_CERT_INTERVAL)
             - --traffic-only
           env:
+            - name: FLEET_CERT_FLEET_URL
+              value: http://fleet-inference-gateway.fleet-llm-d.svc:8080
             - name: FLEET_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -45,6 +58,10 @@ spec:
               value: granite-2b-cpu
             - name: FLEET_CERT_DATA_PLANE
               value: praxis
+            - name: FLEET_CERT_SOURCE_CLUSTER
+              value: oberon
+            - name: FLEET_CERT_TRANSPORT
+              value: internal-service
             - name: FLEET_CERT_CONCURRENCY
               value: "1"
             - name: FLEET_CERT_DURATION
