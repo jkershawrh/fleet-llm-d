@@ -4,5 +4,6 @@ resources:
   - resource-telemetry-rbac.yaml
   - resource-telemetry-network-policy.yaml
   - traffic-network-policy.yaml
+  - traffic-gateway-ingress-policy.yaml
   - resource-telemetry-job.yaml
   - traffic-job.yaml
