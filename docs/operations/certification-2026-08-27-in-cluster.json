@@ -1,0 +1,32 @@
+{
+  "schema_version": "fleet-certification-v1",
+  "passed": true,
+  "failures": [],
+  "traffic": {
+    "location": "oberon Kubernetes Job",
+    "data_plane": "praxis",
+    "model": "granite-2b-cpu",
+    "duration_seconds": 300.005,
+    "requests": 41,
+    "status_counts": {"200": 41},
+    "error_percent": 0.0,
+    "rps": 0.137,
+    "latency_ms": {"p50": 666.684, "p95": 912.437, "p99": 1121.969},
+    "routed_counts": {"arena-xeon6": 20, "oberon-cpu": 21},
+    "model_counts": {"granite-2b-cpu": 41},
+    "data_plane_counts": {"praxis": 41},
+    "stop_reasons": []
+  },
+  "resources": [
+    {"target": "arena-cpu", "max_cpu_percent": 0.123, "max_memory_percent": 21.508, "restarts": 0, "all_ready": true},
+    {"target": "brutus-gpu", "max_cpu_percent": 0.095, "max_memory_percent": 9.128, "restarts": 0, "all_ready": true},
+    {"target": "oberon-cpu", "max_cpu_percent": 0.189, "max_memory_percent": 19.938, "restarts": 0, "all_ready": true}
+  ],
+  "required_resource_targets": ["arena-cpu", "brutus-gpu", "oberon-cpu"],
+  "resource_guardrail_percent": 70.0,
+  "image_digests": {
+    "oberon": "sha256:85dc909908c268867af29d08fba2b08eef58c8a5267ad4bfada829801c48005b",
+    "arena": "sha256:0ce547ec72009734bb7831d70925463eac3a5627c088bbc64e270db9ebc79799",
+    "brutus": "sha256:86b7769d34af561851f639572aa252dab0ccb9455c420c7de747a8afe96ec9eb"
+  }
+}

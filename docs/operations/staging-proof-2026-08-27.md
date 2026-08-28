@@ -113,3 +113,32 @@ multi-cluster telemetry does not depend on each kubeconfig's current context.
 - Brutus restored to 1/1 after the expected 8B model cold start. After health
   recovery, an exact-model request returned HTTP 200 from `brutus-h100` with
   `ibm-granite/granite-3.1-8b-instruct` in both headers and response metadata.
+
+## In-cluster certification attestation
+
+The first replacement one-hour CPU run produced valid request-path evidence:
+456/456 requests returned HTTP 200 through Praxis, split exactly 228/228 across
+Oberon and Arena, with p50/p95/p99 latency of 1.139/1.744/1.995 seconds. Its
+final Arena resource sample was invalid because the workstation kube-admin
+token expired. The inference result remains useful evidence, but that run is
+not labeled a complete certification.
+
+Certification was subsequently moved off the workstation. A traffic Job on
+Oberon called the internal inference-gateway Service, while independent
+least-privilege Jobs sampled Pods and PodMetrics locally on Oberon, Arena, and
+Brutus. Workstation kubeconfig lifetime is no longer part of the pass/fail
+path. Public Route/TLS latency remains a separate external-client measurement.
+
+The telemetry-valid five-minute attestation passed:
+
+- Traffic: 41/41 HTTP 200, zero errors, Praxis evidence on every response.
+- Distribution: Oberon 21, Arena 20; exact model `granite-2b-cpu` throughout.
+- Latency: p50 666.684 ms, p95 912.437 ms, p99 1121.969 ms.
+- Oberon: ready, zero restarts, max CPU 0.189%, max memory 19.938%.
+- Arena: ready, zero restarts, max CPU 0.123%, max memory 21.508%.
+- Brutus: ready, zero restarts, max CPU 0.095%, max memory 9.128%.
+- All providers remained below the 70% resource guardrail.
+- The fail-closed evidence merger returned `passed: true` with no failures.
+
+The machine-readable result is
+[`certification-2026-08-27-in-cluster.json`](certification-2026-08-27-in-cluster.json).
