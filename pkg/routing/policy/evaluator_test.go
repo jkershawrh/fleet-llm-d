@@ -441,3 +441,52 @@ func TestEvaluate_SemanticWithMultipleRules(t *testing.T) {
 		t.Errorf("SIMPLE: expected prefer-cheapest, got %q", decision.Reason)
 	}
 }
+
+func TestEvaluate_TenantDenialPrecedesRoutingPreference(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+	request := RoutingRequest{
+		SourceRegion:    "region-a",
+		AllowedClusters: []string{"region-a-local", "region-b-failover"},
+		DeniedClusters:  []string{"region-a-local"},
+	}
+	clusters := []ClusterHealth{
+		{ClusterID: "region-a-local", Healthy: true},
+		{ClusterID: "region-b-failover", Healthy: true},
+	}
+	policy := v1alpha1.FleetRoutingPolicySpec{Rules: []v1alpha1.RoutingRule{{
+		Match: v1alpha1.RoutingMatch{Source: "region-a"},
+		Action: v1alpha1.RoutingAction{
+			PreferLocal: true,
+			Failover:    &v1alpha1.Failover{Clusters: []string{"region-b-failover"}},
+		},
+	}}}
+
+	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.TargetCluster != "region-b-failover" || decision.Reason != "failover" {
+		t.Fatalf("tenant denial must precede locality: got cluster=%q reason=%q", decision.TargetCluster, decision.Reason)
+	}
+}
+
+func TestEvaluate_UnhealthyCandidateCannotWinOptimization(t *testing.T) {
+	evaluator := NewRoutingPolicyEvaluator()
+	request := RoutingRequest{Headers: map[string]string{"x-session-id": "session-1"}}
+	clusters := []ClusterHealth{
+		{ClusterID: "unhealthy-high-affinity", Healthy: false, KVCacheHitRate: 1.0},
+		{ClusterID: "healthy-lower-affinity", Healthy: true, KVCacheHitRate: 0.4},
+	}
+	policy := v1alpha1.FleetRoutingPolicySpec{Rules: []v1alpha1.RoutingRule{{
+		Match:  v1alpha1.RoutingMatch{Headers: map[string]string{"x-session-id": "*"}},
+		Action: v1alpha1.RoutingAction{KVCacheAffinity: true},
+	}}}
+
+	decision, err := evaluator.Evaluate(context.Background(), request, clusters, policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.TargetCluster != "healthy-lower-affinity" {
+		t.Fatalf("unhealthy candidate won optimization: got %q", decision.TargetCluster)
+	}
+}

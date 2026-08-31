@@ -175,15 +175,24 @@ class PenTest:
         resp = await self._req("POST", "/api/v2/intents", self.admin_token,
                                '{"type":"scale","confidence":0.9}',
                                {"Content-Type": "application/json"})
-        self._check("unsigned_intent", resp.status_code in (400, 403, 422),
+        # The portable core profile intentionally disables the legacy JSON
+        # compatibility ingress. 415 is therefore a valid fail-closed result.
+        self._check("unsigned_intent", resp.status_code in (400, 403, 415, 422),
                      f"status={resp.status_code} (should reject unsigned)")
 
     async def test_malformed_cloudevent(self):
         resp = await self._req("POST", "/api/v2/intents", self.admin_token,
                                '{"specversion":"1.0","type":"wrong","source":"evil"}',
                                {"Content-Type": "application/cloudevents+json"})
-        self._check("malformed_cloudevent", resp.status_code in (400, 403, 422),
-                     f"status={resp.status_code} (should reject malformed)")
+        verification_disabled = (
+            resp.status_code == 503
+            and "GCL DecisionPackage verification is not configured" in resp.text
+        )
+        self._check(
+            "malformed_cloudevent",
+            resp.status_code in (400, 403, 422) or verification_disabled,
+            f"status={resp.status_code} (should reject malformed or fail closed when GCL is absent)",
+        )
 
     # ── Large Payload ──
 

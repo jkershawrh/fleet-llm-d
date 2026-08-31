@@ -1,7 +1,8 @@
 # Upstream experience report: evidence and limitations
 
-This appendix supports the RFC and proposal. It is not a release certification
-and should be updated from immutable test artifacts before external submission.
+This appendix supports the RFC and proposal. It is not a certification of the
+reference environment. The dated portable product result is in
+`multicluster-product-conformance-2026-08-31.md`.
 
 ## Current-release behaviors exercised
 
@@ -42,15 +43,16 @@ single-replica components, or in-memory dependencies. They are useful
 implementation experience but must not be represented as certification of the
 current Route-based HA release.
 
-## Open production prerequisites
+## Gates beyond portable product proof
 
-- Complete and archive the current-release mixed-workload certification run.
-- Validate external HA PostgreSQL with TLS, backup, and point-in-time recovery.
-- Place the mandatory ledger in an independent, highly available failure
-  domain and test fail-closed outage behavior.
+- Reproduce the conformance suite in an independent, topology-neutral testbed.
+- Publish signed release artifacts, provenance, and the exact conformance
+  harness revision.
+- Complete formal product security review.
+- Validate external HA PostgreSQL and immutable evidence only for a governed
+  downstream profile; neither is a prerequisite for the portable OSS core.
 - Add a second compatible GPU provider before advertising GPU model HA.
-- Complete formal security review and reconcile older documentation with the
-  current topology and transport.
+- Keep environment certification separate from product conformance claims.
 
 ## Router v0.10 compatibility work
 
