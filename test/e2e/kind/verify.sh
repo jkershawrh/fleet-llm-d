@@ -25,7 +25,7 @@ echo "$CLUSTER_JSON" | python3 -c 'import json,sys; clusters=json.load(sys.stdin
 echo ""
 echo "=== Creating a fleet pool ==="
 curl -sf -X POST "$URL/api/v1/webhook/fleetinferencepool" -H 'Content-Type: application/json' \
-  -d '{"type":"ADDED","object":{"model":{"name":"e2e-model","source":"test"},"placement":{"policyRef":"default","minClusters":2,"maxClusters":2},"serving":{"inferencePoolTemplate":{"spec":{"targetPorts":[8080]}}}}}' > /dev/null
+  -d '{"type":"ADDED","object":{"model":{"name":"e2e-model","source":"test"},"placement":{"policyRef":{"name":"default"},"minClusters":2,"maxClusters":2},"serving":{"inferencePoolTemplate":{"spec":{"targetPorts":[8080]}}}}}' > /dev/null
 
 echo "Pool created"
 
