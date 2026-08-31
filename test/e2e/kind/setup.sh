@@ -149,6 +149,16 @@ echo ""
 echo "=== Controller accessible at $CONTROLLER_URL ==="
 curl -s "$CONTROLLER_URL/healthz" && echo ""
 
+echo ""
+echo "=== Pre-registering trusted spoke identities ==="
+for spoke in "$SPOKE1" "$SPOKE2"; do
+  SPOKE_ID=$(echo "$spoke" | sed 's/fleet-//')
+  curl -fsS -X POST "$CONTROLLER_URL/api/v1/clusters" \
+    -H 'Content-Type: application/json' \
+    -d "{\"id\":\"$SPOKE_ID\",\"name\":\"$SPOKE_ID\",\"region\":\"kind\"}" >/dev/null
+  echo "Registered $SPOKE_ID"
+done
+
 
 echo ""
 echo "=== Deploying spoke agents ==="
