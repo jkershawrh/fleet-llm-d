@@ -183,6 +183,48 @@ func TestCheckQuota_DoesNotDeductTokens(t *testing.T) {
 	}
 }
 
+func TestFallbackQuotaResetsTokenWindowButNotMonthlyBudget(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
+	e := NewQuotaEnforcerWithFallback(FallbackConfig{
+		TokenLimitPerMinute: 8, ConcurrentLimit: 1, MonthlyBudgetCents: 100,
+	}).(*DefaultQuotaEnforcer)
+	e.now = func() time.Time { return now }
+
+	first, err := e.ReserveQuota(context.Background(), "certification", QuotaCheckRequest{TokensRequested: 8})
+	if err != nil || !first.Allowed {
+		t.Fatalf("first reservation = (%+v, %v), want allowed", first, err)
+	}
+	denied, err := e.ReserveQuota(context.Background(), "certification", QuotaCheckRequest{TokensRequested: 1})
+	if err != nil || denied.Allowed {
+		t.Fatalf("same-window reservation = (%+v, %v), want denied", denied, err)
+	}
+
+	now = now.Add(time.Minute)
+	reset, err := e.ReserveQuota(context.Background(), "certification", QuotaCheckRequest{TokensRequested: 8})
+	if err != nil || !reset.Allowed || reset.RemainingTokens != 0 {
+		t.Fatalf("next-window reservation = (%+v, %v), want allowed", reset, err)
+	}
+	if reset.RemainingBudget != "$0.84" {
+		t.Fatalf("monthly budget = %s, want $0.84", reset.RemainingBudget)
+	}
+}
+
+func TestFallbackQuotaResetsMonthlyBudget(t *testing.T) {
+	now := time.Date(2026, time.August, 31, 23, 59, 0, 0, time.UTC)
+	e := NewQuotaEnforcerWithFallback(FallbackConfig{
+		TokenLimitPerMinute: 10, ConcurrentLimit: 1, MonthlyBudgetCents: 8,
+	}).(*DefaultQuotaEnforcer)
+	e.now = func() time.Time { return now }
+	if result, err := e.ReserveQuota(context.Background(), "certification", QuotaCheckRequest{TokensRequested: 8}); err != nil || !result.Allowed {
+		t.Fatalf("August reservation = (%+v, %v), want allowed", result, err)
+	}
+	now = now.Add(time.Minute)
+	result, err := e.ReserveQuota(context.Background(), "certification", QuotaCheckRequest{TokensRequested: 8})
+	if err != nil || !result.Allowed || result.RemainingBudget != "$0.00" {
+		t.Fatalf("September reservation = (%+v, %v), want reset budget", result, err)
+	}
+}
+
 func TestConsumeQuota_DeductsTokens(t *testing.T) {
 	e := newTestEnforcer()
 	ce := e.(*DefaultQuotaEnforcer)

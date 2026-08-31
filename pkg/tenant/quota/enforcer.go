@@ -46,6 +46,8 @@ type tenantProfile struct {
 	concurrentLimit int64
 	budgetCents     int64 // total budget in cents
 	budgetSpent     int64 // spent budget in cents
+	tokenWindow     time.Time
+	budgetMonth     time.Time
 }
 
 // costPerToken is the cost in cents per token.
@@ -58,6 +60,20 @@ type DefaultQuotaEnforcer struct {
 	profiles map[string]*tenantProfile
 	records  []usageEntry
 	repo     postgres.TenantRepository
+	fallback FallbackConfig
+	now      func() time.Time
+}
+
+// FallbackConfig controls bounded quota enforcement when a tenant repository
+// is absent or has no record for the authenticated tenant.
+type FallbackConfig struct {
+	TokenLimitPerMinute int64 `json:"tokenLimitPerMinute"`
+	ConcurrentLimit     int64 `json:"concurrentLimit"`
+	MonthlyBudgetCents  int64 `json:"monthlyBudgetCents"`
+}
+
+func DefaultFallbackConfig() FallbackConfig {
+	return FallbackConfig{TokenLimitPerMinute: 1000, ConcurrentLimit: 100, MonthlyBudgetCents: 1000}
 }
 
 type usageEntry struct {
@@ -69,13 +85,58 @@ type usageEntry struct {
 // If a TenantRepository is provided, tenant profiles are loaded from the repo
 // when not found in the local cache.
 func NewQuotaEnforcer(repo ...postgres.TenantRepository) QuotaEnforcer {
+	return NewQuotaEnforcerWithFallback(DefaultFallbackConfig(), repo...)
+}
+
+// NewQuotaEnforcerWithFallback configures quota limits for tenants that are
+// not backed by durable repository state.
+func NewQuotaEnforcerWithFallback(fallback FallbackConfig, repo ...postgres.TenantRepository) QuotaEnforcer {
 	var r postgres.TenantRepository
 	if len(repo) > 0 {
 		r = repo[0]
 	}
+	defaults := DefaultFallbackConfig()
+	if fallback.TokenLimitPerMinute <= 0 {
+		fallback.TokenLimitPerMinute = defaults.TokenLimitPerMinute
+	}
+	if fallback.ConcurrentLimit <= 0 {
+		fallback.ConcurrentLimit = defaults.ConcurrentLimit
+	}
+	if fallback.MonthlyBudgetCents <= 0 {
+		fallback.MonthlyBudgetCents = defaults.MonthlyBudgetCents
+	}
 	return &DefaultQuotaEnforcer{
 		profiles: make(map[string]*tenantProfile),
 		repo:     r,
+		fallback: fallback,
+		now:      time.Now,
+	}
+}
+
+func (e *DefaultQuotaEnforcer) newFallbackProfile() *tenantProfile {
+	now := e.now().UTC()
+	return &tenantProfile{
+		tokenLimit: e.fallback.TokenLimitPerMinute, concurrentLimit: e.fallback.ConcurrentLimit,
+		budgetCents: e.fallback.MonthlyBudgetCents,
+		tokenWindow: now.Truncate(time.Minute), budgetMonth: monthStart(now),
+	}
+}
+
+func monthStart(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+func (e *DefaultQuotaEnforcer) resetLocalWindows(profile *tenantProfile) {
+	now := e.now().UTC()
+	window := now.Truncate(time.Minute)
+	if !profile.tokenWindow.IsZero() && !profile.tokenWindow.Equal(window) {
+		profile.tokensUsed = 0
+		profile.tokenWindow = window
+	}
+	month := monthStart(now)
+	if !profile.budgetMonth.IsZero() && !profile.budgetMonth.Equal(month) {
+		profile.budgetSpent = 0
+		profile.budgetMonth = month
 	}
 }
 
@@ -87,11 +148,7 @@ func (e *DefaultQuotaEnforcer) loadFromRepo(tenantID string) *tenantProfile {
 	if err != nil || tenant == nil {
 		return nil
 	}
-	profile := &tenantProfile{
-		tokenLimit:      1000,
-		concurrentLimit: 100,
-		budgetCents:     1000,
-	}
+	profile := e.newFallbackProfile()
 	if quotas := tenant.Quotas; quotas != nil {
 		if v, ok := quotas["maxTokensPerMinute"].(float64); ok {
 			profile.tokenLimit = int64(v)
@@ -125,12 +182,10 @@ func (e *DefaultQuotaEnforcer) CheckQuota(_ context.Context, tenantID string, re
 		profile = e.loadFromRepo(tenantID)
 	}
 	if profile == nil {
-		profile = &tenantProfile{
-			tokenLimit:  1000,
-			budgetCents: 1000,
-		}
+		profile = e.newFallbackProfile()
 		e.profiles[tenantID] = profile
 	}
+	e.resetLocalWindows(profile)
 
 	remainingTokens := profile.tokenLimit - profile.tokensUsed
 	remainingBudgetCents := profile.budgetCents - profile.budgetSpent
@@ -179,7 +234,7 @@ func (e *DefaultQuotaEnforcer) ReserveQuota(ctx context.Context, tenantID string
 		profile = e.loadFromRepo(tenantID)
 	}
 	if profile == nil {
-		profile = &tenantProfile{tokenLimit: 1000, concurrentLimit: 100, budgetCents: 1000}
+		profile = e.newFallbackProfile()
 		e.profiles[tenantID] = profile
 	}
 	if shared, ok := e.repo.(postgres.TenantQuotaRepository); ok {
@@ -205,6 +260,7 @@ func (e *DefaultQuotaEnforcer) ReserveQuota(ctx context.Context, tenantID string
 		return QuotaCheckResult{Allowed: true, RemainingTokens: remaining, RemainingBudget: formatBudget(remainingBudget)}, nil
 	}
 	defer e.mu.Unlock()
+	e.resetLocalWindows(profile)
 
 	remainingTokens := profile.tokenLimit - profile.tokensUsed
 	remainingBudgetCents := profile.budgetCents - profile.budgetSpent

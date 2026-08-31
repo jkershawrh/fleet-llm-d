@@ -22,13 +22,16 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
 	"github.com/llm-d/fleet-llm-d/pkg/server"
 	"github.com/llm-d/fleet-llm-d/pkg/store/events"
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
+	"github.com/llm-d/fleet-llm-d/pkg/tenant/quota"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 func main() {
 	port := flag.Int("port", 8080, "API server port")
 	metricsPort := flag.Int("metrics-port", 9091, "Metrics server port")
 	grpcPort := flag.Int("grpc-port", 0, "gRPC (JSON-RPC) server port; 0 disables")
-	mode := flag.String("mode", "all", "Server mode: all (default), control (fleet API only), inference (OpenAI gateway only)")
+	mode := flag.String("mode", "all", "Server mode: all, control, inference, publisher, or endpoint-mirror")
 	production := flag.Bool("production", false, "Require production-safe authentication, persistence, ledger, TLS, and signing configuration")
 	ledgerMode := flag.String("ledger-mode", string(ledger.ModeDisabled), "Ledger backend mode: disabled (default), memory (development only -- evidence is fabricated and lost on restart), http (standalone are-immutable-ledger REST compatibility gateway). gRPC is canonical upstream but not yet generated in this binary")
 	ledgerEndpoint := flag.String("ledger-endpoint", "http://localhost:18099", "standalone immutable-ledger REST gateway endpoint (HTTP compatibility mode only)")
@@ -108,6 +111,38 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
 	slog.Info("fleet-controller starting", "mode", *mode, "log_level", *logLevel, "ledger_mode", *ledgerMode, "ledger", *ledgerEndpoint, "grpc_port", *grpcPort)
+	if *mode == "endpoint-mirror" {
+		if *kubeAPI == "" {
+			slog.Error("endpoint mirror requires --kube-api")
+			os.Exit(1)
+		}
+		tlsConfig, err := tlsutil.NewTLSConfig(tlsutil.KubernetesTLSOptions())
+		if err != nil {
+			slog.Error("endpoint mirror Kubernetes trust failed", "error", err)
+			os.Exit(1)
+		}
+		configMap := strings.TrimSpace(os.Getenv("LLMD_ROUTER_ENDPOINTS_CONFIGMAP"))
+		directory := strings.TrimSpace(os.Getenv("LLMD_ROUTER_ENDPOINTS_DIR"))
+		if directory == "" {
+			directory = "/var/run/fleet-router"
+		}
+		err = routing.RunKubernetesConfigMapMirror(context.Background(), routing.KubernetesConfigMapMirrorOptions{
+			APIURL: *kubeAPI, Namespace: *namespace, Name: configMap, Directory: directory,
+			TokenFile: tlsutil.ServiceAccountTokenPath, Interval: 2 * time.Second,
+			HTTPClient: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig}},
+			OnPublished: func(resourceVersion string) {
+				slog.Info("Router endpoint files mirrored", "resource_version", resourceVersion)
+			},
+			OnError: func(err error) {
+				slog.Warn("Router endpoint mirror sync failed", "error", err)
+			},
+		})
+		if err != nil {
+			slog.Error("endpoint mirror exited", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if ledger.Mode(*ledgerMode) == ledger.ModeMemory {
 		slog.Warn("ledger mode is 'memory': receipts are fabricated in-process and lost on restart. " +
@@ -138,6 +173,13 @@ func main() {
 	if err != nil {
 		slog.Error("invalid immutable-ledger configuration", "error", err)
 		os.Exit(1)
+	}
+	if *mode == "publisher" {
+		// Publisher mode needs Kubernetes only for leader election and the
+		// ConfigMap adapter. It must not claim CRD-watcher readiness or actuate
+		// serving resources.
+		fc.CRDWatcher = nil
+		fc.Actuator = nil
 	}
 	if *kubeAPI != "" && *mode != "inference" {
 		identity := os.Getenv("POD_NAME")
@@ -216,6 +258,18 @@ func main() {
 			fc.ModelProviderClusters[model] = clean
 		}
 	}
+	if raw := os.Getenv("FLEET_STATIC_PROVIDER_IDS_JSON"); raw != "" {
+		if err := bootstrapStaticProviders(context.Background(), fc.ClusterRepo, raw, *production || *pgURL != ""); err != nil {
+			slog.Error("invalid static provider bootstrap configuration", "error", err)
+			os.Exit(1)
+		}
+	}
+	if raw := os.Getenv("FLEET_STATIC_ROUTING_STATE_JSON"); raw != "" {
+		if err := bootstrapStaticRoutingState(context.Background(), fc.ClusterRepo, fc.PoolRepo, raw, *production || *pgURL != ""); err != nil {
+			slog.Error("invalid static routing state", "error", err)
+			os.Exit(1)
+		}
+	}
 	if raw := os.Getenv("FLEET_PROVIDER_HEALTH_URLS_JSON"); raw != "" {
 		var providerURLs map[string]string
 		if err := json.Unmarshal([]byte(raw), &providerURLs); err != nil {
@@ -227,6 +281,13 @@ func main() {
 			slog.Error("invalid provider health probe configuration", "error", err)
 			os.Exit(1)
 		}
+		initializeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := providerHealth.Initialize(initializeCtx); err != nil {
+			cancel()
+			slog.Error("provider health initialization failed", "error", err)
+			os.Exit(1)
+		}
+		cancel()
 		fc.ProviderHealth = providerHealth
 		providerHealth.Start(context.Background())
 		slog.Info("active provider health probes enabled", "providers", len(providerURLs))
@@ -247,6 +308,18 @@ func main() {
 			slog.Error("postgres override failed", "error", err)
 			os.Exit(1)
 		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("FLEET_FALLBACK_QUOTA_JSON")); raw != "" {
+		fallback, err := parseFallbackQuota(raw, *production || *pgURL != "")
+		if err != nil {
+			slog.Error("fallback quota configuration rejected", "error", err)
+			os.Exit(1)
+		}
+		fc.QuotaEnforcer = quota.NewQuotaEnforcerWithFallback(fallback, fc.TenantRepo)
+		slog.Warn("certification fallback quota enabled",
+			"token_limit_per_minute", fallback.TokenLimitPerMinute,
+			"concurrent_limit", fallback.ConcurrentLimit,
+			"monthly_budget_cents", fallback.MonthlyBudgetCents)
 	}
 
 	fc.InitGauges(context.Background())
@@ -274,6 +347,129 @@ func main() {
 		slog.Error("fleet-controller exited", "error", err)
 		os.Exit(1)
 	}
+}
+
+func parseFallbackQuota(raw string, durable bool) (quota.FallbackConfig, error) {
+	if durable {
+		return quota.FallbackConfig{}, fmt.Errorf("FLEET_FALLBACK_QUOTA_JSON is certification-only and cannot be used with production mode or PostgreSQL")
+	}
+	var config quota.FallbackConfig
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return quota.FallbackConfig{}, fmt.Errorf("parse fallback quota: %w", err)
+	}
+	if config.TokenLimitPerMinute <= 0 || config.ConcurrentLimit <= 0 || config.MonthlyBudgetCents <= 0 {
+		return quota.FallbackConfig{}, fmt.Errorf("fallback quota limits must all be positive")
+	}
+	return config, nil
+}
+
+func bootstrapStaticProviders(ctx context.Context, repo postgres.ClusterRepository, raw string, durable bool) error {
+	if durable {
+		return fmt.Errorf("FLEET_STATIC_PROVIDER_IDS_JSON is certification-only and cannot be used with production mode or PostgreSQL")
+	}
+	var providerIDs []string
+	if err := json.Unmarshal([]byte(raw), &providerIDs); err != nil {
+		return fmt.Errorf("parse provider IDs: %w", err)
+	}
+	if len(providerIDs) == 0 {
+		return fmt.Errorf("provider ID list is empty")
+	}
+	now := time.Now().UTC()
+	seen := make(map[string]bool, len(providerIDs))
+	for _, providerID := range providerIDs {
+		providerID = strings.TrimSpace(providerID)
+		if providerID == "" {
+			return fmt.Errorf("provider ID is empty")
+		}
+		if seen[providerID] {
+			continue
+		}
+		seen[providerID] = true
+		if _, err := repo.Get(ctx, providerID); err == nil {
+			continue
+		}
+		if err := repo.Create(ctx, postgres.ClusterRecord{
+			ID: providerID, Name: providerID, Status: postgres.ClusterStatusRunning,
+			RegisteredAt: now, UpdatedAt: now,
+		}); err != nil {
+			return fmt.Errorf("create provider %s: %w", providerID, err)
+		}
+	}
+	slog.Warn("static certification provider inventory enabled", "providers", len(seen))
+	return nil
+}
+
+type staticRoutingState struct {
+	Providers []struct {
+		ID             string   `json:"id"`
+		RoutingURL     string   `json:"routingURL"`
+		MetricsURL     string   `json:"metricsURL"`
+		PhysicalModels []string `json:"physicalModels"`
+		FailureDomain  string   `json:"failureDomain"`
+	} `json:"providers"`
+	Pools []struct {
+		Model     string   `json:"model"`
+		Providers []string `json:"providers"`
+	} `json:"pools"`
+}
+
+func bootstrapStaticRoutingState(ctx context.Context, clusters postgres.ClusterRepository, pools postgres.FleetPoolRepository, raw string, durable bool) error {
+	if durable {
+		return fmt.Errorf("FLEET_STATIC_ROUTING_STATE_JSON is certification-only and cannot be used with production mode or PostgreSQL")
+	}
+	var state staticRoutingState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		return fmt.Errorf("parse static routing state: %w", err)
+	}
+	if len(state.Providers) == 0 || len(state.Pools) == 0 {
+		return fmt.Errorf("static routing state requires providers and pools")
+	}
+	now := time.Now().UTC()
+	providerIDs := make(map[string]bool, len(state.Providers))
+	for _, provider := range state.Providers {
+		provider.ID = strings.TrimSpace(provider.ID)
+		routingURL, err := url.Parse(strings.TrimSpace(provider.RoutingURL))
+		if provider.ID == "" || err != nil || routingURL.Scheme != "https" || routingURL.Hostname() == "" {
+			return fmt.Errorf("provider %q requires a valid HTTPS routingURL", provider.ID)
+		}
+		if providerIDs[provider.ID] {
+			return fmt.Errorf("duplicate provider %q", provider.ID)
+		}
+		providerIDs[provider.ID] = true
+		labels := map[string]string{
+			"fleet.llm-d.ai/egress-address":   provider.RoutingURL,
+			"fleet.llm-d.ai/metrics-endpoint": provider.MetricsURL,
+			"fleet.llm-d.ai/tls-server-name":  routingURL.Hostname(),
+			"fleet.llm-d.ai/physical-models":  strings.Join(provider.PhysicalModels, ","),
+			"fleet.llm-d.ai/authorized":       "true",
+			"topology.kubernetes.io/zone":     provider.FailureDomain,
+		}
+		record := postgres.ClusterRecord{ID: provider.ID, Name: provider.ID, Labels: labels, Status: postgres.ClusterStatusRunning, RegisteredAt: now, UpdatedAt: now}
+		if existing, err := clusters.Get(ctx, provider.ID); err == nil {
+			record.RegisteredAt = existing.RegisteredAt
+			if err := clusters.Update(ctx, record); err != nil {
+				return fmt.Errorf("update static provider %s: %w", provider.ID, err)
+			}
+		} else if err := clusters.Create(ctx, record); err != nil {
+			return fmt.Errorf("create static provider %s: %w", provider.ID, err)
+		}
+	}
+	for _, pool := range state.Pools {
+		pool.Model = strings.TrimSpace(pool.Model)
+		if pool.Model == "" || len(pool.Providers) == 0 {
+			return fmt.Errorf("static pool requires a model and providers")
+		}
+		for _, providerID := range pool.Providers {
+			if !providerIDs[providerID] {
+				return fmt.Errorf("pool %q references unknown provider %q", pool.Model, providerID)
+			}
+		}
+		if err := pools.Create(ctx, postgres.FleetPoolRecord{ID: pool.Model, Name: pool.Model, ModelName: pool.Model, DesiredClusters: pool.Providers, TargetPorts: []int{443}, Status: "Active", CreatedAt: now, UpdatedAt: now}); err != nil {
+			return fmt.Errorf("create static pool %s: %w", pool.Model, err)
+		}
+	}
+	slog.Warn("static certification routing state enabled", "providers", len(state.Providers), "pools", len(state.Pools))
+	return nil
 }
 
 func validateProductionConfig(production bool, mode, pgURL string, ledgerMode ledger.Mode, ledgerEndpoint string, authEnabled bool, tlsCert, tlsKey string, inferenceProvider server.InferenceProviderName, praxisURL, llmdCPUURL, llmdGPUURL, decisionKeys string) error {
@@ -313,7 +509,7 @@ func validateProductionConfig(production bool, mode, pgURL string, ledgerMode le
 	if len(missing) > 0 {
 		return fmt.Errorf("missing or unsafe production requirements: %s", strings.Join(missing, ", "))
 	}
-	if mode != "all" && mode != "control" && mode != "inference" {
+	if mode != "all" && mode != "control" && mode != "inference" && mode != "publisher" {
 		return fmt.Errorf("invalid server mode %q", mode)
 	}
 	return nil

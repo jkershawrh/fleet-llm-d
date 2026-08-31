@@ -60,8 +60,7 @@ router:
               - pluginRef: random-picker
     volumes:
       - name: fleet-router-endpoints
-        configMap:
-          name: fleet-router-endpoints
+        emptyDir: {}
       - name: grid-signals-route-ca
         secret:
           secretName: grid-signals-route-ca

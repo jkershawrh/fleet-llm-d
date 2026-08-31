@@ -10,12 +10,13 @@ import (
 	"strings"
 
 	"github.com/llm-d/fleet-llm-d/pkg/auth"
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
 )
 
 const MaxRequestBodyBytes int64 = 1 << 20
 
 func readServiceAccountToken() string {
-	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	data, err := os.ReadFile(tlsutil.ServiceAccountTokenPath)
 	if err != nil {
 		return ""
 	}

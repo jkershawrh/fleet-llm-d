@@ -1,0 +1,53 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fleet-llm-d
+resources:
+  - service-account.yaml
+  - endpoint-reconciler.yaml
+  - endpoint-mirror-access.yaml
+  - ../router-proxies.yaml
+  - ../qualification-gateway.yaml
+images:
+  - name: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller
+    newName: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller
+    digest: sha256:52189be67c894f71f8df1a882596d7de7794a367c6fc52b3418f337ff823ac55
+patches:
+  - target:
+      kind: Deployment
+      name: fleet-router-qualification-gateway
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/env/1
+      - op: remove
+        path: /spec/template/spec/containers/0/env/1
+      - op: remove
+        path: /spec/template/spec/containers/0/env/1
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/value
+        value: '{"oberon-cpu":"https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com/v2/health/ready","arena-xeon6":"http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready","brutus-h100":"https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com/health"}'
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: FLEET_STATIC_PROVIDER_IDS_JSON
+          value: '["oberon-cpu","arena-xeon6","brutus-h100"]'
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: FLEET_FALLBACK_QUOTA_JSON
+          value: '{"tokenLimitPerMinute":1000,"concurrentLimit":50,"monthlyBudgetCents":10000000}'
+  - target:
+      kind: NetworkPolicy
+      name: fleet-router-qualification-gateway
+    patch: |-
+      - op: replace
+        path: /spec/egress/5/to/0/ipBlock/cidr
+        value: 192.168.1.123/32
+  - target:
+      kind: NetworkPolicy
+      name: fleet-router-qualification-to-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: fleet-router-qualification-to-postgres

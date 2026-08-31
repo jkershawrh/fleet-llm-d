@@ -7,7 +7,10 @@ import (
 	"os"
 )
 
-const ServiceAccountCAPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+const (
+	ServiceAccountCAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+)
 
 // TLSOptions configures TLS behavior for HTTP clients.
 type TLSOptions struct {

@@ -132,6 +132,50 @@ func TestInferenceGatewayRejectsUnknownRouterExecutionEvidence(t *testing.T) {
 	}
 }
 
+func TestInferenceGatewayRejectsMissingRouterExecutionEvidenceOnSuccess(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"must not pass"}}]}`)
+	}))
+	defer upstream.Close()
+	fc := newTestFleetController(t)
+	fc.InferenceProviderName = InferenceProviderLLMD
+	fc.LLMDCPUURL = upstream.URL
+	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "cpu-provider-a"}
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "routing_evidence_mismatch") || strings.Contains(rr.Body.String(), "must not pass") {
+		t.Fatalf("expected missing evidence to fail closed, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInferenceGatewayPreservesRouterFailureWithoutExecutionEvidence(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":"router failed before provider selection"}`)
+	}))
+	defer upstream.Close()
+	fc := newTestFleetController(t)
+	fc.InferenceProviderName = InferenceProviderLLMD
+	fc.LLMDCPUURL = upstream.URL
+	fc.RouterUpstreamClusters = map[string]string{"ovms.example:443": "cpu-provider-a"}
+	if err := fc.ClusterRepo.Create(context.Background(), postgres.ClusterRecord{ID: "cpu-provider-a", Name: "cpu-provider-a", Status: "Running"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
+		`{"model":"granite-2b-cpu","messages":[{"role":"user","content":"hello"}]}`))
+	rr := httptest.NewRecorder()
+	fc.SetupRoutes("inference").ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadGateway || strings.Contains(rr.Body.String(), "routing_evidence_mismatch") {
+		t.Fatalf("expected original Router 502 without an evidence mismatch, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestInferenceGatewayNoCapacityIsStructured503(t *testing.T) {
 	fc := newTestFleetController(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/completions", bytes.NewBufferString(`{"model":"x","prompt":"hello"}`))

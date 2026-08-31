@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fleet-router-certification-arena-local
+  namespace: fleet-llm-d
+  labels: &labels
+    app.kubernetes.io/name: fleet-certification
+    app.kubernetes.io/component: traffic
+    fleet.llm-d.ai/profile: arena-router-local
+    fleet.llm-d.ai/source-cluster: arena
+spec:
+  backoffLimit: 2
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions: [{type: DisruptionTarget}]
+  activeDeadlineSeconds: 14400
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      automountServiceAccountToken: false
+      hostAliases:
+        - ip: 192.168.1.150
+          hostnames:
+            - fleet-router-qualification-gateway-fleet-llm-d.apps.arena.fm2aihpcsed.com
+        - ip: 192.168.1.177
+          hostnames:
+            - fleet-router-qualification-gateway-fleet-llm-d.apps.arena.fm2aihpcsed.com
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: traffic
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-certification@sha256:e3b4ab588be69aa600b637acdc58ffab3917556ef686b51dafddc3c07d3aff8d
+          imagePullPolicy: IfNotPresent
+          command: [python3, /opt/fleet-certification/bounded_inference_scale.py]
+          args:
+            - --fleet-url=https://fleet-router-qualification-gateway-fleet-llm-d.apps.arena.fm2aihpcsed.com
+            - --model=granite-2b-cpu
+            - --data-plane=llm-d-router
+            - --source-cluster=arena
+            - --transport=external-route
+            - --ca-file=/etc/fleet/route-ca/ca-bundle.crt
+            - --max-concurrency=1
+            - --duration-per-level=900
+            - --max-tokens=8
+            - --request-interval=6.7
+            - --traffic-only
+          env:
+            - name: FLEET_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef: {name: fleet-certification-credentials, key: token}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          resources:
+            requests: {cpu: 25m, memory: 48Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          volumeMounts:
+            - {name: route-ca, mountPath: /etc/fleet/route-ca, readOnly: true}
+      volumes:
+        - name: route-ca
+          configMap: {name: fleet-route-ca}

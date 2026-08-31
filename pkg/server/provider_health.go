@@ -38,6 +38,26 @@ type ProviderHealthCache struct {
 	now     func() time.Time
 }
 
+// Ready reports whether every configured provider has completed enough probe
+// cycles to make an authoritative healthy/unhealthy decision. Until then an
+// inference replica must remain out of Service endpoints: accepting traffic
+// with an empty health cache creates a cold-start no-compatible-capacity
+// window during rolling updates and preemption recovery.
+func (p *ProviderHealthCache) Ready() bool {
+	if p == nil {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for clusterID := range p.urls {
+		entry, ok := p.entries[clusterID]
+		if !ok || entry.consecutiveSuccesses < providerHealthyThreshold && entry.consecutiveFailures < providerUnhealthyThreshold {
+			return false
+		}
+	}
+	return true
+}
+
 func NewProviderHealthCache(urls map[string]string, caPath string) (*ProviderHealthCache, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if caPath != "" {
@@ -78,6 +98,26 @@ func (p *ProviderHealthCache) Healthy(ctx context.Context, clusterID string) (bo
 	p.mu.Unlock()
 
 	return p.probe(ctx, clusterID, url), true
+}
+
+// Snapshot returns the last authoritative probe state without initiating a
+// request. Routing publishers use the probe timestamp as provider freshness so
+// an actively checked static provider does not become stale merely because its
+// inventory record is immutable during certification.
+func (p *ProviderHealthCache) Snapshot(clusterID string) (healthy, configured bool, checkedAt time.Time) {
+	if p == nil {
+		return false, false, time.Time{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, configured = p.urls[clusterID]; !configured {
+		return false, false, time.Time{}
+	}
+	entry, ok := p.entries[clusterID]
+	if !ok {
+		return false, true, time.Time{}
+	}
+	return entry.healthy, true, entry.checkedAt
 }
 
 func (p *ProviderHealthCache) probe(ctx context.Context, clusterID, url string) bool {
@@ -126,6 +166,34 @@ func (p *ProviderHealthCache) probe(ctx context.Context, clusterID, url string) 
 	return entry.healthy
 }
 
+func (p *ProviderHealthCache) probeAll(ctx context.Context) {
+	for clusterID, url := range p.urls {
+		probeCtx, cancel := context.WithTimeout(ctx, p.client.Timeout)
+		p.probe(probeCtx, clusterID, url)
+		cancel()
+	}
+}
+
+// Initialize blocks process startup until every configured provider has an
+// authoritative probe state. This prevents a restarted process from binding
+// its serving socket while its in-memory provider cache is still empty.
+func (p *ProviderHealthCache) Initialize(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	for {
+		p.probeAll(ctx)
+		if p.Ready() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("initialize provider health: %w", ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+}
+
 // Start continuously probes every configured provider. Routing therefore
 // converges even when no client requests are arriving.
 func (p *ProviderHealthCache) Start(ctx context.Context) {
@@ -133,14 +201,7 @@ func (p *ProviderHealthCache) Start(ctx context.Context) {
 		return
 	}
 	go func() {
-		probeAll := func() {
-			for clusterID, url := range p.urls {
-				probeCtx, cancel := context.WithTimeout(ctx, p.client.Timeout)
-				p.probe(probeCtx, clusterID, url)
-				cancel()
-			}
-		}
-		probeAll()
+		p.probeAll(ctx)
 		ticker := time.NewTicker(p.ttl)
 		defer ticker.Stop()
 		for {
@@ -148,7 +209,7 @@ func (p *ProviderHealthCache) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				probeAll()
+				p.probeAll(ctx)
 			}
 		}
 	}()

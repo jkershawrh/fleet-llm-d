@@ -70,15 +70,19 @@ spec:
             - {name: http, containerPort: 8080}
             - {name: metrics, containerPort: 9091}
           startupProbe:
-            httpGet: {path: /healthz, port: http}
+            httpGet: {path: /readyz, port: http}
             periodSeconds: 2
             failureThreshold: 60
+            timeoutSeconds: 3
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
+            timeoutSeconds: 3
           livenessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
           resources:
             requests: {cpu: 250m, memory: 256Mi}
             limits: {cpu: "2", memory: 1Gi}

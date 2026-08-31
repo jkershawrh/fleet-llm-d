@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ type KubernetesConfigMapPublisher struct {
 	namespace string
 	name      string
 	token     string
+	tokenFile string
 	client    *http.Client
 }
 
@@ -33,6 +35,21 @@ func NewKubernetesConfigMapPublisher(apiURL, namespace, name, token string, clie
 		client = http.DefaultClient
 	}
 	return &KubernetesConfigMapPublisher{apiURL: strings.TrimRight(apiURL, "/"), namespace: namespace, name: name, token: token, client: client}, nil
+}
+
+// NewKubernetesConfigMapPublisherFromTokenFile creates a publisher that reads
+// its bearer token before every API request. Projected service-account tokens
+// rotate in place, so caching their contents eventually produces 401s.
+func NewKubernetesConfigMapPublisherFromTokenFile(apiURL, namespace, name, tokenFile string, client *http.Client) (*KubernetesConfigMapPublisher, error) {
+	if strings.TrimSpace(tokenFile) == "" {
+		return nil, fmt.Errorf("Kubernetes token file is required")
+	}
+	publisher, err := NewKubernetesConfigMapPublisher(apiURL, namespace, name, "", client)
+	if err != nil {
+		return nil, err
+	}
+	publisher.tokenFile = tokenFile
+	return publisher, nil
 }
 
 func (p *KubernetesConfigMapPublisher) Publish(ctx context.Context, files map[string][]byte) error {
@@ -50,8 +67,19 @@ func (p *KubernetesConfigMapPublisher) Publish(ctx context.Context, files map[st
 		return err
 	}
 	req.Header.Set("Content-Type", "application/merge-patch+json")
-	if p.token != "" {
-		req.Header.Set("Authorization", "Bearer "+p.token)
+	token := p.token
+	if p.tokenFile != "" {
+		contents, readErr := os.ReadFile(p.tokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read Kubernetes bearer token: %w", readErr)
+		}
+		token = strings.TrimSpace(string(contents))
+		if token == "" {
+			return fmt.Errorf("read Kubernetes bearer token: token file is empty")
+		}
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {

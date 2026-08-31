@@ -16,7 +16,82 @@ import (
 	"github.com/llm-d/fleet-llm-d/pkg/ledger"
 
 	"github.com/llm-d/fleet-llm-d/pkg/server"
+	"github.com/llm-d/fleet-llm-d/pkg/store/postgres"
 )
+
+func TestBootstrapStaticProviders(t *testing.T) {
+	repo := postgres.NewInMemoryClusterRepository()
+	if err := bootstrapStaticProviders(context.Background(), repo, `["arena-xeon6","oberon-cpu","arena-xeon6"]`, false); err != nil {
+		t.Fatal(err)
+	}
+	records, err := repo.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("provider count = %d, want 2", len(records))
+	}
+	for _, record := range records {
+		if record.Status != postgres.ClusterStatusRunning {
+			t.Fatalf("provider %s status = %s", record.ID, record.Status)
+		}
+	}
+	if err := bootstrapStaticProviders(context.Background(), repo, `["arena-xeon6"]`, true); err == nil {
+		t.Fatal("production/static provider combination was accepted")
+	}
+}
+
+func TestBootstrapStaticRoutingState(t *testing.T) {
+	clusters := postgres.NewInMemoryClusterRepository()
+	pools := postgres.NewInMemoryFleetPoolRepository()
+	raw := `{
+		"providers":[
+			{"id":"arena","routingURL":"https://arena.example","metricsURL":"https://metrics.arena.example","physicalModels":["granite-cpu"],"failureDomain":"arena-zone"},
+			{"id":"oberon","routingURL":"https://oberon.example","metricsURL":"https://metrics.oberon.example","physicalModels":["granite-cpu"],"failureDomain":"oberon-zone"}
+		],
+		"pools":[{"model":"granite-cpu","providers":["arena","oberon"]}]
+	}`
+	if err := bootstrapStaticRoutingState(context.Background(), clusters, pools, raw, false); err != nil {
+		t.Fatal(err)
+	}
+	record, err := clusters.Get(context.Background(), "arena")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Labels["fleet.llm-d.ai/egress-address"] != "https://arena.example" || record.Labels["fleet.llm-d.ai/physical-models"] != "granite-cpu" {
+		t.Fatalf("unexpected provider labels: %#v", record.Labels)
+	}
+	pool, err := pools.Get(context.Background(), "granite-cpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pool.DesiredClusters) != 2 || pool.TargetPorts[0] != 443 {
+		t.Fatalf("unexpected pool: %#v", pool)
+	}
+	if err := bootstrapStaticRoutingState(context.Background(), clusters, pools, raw, true); err == nil {
+		t.Fatal("production/static routing state combination was accepted")
+	}
+}
+
+func TestParseFallbackQuota(t *testing.T) {
+	config, err := parseFallbackQuota(`{"tokenLimitPerMinute":1000,"concurrentLimit":4,"monthlyBudgetCents":100000}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.TokenLimitPerMinute != 1000 || config.ConcurrentLimit != 4 || config.MonthlyBudgetCents != 100000 {
+		t.Fatalf("unexpected config: %+v", config)
+	}
+}
+
+func TestParseFallbackQuotaRejectsDurableOrInvalidConfig(t *testing.T) {
+	valid := `{"tokenLimitPerMinute":1000,"concurrentLimit":4,"monthlyBudgetCents":100000}`
+	if _, err := parseFallbackQuota(valid, true); err == nil {
+		t.Fatal("expected durable mode rejection")
+	}
+	if _, err := parseFallbackQuota(`{"tokenLimitPerMinute":0,"concurrentLimit":4,"monthlyBudgetCents":100000}`, false); err == nil {
+		t.Fatal("expected non-positive limit rejection")
+	}
+}
 
 func TestValidateProductionConfig(t *testing.T) {
 	t.Setenv("LEDGER_GATEWAY_API_TOKEN", "ledger-token")

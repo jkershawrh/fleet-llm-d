@@ -151,7 +151,9 @@ func (fc *FleetController) Run(ctx context.Context, port, metricsPort, grpcPort 
 
 	// Start CRD and ModelPlane watchers only while this instance owns the
 	// Kubernetes Lease. Without leader election they retain legacy behavior.
-	if mode != "inference" {
+	if mode == "publisher" {
+		go fc.runGridSyncLoop(ctx)
+	} else if mode != "inference" {
 		fc.runControlPlaneWatchers(ctx)
 	}
 

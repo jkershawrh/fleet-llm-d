@@ -240,7 +240,13 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer resp.Body.Close()
-	if target.Provider == InferenceProviderLLMD {
+	// Router execution evidence is authoritative only when a response represents
+	// a successful backend execution. Proxy/EPP 5xx responses may be generated
+	// before any provider is selected and therefore legitimately carry no
+	// X-Fleet-Router-Upstream header. Preserve those errors below instead of
+	// misclassifying them as a routing-integrity failure. Successful responses
+	// remain fail-closed when their execution identity is absent or unrecognized.
+	if target.Provider == InferenceProviderLLMD && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		actualCluster, evidenceErr := fc.routerClusterForUpstream(resp.Header.Get("X-Fleet-Router-Upstream"), physicalModel)
 		if evidenceErr != nil {
 			inferenceErrors.Inc("routing_evidence_mismatch")

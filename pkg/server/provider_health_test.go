@@ -57,6 +57,48 @@ func TestProviderHealthCacheFailsClosedAndCaches(t *testing.T) {
 	}
 }
 
+func TestProviderHealthCacheReadyRequiresAuthoritativeProbeState(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	cache, err := NewProviderHealthCache(map[string]string{"provider-a": backend.URL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cache.Ready() {
+		t.Fatal("new cache reported ready before any provider probe")
+	}
+	cache.probe(context.Background(), "provider-a", backend.URL)
+	if cache.Ready() {
+		t.Fatal("cache reported ready before the healthy threshold")
+	}
+	cache.probe(context.Background(), "provider-a", backend.URL)
+	if !cache.Ready() {
+		t.Fatal("cache did not report ready after authoritative healthy state")
+	}
+}
+
+func TestProviderHealthCacheInitializeReachesAuthoritativeState(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	cache, err := NewProviderHealthCache(map[string]string{"provider-a": backend.URL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := cache.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !cache.Ready() {
+		t.Fatal("cache was not ready after initialization")
+	}
+}
+
 func TestProviderHealthCacheLeavesUnconfiguredProviderToRepositoryHealth(t *testing.T) {
 	cache, err := NewProviderHealthCache(nil, "")
 	if err != nil {

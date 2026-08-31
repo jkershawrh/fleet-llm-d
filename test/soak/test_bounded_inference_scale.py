@@ -122,6 +122,27 @@ def test_level_records_bounded_transport_error_samples():
         result.record(MODULE.RequestResult(0, 1, 0, 0, error=f"timeout-{index + 1}"))
     assert result.status_counts == {"transport_error": 8}
     assert len(result.error_samples) == 5
+    assert len(result.error_events) == 8
+
+
+def test_level_records_timestamped_error_evidence():
+    result = MODULE.LevelResult(concurrency=1)
+    result.record(MODULE.RequestResult(
+        503, 12, 0, 0,
+        routed_to="arena-xeon6",
+        request_id="req-123",
+        error="HTTP 503 no_compatible_capacity",
+        observed_at="2026-08-28T19:46:20+00:00",
+    ))
+    assert result.summary()["error_events"] == [{
+        "observed_at": "2026-08-28T19:46:20+00:00",
+        "status": 503,
+        "error": "HTTP 503 no_compatible_capacity",
+        "request_id": "req-123",
+        "routed_to": "arena-xeon6",
+        "actual_model": "",
+        "data_plane": "",
+    }]
 
 
 def test_oc_uses_explicit_context(monkeypatch):

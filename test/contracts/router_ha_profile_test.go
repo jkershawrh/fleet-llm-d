@@ -53,3 +53,64 @@ func TestRouterQualificationEPPHasDisruptionBudgets(t *testing.T) {
 		}
 	}
 }
+
+func TestArenaRouterQualificationIsPinnedAndCoreOnly(t *testing.T) {
+	root := findProjectRoot()
+	overlay, err := os.ReadFile(filepath.Join(root, "deploy", "llmd-router-beta", "arena", "kustomization.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(overlay)
+	for _, required := range []string{
+		"digest: sha256:",
+		"FLEET_STATIC_PROVIDER_IDS_JSON",
+		"oberon-cpu",
+		"arena-xeon6",
+		"brutus-h100",
+		"fleet-router-qualification-to-postgres",
+		"$patch: delete",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("Arena Router overlay missing %q", required)
+		}
+	}
+	if strings.Contains(content, "newTag: latest") {
+		t.Error("Arena Router overlay uses a mutable gateway image tag")
+	}
+
+	job, err := os.ReadFile(filepath.Join(root, "deploy", "certification", "arena-router-local", "job.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobContent := string(job)
+	for _, required := range []string{
+		"apps.arena.fm2aihpcsed.com",
+		"duration-per-level=900",
+		"source-cluster=arena",
+		"transport=external-route",
+		"fleet-certification@sha256:",
+	} {
+		if !strings.Contains(jobContent, required) {
+			t.Errorf("Arena-local certification Job missing %q", required)
+		}
+	}
+}
+
+func TestArenaRouterDurabilityProfileIsBounded(t *testing.T) {
+	path := filepath.Join(findProjectRoot(), "deploy", "certification", "arena-durability", "kustomization.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, required := range []string{
+		"activeDeadlineSeconds",
+		"value: 36000",
+		"--duration-per-level=28800",
+		"--request-interval=14",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("Arena durability profile missing bound %q", required)
+		}
+	}
+}

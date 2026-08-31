@@ -1,0 +1,39 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-router-endpoint-mirror, namespace: fleet-llm-d}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [fleet-router-endpoints]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-router-endpoint-mirror, namespace: fleet-llm-d}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-router-endpoint-mirror
+subjects:
+  - {kind: ServiceAccount, name: fleet-router-cpu-epp, namespace: fleet-llm-d}
+  - {kind: ServiceAccount, name: fleet-router-gpu-epp, namespace: fleet-llm-d}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fleet-router-endpoint-mirror-api, namespace: fleet-llm-d}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: llm-d-router-standalone
+        operator: In
+        values: [fleet-router-cpu-epp, fleet-router-gpu-epp]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock: {cidr: 172.30.0.1/32}
+      ports: [{port: 443, protocol: TCP}]
+    - to:
+        - ipBlock: {cidr: 192.168.1.211/32}
+        - ipBlock: {cidr: 192.168.1.219/32}
+        - ipBlock: {cidr: 192.168.1.224/32}
+      ports: [{port: 6443, protocol: TCP}]

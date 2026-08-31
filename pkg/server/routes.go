@@ -19,6 +19,10 @@ func (fc *FleetController) handleReadyz(w http.ResponseWriter, _ *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
+	if fc.ProviderHealth != nil && !fc.ProviderHealth.Ready() {
+		writeError(w, http.StatusServiceUnavailable, "inference provider health is initializing")
+		return
+	}
 	if fc.CRDWatcher != nil && !fc.CRDWatcher.Ready() {
 		writeError(w, http.StatusServiceUnavailable, "Kubernetes fleet API is not ready")
 		return

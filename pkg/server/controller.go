@@ -246,7 +246,7 @@ func NewFleetControllerWithLedgerConfig(ledgerCfg ledger.Config, backendVLLM, ba
 				if tlsErr != nil {
 					return nil, fmt.Errorf("initialize Kubernetes trust for llm-d Router adapter: %w", tlsErr)
 				}
-				publisher, err = routing.NewKubernetesConfigMapPublisher(kubeAPI, namespace, configMap, token, &http.Client{
+				publisher, err = routing.NewKubernetesConfigMapPublisherFromTokenFile(kubeAPI, namespace, configMap, tlsutil.ServiceAccountTokenPath, &http.Client{
 					Timeout:   10 * time.Second,
 					Transport: &http.Transport{TLSClientConfig: tlsConfig},
 				})

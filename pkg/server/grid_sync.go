@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/llm-d/fleet-llm-d/pkg/routing"
@@ -17,6 +18,13 @@ func (fc *FleetController) runGridSyncLoop(ctx context.Context) {
 	}
 
 	interval := 30 * time.Second
+	if raw := os.Getenv("FLEET_ROUTING_SYNC_INTERVAL"); raw != "" {
+		if configured, err := time.ParseDuration(raw); err == nil && configured >= time.Second {
+			interval = configured
+		} else {
+			slog.Warn("invalid routing sync interval; using default", "value", raw, "default", interval)
+		}
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -58,6 +66,19 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 		if c.Labels != nil {
 			egressAddress = c.Labels["fleet.llm-d.ai/egress-address"]
 		}
+		status := c.Status
+		updatedAt := c.UpdatedAt
+		if fc.ProviderHealth != nil {
+			healthy, configured, checkedAt := fc.ProviderHealth.Snapshot(c.ID)
+			if configured && !checkedAt.IsZero() {
+				updatedAt = checkedAt
+				if healthy {
+					status = "Healthy"
+				} else {
+					status = "Unavailable"
+				}
+			}
+		}
 		clusterInfos = append(clusterInfos, routing.FleetClusterInfo{
 			ID:              c.ID,
 			Name:            c.Name,
@@ -72,8 +93,8 @@ func (fc *FleetController) runGridSyncCycle(ctx context.Context) {
 				TrustRef:      c.Labels["fleet.llm-d.ai/trust-ref"],
 				AuthRef:       c.Labels["fleet.llm-d.ai/auth-ref"],
 			},
-			Status:       c.Status,
-			UpdatedAt:    c.UpdatedAt,
+			Status:       status,
+			UpdatedAt:    updatedAt,
 			Draining:     c.Labels["fleet.llm-d.ai/draining"] == "true",
 			Authorized:   c.Labels["fleet.llm-d.ai/authorized"] != "false",
 			GPUAvailable: c.GPUAvailable,

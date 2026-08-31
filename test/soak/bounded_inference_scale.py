@@ -16,6 +16,7 @@ import re
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -112,6 +113,7 @@ class RequestResult:
     data_plane: str = ""
     request_id: str = ""
     error: str = ""
+    observed_at: str = ""
 
 
 @dataclass
@@ -128,6 +130,7 @@ class LevelResult:
     data_plane_counts: dict[str, int] = field(default_factory=dict)
     status_counts: dict[str, int] = field(default_factory=dict)
     error_samples: list[str] = field(default_factory=list)
+    error_events: list[dict[str, Any]] = field(default_factory=list)
     resources: list[ResourceSample] = field(default_factory=list)
     stop_reasons: list[str] = field(default_factory=list)
 
@@ -147,6 +150,16 @@ class LevelResult:
             self.errors += 1
             if len(self.error_samples) < 5:
                 self.error_samples.append(request.error or f"HTTP {request.status}")
+            if len(self.error_events) < 100:
+                self.error_events.append({
+                    "observed_at": request.observed_at,
+                    "status": request.status,
+                    "error": request.error or f"HTTP {request.status}",
+                    "request_id": request.request_id,
+                    "routed_to": request.routed_to,
+                    "actual_model": request.actual_model,
+                    "data_plane": request.data_plane,
+                })
         else:
             self.latencies_ms.append(request.latency_ms)
             self.ttft_ms.append(request.ttft_ms)
@@ -182,6 +195,7 @@ class LevelResult:
             "data_plane_counts": self.data_plane_counts,
             "status_counts": self.status_counts,
             "error_samples": self.error_samples,
+            "error_events": self.error_events,
             "resources": [asdict(sample) for sample in self.resources],
             "stop_reasons": self.stop_reasons,
         }
@@ -269,10 +283,14 @@ async def infer(client: httpx.AsyncClient, url: str, model: str, prompt: str, ma
                 data_plane=response.headers.get("x-fleet-data-plane", ""),
                 request_id=response.headers.get("x-request-id", ""),
                 error=response_error(body, response.status_code) if response.status_code != 200 else "",
+                observed_at=datetime.now(timezone.utc).isoformat(),
             )
     except Exception as exc:
         finished = time.monotonic()
-        return RequestResult(0, (finished - start) * 1000, 0, 0, error=str(exc))
+        return RequestResult(
+            0, (finished - start) * 1000, 0, 0,
+            error=str(exc), observed_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 async def run_level(client: httpx.AsyncClient, args: argparse.Namespace, concurrency: int) -> LevelResult:
@@ -325,6 +343,9 @@ async def main() -> int:
     parser.add_argument("--traffic-only", action="store_true", help="Run traffic in-cluster; resource evidence is collected by cluster-local Jobs")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
+    # Secret file/stdin creation can preserve a trailing newline. Never allow
+    # surrounding whitespace to become part of the Authorization header.
+    args.token = args.token.strip()
     args.url = args.fleet_url.rstrip("/") + "/v1/chat/completions"
     args.resource_targets = [ResourceTarget(**json.loads(raw)) for raw in args.resource_target]
     try:

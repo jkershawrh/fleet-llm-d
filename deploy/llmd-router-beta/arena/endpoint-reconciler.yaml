@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-router-endpoint-reconciler
+  namespace: fleet-llm-d
+  labels: &labels
+    app.kubernetes.io/name: fleet-router-endpoint-reconciler
+    app.kubernetes.io/component: endpoint-reconciliation
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-router-endpoint-reconciler}
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      serviceAccountName: fleet-controller
+      enableServiceLinks: false
+      securityContext: {runAsNonRoot: true}
+      containers:
+        - name: reconciler
+          image: image-registry.openshift-image-registry.svc:5000/fleet-llm-d/fleet-controller
+          args:
+            - --mode=publisher
+            - --port=8082
+            - --metrics-port=9092
+            - --kube-api=https://kubernetes.default.svc
+            - --namespace=fleet-llm-d
+            - --routing-provider=llm-d-router
+            - --ledger-mode=disabled
+            - --rate-limit=0
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+            - {name: LLMD_ROUTER_ENDPOINTS_CONFIGMAP, value: fleet-router-endpoints}
+            - {name: FLEET_ROUTING_SYNC_INTERVAL, value: 5s}
+            - name: FLEET_PROVIDER_CA_FILE
+              value: /etc/fleet/route-ca/ca-bundle.crt
+            - name: FLEET_PROVIDER_HEALTH_URLS_JSON
+              value: '{"arena-xeon6":"http://ovms-granite-2b.fleet-llm-d.svc:8080/v2/health/ready","oberon-cpu":"https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com/v2/health/ready","brutus-h100":"https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com/health"}'
+            - name: FLEET_STATIC_ROUTING_STATE_JSON
+              value: >-
+                {"providers":[{"id":"arena-xeon6","routingURL":"https://ovms-granite-2b-fleet-llm-d.apps.arena.fm2aihpcsed.com","metricsURL":"https://grid-signals-arena-fleet-llm-d.apps.arena.fm2aihpcsed.com","physicalModels":["granite-2b-cpu"],"failureDomain":"arena"},{"id":"oberon-cpu","routingURL":"https://ovms-granite-2b-fleet-llm-d.apps.oberon.fm2aihpcsed.com","metricsURL":"https://grid-signals-oberon-fleet-llm-d.apps.oberon.fm2aihpcsed.com","physicalModels":["granite-2b-cpu"],"failureDomain":"oberon"},{"id":"brutus-h100","routingURL":"https://vllm-granite-8b-gpu-fleet-llm-d.apps.brutus.fm2aihpcsed.com","metricsURL":"https://grid-signals-brutus-fleet-llm-d.apps.brutus.fm2aihpcsed.com","physicalModels":["ibm-granite/granite-3.1-8b-instruct"],"failureDomain":"brutus"}],"pools":[{"model":"granite-2b-cpu","providers":["arena-xeon6","oberon-cpu"]},{"model":"ibm-granite/granite-3.1-8b-instruct","providers":["brutus-h100"]}]}
+          ports:
+            - {name: health, containerPort: 8082}
+            - {name: metrics, containerPort: 9092}
+          startupProbe:
+            httpGet: {path: /readyz, port: health}
+            periodSeconds: 2
+            failureThreshold: 60
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: route-ca, mountPath: /etc/fleet/route-ca, readOnly: true}
+            - {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+      volumes:
+        - name: route-ca
+          configMap: {name: fleet-route-ca}
+        - name: kube-api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef: {apiVersion: v1, fieldPath: metadata.namespace}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-router-endpoint-publisher, namespace: fleet-llm-d}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [fleet-router-endpoints]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-router-endpoint-publisher, namespace: fleet-llm-d}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-router-endpoint-publisher
+subjects:
+  - kind: ServiceAccount
+    name: fleet-controller
+    namespace: fleet-llm-d
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fleet-router-endpoint-reconciler, namespace: fleet-llm-d}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: fleet-router-endpoint-reconciler}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+        - {port: 5353, protocol: UDP}
+        - {port: 5353, protocol: TCP}
+    - to:
+        - ipBlock: {cidr: 172.30.0.1/32}
+      ports: [{port: 443, protocol: TCP}]
+    - to:
+        - ipBlock: {cidr: 192.168.1.211/32}
+        - ipBlock: {cidr: 192.168.1.219/32}
+        - ipBlock: {cidr: 192.168.1.224/32}
+      ports: [{port: 6443, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchLabels: {app: ovms-granite-2b}
+      ports: [{port: 8080, protocol: TCP}]
+    - to:
+        - ipBlock: {cidr: 192.168.1.123/32}
+        - ipBlock: {cidr: 192.168.1.75/32}
+      ports: [{port: 443, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fleet-router-reconciler-to-ovms, namespace: fleet-llm-d}
+spec:
+  podSelector:
+    matchLabels: {app: ovms-granite-2b}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: fleet-router-endpoint-reconciler}
+      ports: [{port: 8080, protocol: TCP}]

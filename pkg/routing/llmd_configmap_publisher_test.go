@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -50,5 +52,47 @@ func TestKubernetesConfigMapPublisherRetainsLastValidDataOnFailure(t *testing.T)
 	}
 	if err := publisher.Publish(context.Background(), map[string][]byte{"index.json": []byte("new")}); err == nil {
 		t.Fatal("expected Kubernetes API error")
+	}
+}
+
+func TestKubernetesConfigMapPublisherReloadsRotatedToken(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	publisher, err := NewKubernetesConfigMapPublisherFromTokenFile(server.URL, "fleet", "router-endpoints", tokenFile, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(context.Background(), map[string][]byte{"index.json": []byte("first")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenFile, []byte("second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(context.Background(), map[string][]byte{"index.json": []byte("second")}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"Bearer first", "Bearer second"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("authorization headers = %q, want %q", got, want)
+	}
+}
+
+func TestKubernetesConfigMapPublisherRejectsUnreadableRotatingToken(t *testing.T) {
+	publisher, err := NewKubernetesConfigMapPublisherFromTokenFile("https://kubernetes.example", "fleet", "router-endpoints", filepath.Join(t.TempDir(), "missing"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(context.Background(), map[string][]byte{"index.json": []byte("new")}); err == nil {
+		t.Fatal("expected token read error")
 	}
 }
