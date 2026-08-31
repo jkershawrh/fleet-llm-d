@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fleet-llm-d
+resources:
+  - ../../base
+  - pdb.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: fleet-controller
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: fleet-controller
+      spec:
+        # Conservative default; Lease election supports standby replicas once
+        # shared state and external dependencies are configured.
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: fleet-controller
+                env:
+                  - name: FLEET_MODELPACK_REQUIRE_SIGNATURE
+                    value: "true"
+                resources:
+                  limits:
+                    cpu: "4"
+                    memory: 4Gi

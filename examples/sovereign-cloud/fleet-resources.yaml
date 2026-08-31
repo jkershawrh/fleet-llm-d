@@ -1,0 +1,721 @@
+# =============================================================================
+# Sovereign Cloud / GPU-as-a-Service -- Fleet LLM-D Resource Definitions
+# =============================================================================
+#
+# Pattern: Air-Gapped Sovereign Zones with Multi-Tenant GPU-as-a-Service
+#
+# This configuration defines a sovereign cloud deployment for organizations
+# operating under strict data sovereignty, regulatory compliance, and
+# operational security requirements (e.g., OSAC -- Open Sovereign AI Cloud).
+#
+# Key architectural principles:
+#
+#   1. AIR-GAP ENFORCEMENT: All inference traffic and model artifacts remain
+#      within designated sovereign zones. No data crosses zone boundaries
+#      unless explicitly permitted by placement and routing policy.
+#
+#   2. MULTI-TENANT ISOLATION: Three tenant tiers (defense, civilian,
+#      commercial) share GPU infrastructure with hard quota boundaries,
+#      priority-based preemption, and cluster-level access controls.
+#      Isolation is enforced at the CRD level -- tenants cannot exceed
+#      their GPU budgets or access clusters outside their allowed set.
+#
+#   3. SCALE-TO-ZERO COST OPTIMIZATION: Sovereign GPU pools are expensive
+#      and often underutilized outside peak hours. Scale-to-zero with
+#      request-arrival triggers lets the fleet shed idle GPU allocations
+#      during off-hours while maintaining sub-second cold-start via
+#      pre-cached model weights on local NVMe.
+#
+#   4. STRICT ROUTING BOUNDARIES: Geographic routing keeps classified
+#      workloads pinned to local sovereign data centers. Failover is
+#      constrained to within-zone peers -- never to external clusters.
+#
+# Deployment topology assumed:
+#
+#   sovereign-dc-1  --  Primary sovereign data center (all tenants)
+#   sovereign-dc-2  --  Secondary sovereign data center (defense only)
+#   zone-a          --  Logical sovereign zone encompassing both DCs
+#
+# =============================================================================
+
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: sovereign-zone-placement
+  namespace: fleet-system
+  labels:
+    fleet.llm-d.ai/pattern: sovereign-cloud
+    fleet.llm-d.ai/zone: zone-a
+  annotations:
+    fleet.llm-d.ai/description: >-
+      Constrains all model placement to verified, FIPS-certified infrastructure
+      within sovereign zone-a. Ensures no model weights or inference workloads
+      are scheduled outside the air-gapped boundary.
+spec:
+  # ---------------------------------------------------------------------------
+  # CONSTRAINTS
+  # Hard rules that MUST be satisfied for placement to proceed.
+  # If any constraint fails, the scheduler will refuse to place the workload
+  # rather than violating sovereignty or compliance requirements.
+  # ---------------------------------------------------------------------------
+  constraints:
+
+    # AIR-GAP / DATA SOVEREIGNTY
+    # Sovereign zones are logically isolated network segments with no egress
+    # to the public internet or to other zones. Models placed in zone-a
+    # cannot be accessed from outside the zone, and inference requests cannot
+    # be routed to clusters outside zone-a. This is the foundational
+    # constraint for all sovereign deployments -- without it, data residency
+    # guarantees cannot be maintained.
+    - type: regulatory
+      rule: "sovereignZone in ['zone-a']"
+      description: >-
+        All workloads must be placed within sovereign zone-a. This zone
+        represents an air-gapped network segment with no external egress.
+        Data residency requirements mandate that model weights, KV caches,
+        and inference outputs never leave this zone boundary. Enforced at
+        both the network layer (firewall rules, VLAN isolation) and the
+        scheduling layer (this constraint).
+
+    # CRYPTOGRAPHIC MODEL PROVENANCE
+    # In sovereign environments, model supply chain integrity is critical.
+    # Only models with verified cryptographic signatures (e.g., Sigstore
+    # cosign, in-toto attestations) are permitted. This prevents deployment
+    # of tampered, backdoored, or unvetted model artifacts -- a key concern
+    # for defense and government workloads.
+    - type: regulatory
+      rule: "modelProvenance == 'verified'"
+      description: >-
+        Models must carry a verified provenance chain. Each model artifact
+        is signed at build time and verified before placement. This guards
+        against supply-chain attacks where compromised model weights could
+        exfiltrate data or produce manipulated outputs. Verification checks
+        both the model binary hash and the training pipeline attestation.
+
+    # FIPS 140-2/3 CERTIFIED INFRASTRUCTURE
+    # Government and defense workloads typically require FIPS-certified
+    # cryptographic modules for data-at-rest and data-in-transit encryption.
+    # This constraint ensures models are only placed on nodes whose hardware
+    # security modules (HSMs), storage encryption, and TLS stacks are
+    # FIPS-certified.
+    - type: hardware
+      rule: "infrastructure.fipsCertified == true"
+      description: >-
+        Nodes must run FIPS 140-2 (or 140-3) certified cryptographic modules.
+        This covers disk encryption (LUKS with FIPS-validated kernel crypto),
+        TLS termination (FIPS-validated OpenSSL or BoringSSL), and GPU memory
+        encryption where supported. Required for FedRAMP High and DoD IL4+
+        workloads.
+
+  # ---------------------------------------------------------------------------
+  # AFFINITY
+  # Soft preferences that influence WHERE within the valid constraint set a
+  # workload is placed. Weights (0.0 - 1.0) control relative importance.
+  # The scheduler scores candidate nodes by summing weighted affinity scores.
+  # ---------------------------------------------------------------------------
+  affinity:
+
+    # GPU UTILIZATION (weight: 0.5 -- highest priority)
+    # In sovereign environments, GPU capacity is fixed and expensive --
+    # you cannot burst to public cloud. Maximizing utilization of existing
+    # GPUs is the single most impactful cost lever. This affinity prefers
+    # nodes that already have partial GPU allocations, packing workloads
+    # onto fewer nodes to free up whole nodes for scale-down.
+    - type: gpuUtilization
+      weight: 0.5
+
+    # COST EFFICIENCY (weight: 0.3)
+    # Even within a sovereign zone, not all nodes cost the same. Nodes with
+    # older GPU generations (A100 vs H100) or lower power draw are cheaper
+    # to operate. This affinity steers non-latency-critical workloads
+    # toward cheaper hardware when utilization allows.
+    - type: costEfficiency
+      weight: 0.3
+
+    # DATA LOCALITY (weight: 0.2)
+    # Prefer placing models close to their training data or fine-tuning
+    # datasets. In sovereign deployments, data may be pinned to specific
+    # storage clusters within the zone. Co-locating inference with data
+    # reduces cross-DC bandwidth usage and avoids moving sensitive data
+    # across the internal network.
+    - type: dataLocality
+      weight: 0.2
+
+  # ---------------------------------------------------------------------------
+  # SPREADING
+  # Controls how workloads are distributed across topology domains.
+  # Even within a single sovereign zone, spreading replicas across racks
+  # or failure domains improves availability during hardware failures.
+  # ---------------------------------------------------------------------------
+  spreading:
+    # Allow at most 1 replica difference between topology domains.
+    # This ensures replicas are evenly distributed across racks within
+    # the sovereign data center for fault tolerance.
+    maxSkew: 1
+    # Spread across racks -- the smallest failure domain in a sovereign DC.
+    # If a rack loses power or network, at most one replica is affected.
+    topologyKey: topology.kubernetes.io/rack
+
+---
+# =============================================================================
+# TENANT PROFILES
+# =============================================================================
+#
+# Multi-tenant isolation in fleet-llm-d is enforced through TenantProfiles.
+# Each profile defines hard quota boundaries (GPU, tokens, requests), rate
+# limits, priority for preemption, cost controls, and cluster access rules.
+#
+# Tenant isolation model:
+#
+#   PRIORITY PREEMPTION: Higher-priority tenants (defense: 500) can preempt
+#   lower-priority tenants (commercial: 50) when GPU capacity is constrained.
+#   This ensures mission-critical workloads always have access to resources.
+#
+#   CLUSTER FENCING: Tenants specify allowed/denied cluster lists. This
+#   provides hard network-level isolation -- a commercial tenant physically
+#   cannot reach classified infrastructure in sovereign-dc-2.
+#
+#   QUOTA ENFORCEMENT: GPU budgets and token rate limits are enforced by the
+#   fleet controller. A tenant exceeding its budget gets requests queued or
+#   rejected, never silently over-provisioned.
+#
+# =============================================================================
+
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: gov-defense-ai
+  namespace: fleet-system
+  labels:
+    fleet.llm-d.ai/pattern: sovereign-cloud
+    fleet.llm-d.ai/tenant-tier: defense
+    fleet.llm-d.ai/classification: classified
+  annotations:
+    fleet.llm-d.ai/description: >-
+      Highest-priority government defense tenant. Runs classified NLP,
+      computer vision, and decision-support models. Guaranteed GPU access
+      with preemption rights over all other tenants.
+spec:
+  # ---------------------------------------------------------------------------
+  # QUOTAS
+  # Hard upper bounds on resource consumption. The fleet controller enforces
+  # these limits -- requests that would exceed a quota are queued or rejected.
+  # ---------------------------------------------------------------------------
+  quotas:
+    # 3M tokens/min supports high-throughput classified document processing,
+    # intelligence summarization, and real-time translation pipelines that
+    # are characteristic of defense AI workloads.
+    maxTokensPerMinute: 3000000
+
+    # 800 concurrent requests allows parallel processing across multiple
+    # classification and analysis pipelines without head-of-line blocking.
+    maxConcurrentRequests: 800
+
+    # 15 models covers the typical defense stack: multilingual translation,
+    # document classification, entity extraction, image captioning,
+    # code analysis, threat detection, and several fine-tuned variants.
+    maxModels: 15
+
+    gpuBudget:
+      # 48 GPUs is the largest allocation -- roughly 40% of the total
+      # sovereign GPU pool (128 GPUs). Defense workloads get the lion's share
+      # because they are the primary justification for the sovereign zone.
+      maxGPUs: 48
+      # H100 for latency-critical inference (real-time translation, threat
+      # detection); A100 for throughput-oriented batch processing (document
+      # classification, bulk summarization).
+      gpuTypes:
+        - "H100"
+        - "A100"
+
+  # ---------------------------------------------------------------------------
+  # RATE LIMITING
+  # Token-bucket rate limiter applied per-tenant at the gateway. Prevents
+  # any single tenant from monopolizing inference capacity, even if their
+  # GPU quota allows it. The burst size accommodates periodic spikes from
+  # batch processing pipelines.
+  # ---------------------------------------------------------------------------
+  rateLimit:
+    # 400 req/s sustained rate. This is high because defense workloads
+    # include high-frequency sensor data processing and real-time streams.
+    requestsPerSecond: 400
+    # 800 burst allows brief 2x spikes (e.g., when a batch pipeline
+    # starts processing a queue of accumulated documents).
+    burstSize: 800
+
+  # ---------------------------------------------------------------------------
+  # PRIORITY
+  # Priority determines preemption order when GPU capacity is constrained.
+  # Range: 0 (lowest) to 1000 (highest).
+  # Defense at 500 can preempt civilian (200) and commercial (50) workloads.
+  # Priority 500 is "highest" in this deployment but leaves room above for
+  # future emergency/crisis-response tenants that might need priority 900+.
+  # ---------------------------------------------------------------------------
+  priority: 500
+
+  # ---------------------------------------------------------------------------
+  # COST CONTROL
+  # Even government budgets have limits. Cost controls trigger alerts before
+  # hard budget caps are hit, giving operators time to adjust workloads
+  # rather than suffering hard cutoffs during critical operations.
+  # ---------------------------------------------------------------------------
+  costControl:
+    # $75K/month reflects the GPU-hours cost of 48 GPUs at sovereign
+    # on-prem rates (higher than public cloud due to FIPS compliance,
+    # physical security, and limited vendor competition).
+    monthlyBudget: "75000.00"
+    # Alert at 90% ($67,500) -- defense ops need early warning because
+    # workload reduction requires coordination across multiple agencies.
+    alertThreshold: 0.9
+
+  # ---------------------------------------------------------------------------
+  # CLUSTER ACCESS
+  # Defense tenant has access to BOTH sovereign data centers.
+  # sovereign-dc-2 houses classified-only infrastructure with additional
+  # physical security (SCIF-grade facilities). Only the defense tenant
+  # is allowed to schedule workloads there.
+  # ---------------------------------------------------------------------------
+  clusters:
+    allowed:
+      - "sovereign-dc-1"
+      - "sovereign-dc-2"
+
+---
+
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: gov-civilian-nlp
+  namespace: fleet-system
+  labels:
+    fleet.llm-d.ai/pattern: sovereign-cloud
+    fleet.llm-d.ai/tenant-tier: civilian
+    fleet.llm-d.ai/classification: unclassified
+  annotations:
+    fleet.llm-d.ai/description: >-
+      Government civilian tenant for unclassified NLP workloads such as
+      public records processing, citizen service chatbots, and policy
+      document analysis. Lower priority than defense but higher than
+      commercial tenants.
+spec:
+  quotas:
+    # 1M tokens/min is sufficient for civilian NLP workloads that are
+    # typically lower throughput than defense: citizen inquiry processing,
+    # document summarization, and policy analysis. This is one-third of
+    # the defense allocation, reflecting the lower operational tempo.
+    maxTokensPerMinute: 1000000
+
+    # 200 concurrent requests covers typical civilian agency usage:
+    # multiple chatbot frontends and a few batch pipelines.
+    maxConcurrentRequests: 200
+
+    # 5 models: a general-purpose LLM, a summarization model, a
+    # classification model, a translation model, and one fine-tuned
+    # domain-specific variant.
+    maxModels: 5
+
+    gpuBudget:
+      # 16 GPUs -- roughly 12% of the sovereign pool. Civilian workloads
+      # are important but not mission-critical, so they get a smaller
+      # dedicated allocation and rely on the priority system for bursting.
+      maxGPUs: 16
+      # L40 for cost-efficient inference (chatbots, summarization);
+      # A100 for larger models that need more VRAM (70B+ parameter models).
+      gpuTypes:
+        - "L40"
+        - "A100"
+
+  rateLimit:
+    # 100 req/s reflects the lower operational tempo of civilian workloads.
+    requestsPerSecond: 100
+    # 3x burst ratio allows spikes when batch jobs process accumulated
+    # public records or citizen inquiries overnight.
+    burstSize: 300
+
+  # Priority 200: can preempt commercial (50) but yields to defense (500).
+  # If a defense surge needs GPU capacity, civilian workloads will be
+  # gracefully drained first -- their requests are queued, not dropped.
+  priority: 200
+
+  costControl:
+    # $15K/month -- civilian budgets are tighter. This covers 16 GPUs
+    # at moderate utilization rates.
+    monthlyBudget: "15000.00"
+    # Alert at 80% ($12,000) -- civilian agencies typically have less
+    # budget flexibility, so earlier alerts give more response time.
+    alertThreshold: 0.8
+
+  # Civilian tenant is restricted to sovereign-dc-1 only.
+  # sovereign-dc-2 houses classified infrastructure and civilian
+  # workloads must not be co-located there, even on separate nodes,
+  # due to physical security requirements of the facility.
+  clusters:
+    allowed:
+      - "sovereign-dc-1"
+
+---
+
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: commercial-analytics
+  namespace: fleet-system
+  labels:
+    fleet.llm-d.ai/pattern: sovereign-cloud
+    fleet.llm-d.ai/tenant-tier: commercial
+    fleet.llm-d.ai/classification: unclassified
+  annotations:
+    fleet.llm-d.ai/description: >-
+      Commercial analytics tenant operating on shared sovereign infrastructure.
+      Lowest priority -- workloads are preemptible by both defense and civilian
+      government tenants. Intended for private-sector partners who need
+      data-sovereign inference but not classified infrastructure access.
+spec:
+  quotas:
+    # 500K tokens/min -- half the civilian allocation. Commercial tenants
+    # get best-effort capacity on sovereign infrastructure. Their primary
+    # value proposition is data residency compliance, not performance.
+    maxTokensPerMinute: 500000
+
+    # 100 concurrent requests is adequate for analytics dashboards and
+    # periodic batch summarization jobs.
+    maxConcurrentRequests: 100
+
+    # 3 models: typically a general-purpose LLM, a code generation model,
+    # and a domain-specific fine-tune for their industry vertical.
+    maxModels: 3
+
+    gpuBudget:
+      # 8 GPUs -- the smallest allocation. Commercial tenants pay market
+      # rates for sovereign GPU time, so smaller allocations keep costs
+      # manageable while still enabling meaningful inference workloads.
+      maxGPUs: 8
+      # L40 only -- cost-efficient GPUs suitable for smaller models.
+      # Commercial tenants do not get access to H100 or A100 inventory,
+      # which is reserved for government workloads with higher priority.
+      gpuTypes:
+        - "L40"
+
+  rateLimit:
+    # 50 req/s -- sufficient for interactive analytics use cases.
+    requestsPerSecond: 50
+    # 3x burst ratio for periodic spikes in dashboard queries.
+    burstSize: 150
+
+  # Priority 50: lowest tier. Commercial workloads are the first to be
+  # preempted when government tenants need additional GPU capacity.
+  # This is the trade-off for operating on sovereign infrastructure at
+  # commercial pricing -- availability is best-effort, not guaranteed.
+  priority: 50
+
+  costControl:
+    # $5K/month -- commercial tenants pay for what they use at market
+    # rates. The lower budget reflects both the smaller GPU allocation
+    # and the expectation that commercial workloads can tolerate
+    # interruptions during government surge periods.
+    monthlyBudget: "5000.00"
+    # Alert at 70% ($3,500) -- commercial partners typically have strict
+    # internal budget controls and need early visibility into cost trends.
+    alertThreshold: 0.7
+
+  # Commercial tenant is DENIED access to sovereign-dc-2, which houses
+  # classified infrastructure. They can use sovereign-dc-1 (the shared
+  # sovereign data center) but are physically and logically fenced from
+  # classified-only facilities. The "denied" list is used instead of
+  # "allowed" to automatically grant access to any future non-classified
+  # sovereign DCs that might be added to the fleet.
+  clusters:
+    denied:
+      - "sovereign-dc-2"
+
+---
+# =============================================================================
+# FLEET SCALING POLICY
+# =============================================================================
+#
+# Scale-to-zero is the defining cost optimization for sovereign GPU pools.
+# Unlike public cloud where you can release instances, sovereign on-prem GPUs
+# are always physically present -- but you CAN power down nodes, release GPU
+# memory, and stop paying for cooling/power during idle periods.
+#
+# The cost-optimized strategy prioritizes GPU utilization and bin-packing
+# over raw latency, accepting slightly higher tail latencies in exchange for
+# significantly lower operating costs.
+#
+# =============================================================================
+
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetScalingPolicy
+metadata:
+  name: sovereign-cost-optimized
+  namespace: fleet-system
+  labels:
+    fleet.llm-d.ai/pattern: sovereign-cloud
+    fleet.llm-d.ai/strategy: cost-optimized
+  annotations:
+    fleet.llm-d.ai/description: >-
+      Cost-optimized scaling policy for sovereign GPU pools. Emphasizes high
+      utilization, aggressive scale-down, and scale-to-zero for idle models.
+      Accepts moderate latency trade-offs to minimize operating costs in an
+      environment where GPU capacity is fixed and expensive.
+spec:
+  # ---------------------------------------------------------------------------
+  # SCALING OBJECTIVES
+  # Each objective defines a metric the autoscaler will try to maintain at
+  # the specified target. When a metric deviates beyond its tolerance, the
+  # autoscaler adjusts replica counts to bring it back in range.
+  # ---------------------------------------------------------------------------
+  objectives:
+
+    # GPU UTILIZATION: 85% target
+    # In sovereign environments, idle GPUs represent pure waste -- you own
+    # the hardware regardless. Targeting 85% utilization (vs. the typical
+    # 60-70% in public cloud) is aggressive but appropriate because:
+    #   - Capacity is fixed (no burst-to-cloud option)
+    #   - Hardware costs are amortized over years, not hours
+    #   - The cost-optimized strategy accepts latency trade-offs
+    # The 10% tolerance means the autoscaler acts when utilization drops
+    # below ~77% or exceeds ~93%.
+    - metric: gpu-utilization
+      target: "85%"
+      tolerancePercent: 10
+
+    # REQUESTS PER SECOND: 500 target
+    # This is the aggregate throughput target across all model replicas.
+    # At 500 req/s with 128 max GPUs, each GPU handles roughly 4 req/s --
+    # a reasonable target for large language model inference. The autoscaler
+    # scales replicas up when throughput demand exceeds this target and
+    # scales down when demand drops.
+    - metric: requests-per-second
+      target: "500"
+      tolerancePercent: 15
+
+    # KV CACHE UTILIZATION: 70% target
+    # KV cache memory is the primary bottleneck for concurrent request
+    # handling. At 70% utilization, there is enough headroom to absorb
+    # bursts without triggering OOM evictions, while still using cache
+    # memory efficiently. Too low (< 50%) wastes expensive GPU memory;
+    # too high (> 85%) causes cache thrashing and request failures.
+    - metric: kv-cache-utilization
+      target: "70%"
+      tolerancePercent: 10
+
+  # ---------------------------------------------------------------------------
+  # SCALING CONSTRAINTS
+  # Hard limits that the autoscaler cannot exceed, regardless of demand.
+  # These prevent runaway scaling that could destabilize the sovereign zone
+  # or exceed physical infrastructure capacity.
+  # ---------------------------------------------------------------------------
+  constraints:
+    # 128 GPUs is the total physical GPU inventory across both sovereign
+    # data centers. The autoscaler cannot allocate more than exists.
+    globalMaxGPUs: 128
+
+    # Scale up at most 4 GPUs per 10-minute window. Sovereign environments
+    # favor stability over agility -- rapid scale-up can cause power
+    # distribution issues in constrained DC facilities and trigger thermal
+    # alarms in SCIF-grade server rooms.
+    maxScaleUpRate: "4/10m"
+
+    # Scale down at most 2 GPUs per 10-minute window. Slower scale-down
+    # than scale-up prevents oscillation and ensures graceful request
+    # draining. In-flight classified requests must complete before GPU
+    # memory is released -- abrupt termination could lose sensitive data.
+    maxScaleDownRate: "2/10m"
+
+    # 600-second (10-minute) stabilization window. After any scaling
+    # action, the autoscaler waits this long before evaluating again.
+    # This prevents thrashing in environments where workload patterns
+    # have natural 5-10 minute cycles (e.g., batch job submission
+    # intervals, shift-change patterns in 24/7 operations).
+    stabilizationWindowSeconds: 600
+
+  # Cost-optimized strategy: the autoscaler prioritizes reducing GPU
+  # allocation over maintaining low latency. This means:
+  #   - Bin-packing replicas onto fewer nodes before allocating new ones
+  #   - Preferring scale-down over maintaining excess capacity for bursts
+  #   - Accepting p99 latency spikes during scale-up events
+  # This is appropriate for sovereign environments where GPU costs are
+  # the dominant expense and most workloads are not latency-critical.
+  strategy: cost-optimized
+
+  # ---------------------------------------------------------------------------
+  # CROSS-CLUSTER SCALING
+  # Enables the autoscaler to migrate model replicas between the two
+  # sovereign data centers to balance load and improve utilization.
+  # Migration stays within the sovereign zone -- no data leaves zone-a.
+  # ---------------------------------------------------------------------------
+  crossCluster:
+    # Allow replica migration between sovereign-dc-1 and sovereign-dc-2.
+    # This is safe because both DCs are within the same sovereign zone
+    # and connected via dedicated dark fiber with end-to-end encryption.
+    enableMigration: true
+
+    # Trigger migration when utilization imbalance between clusters
+    # exceeds 40%. For example, if sovereign-dc-1 is at 90% GPU
+    # utilization and sovereign-dc-2 is at 40%, the 50% delta exceeds
+    # the threshold, triggering migration of replicas from dc-1 to dc-2.
+    migrationThreshold: 0.4
+
+    # 900-second (15-minute) cooldown between migrations. Cross-cluster
+    # migration involves transferring model weights and KV cache state
+    # over the inter-DC link, which is bandwidth-limited in sovereign
+    # environments. The cooldown prevents migration storms that could
+    # saturate the inter-DC link and degrade in-flight inference.
+    migrationCooldownSeconds: 900
+
+  # ---------------------------------------------------------------------------
+  # SCALE TO ZERO
+  # The most impactful cost optimization for sovereign GPU pools. When a
+  # model has zero pending requests, its replicas are scaled to zero after
+  # the cooldown period, freeing GPU memory and allowing node power-down.
+  #
+  # Scale-to-zero is particularly valuable in sovereign environments where:
+  #   - Many specialized models are deployed but used intermittently
+  #   - Off-hours (nights, weekends) see minimal traffic
+  #   - GPU power and cooling costs are significant in secure facilities
+  # ---------------------------------------------------------------------------
+  scaleToZero:
+    # Enable scale-to-zero for idle models. Models with no requests for
+    # the duration of the cooldown period will have all replicas removed.
+    enabled: true
+
+    # 45-minute cooldown before scaling to zero. This is longer than the
+    # typical 15-minute cloud default because:
+    #   - Sovereign workloads often have bursty, unpredictable patterns
+    #   - Cold-start from zero requires reloading model weights from local
+    #     NVMe storage (10-30 seconds for large models)
+    #   - False scale-to-zero during brief lulls wastes more resources
+    #     (reload cost) than keeping the model warm for 45 minutes
+    cooldownPeriod: "45m"
+
+    # Scale up on request arrival (not on a schedule). When the first
+    # request arrives for a scaled-to-zero model, the fleet controller
+    # immediately begins loading the model onto a GPU. The request is
+    # queued (not rejected) during the cold-start window.
+    # Alternative: "schedule" for models with predictable usage patterns,
+    # but request-arrival is preferred for sovereign environments where
+    # classified workloads can arrive at any time.
+    scaleUpTrigger: "request-arrival"
+
+---
+# =============================================================================
+# FLEET ROUTING POLICY
+# =============================================================================
+#
+# Routing in sovereign environments is fundamentally about CONTAINMENT.
+# Traffic must stay within sovereign boundaries, classified traffic must
+# never leave its originating data center, and failover must only target
+# clusters within the same sovereign zone.
+#
+# Geographic routing is the natural strategy here -- it uses the physical
+# location of clusters as the primary routing dimension, ensuring data
+# residency by construction rather than by policy exception.
+#
+# =============================================================================
+
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetRoutingPolicy
+metadata:
+  name: sovereign-boundary-routing
+  namespace: fleet-system
+  labels:
+    fleet.llm-d.ai/pattern: sovereign-cloud
+    fleet.llm-d.ai/enforcement: strict
+  annotations:
+    fleet.llm-d.ai/description: >-
+      Geographic routing policy that enforces sovereign zone boundaries.
+      Classified traffic is pinned to local clusters with no failover
+      outside the sovereign zone. Standard traffic can fail over within
+      the zone but never outside it.
+spec:
+  # Geographic strategy: route requests to the nearest cluster within
+  # the sovereign zone. This minimizes latency while ensuring all traffic
+  # stays within the air-gapped boundary. Unlike "weighted" or "failover"
+  # strategies, geographic routing inherently respects physical boundaries.
+  strategy: geographic
+
+  # ---------------------------------------------------------------------------
+  # ROUTING RULES
+  # Rules are evaluated in order. The first matching rule determines routing
+  # behavior. If no rule matches, the default geographic strategy applies.
+  # ---------------------------------------------------------------------------
+  rules:
+
+    # CLASSIFIED WORKLOADS
+    # Requests carrying the x-security-classification: classified header
+    # are pinned to the local cluster with zero tolerance for external
+    # routing. These requests handle classified intelligence, defense
+    # communications, and sensitive national security data.
+    - name: classified-workloads
+      match:
+        # Match on the security classification header injected by the
+        # sovereign gateway. This header is set by the ingress controller
+        # after validating the caller's security clearance certificate.
+        headers:
+          x-security-classification: "classified"
+      action:
+        # ALWAYS route to the local cluster. Never send classified
+        # traffic to a remote cluster, even within the sovereign zone,
+        # unless explicitly failed over by an operator.
+        preferLocal: true
+
+        # 30ms max latency is tight -- it ensures classified requests
+        # are served from local GPUs only. If the local cluster cannot
+        # serve within 30ms (because all GPUs are busy), the request is
+        # queued locally rather than routed elsewhere. This prevents
+        # classified data from traversing the inter-DC link under load.
+        maxLatencyMs: 30
+
+        # NO failover clusters listed. Classified workloads do NOT fail
+        # over. If the local cluster is down, classified requests return
+        # an error rather than risk routing to another facility. Operator
+        # intervention is required to explicitly redirect classified
+        # traffic during a DC outage.
+
+    # STANDARD WORKLOADS
+    # All non-classified requests (civilian, commercial, unclassified
+    # government). These can fail over between sovereign data centers
+    # within zone-a but never to clusters outside the sovereign zone.
+    - name: standard-workloads
+      action:
+        # Prefer local cluster for latency, but allow failover within
+        # the sovereign zone if the local cluster is unhealthy or
+        # overloaded.
+        preferLocal: true
+
+        # 100ms max latency allows inter-DC routing within the sovereign
+        # zone. The dark fiber link between sovereign-dc-1 and
+        # sovereign-dc-2 adds ~5-10ms RTT, so this budget accommodates
+        # cross-DC inference when the local cluster is at capacity.
+        maxLatencyMs: 100
+
+        # Failover is restricted to sovereign zone peers only. Requests
+        # will never be routed outside zone-a, even if external clusters
+        # are healthy and have available capacity. This is the routing-
+        # layer enforcement of the sovereign zone boundary.
+        failover:
+          clusters:
+            - "sovereign-dc-1"
+            - "sovereign-dc-2"
+
+  # ---------------------------------------------------------------------------
+  # HEALTH CHECKING
+  # Aggressive health checking is critical in sovereign environments where
+  # failover options are limited. Detecting unhealthy clusters quickly
+  # allows the router to redirect standard workloads to the remaining
+  # sovereign peer before request queues build up.
+  # ---------------------------------------------------------------------------
+  healthCheck:
+    # 5-second check interval. More frequent than the typical 10-30s
+    # interval because sovereign environments have only 2 clusters --
+    # losing one cluster means losing 50% of capacity, so fast detection
+    # is critical for maintaining service availability.
+    interval: "5s"
+
+    # Mark unhealthy after just 2 consecutive failures (10 seconds).
+    # In a sovereign zone with only 2 clusters, there is no room for
+    # gradual degradation -- the router needs to act fast when a cluster
+    # shows signs of failure. Two failures filters out transient blips
+    # while still enabling rapid failover.
+    unhealthyThreshold: 2

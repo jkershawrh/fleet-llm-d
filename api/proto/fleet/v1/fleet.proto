@@ -1,0 +1,268 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.fleet.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/fleet/v1;fleetv1";
+
+import "google/protobuf/timestamp.proto";
+
+// FleetService manages the lifecycle and status of clusters within the fleet.
+// The fleet control plane uses this service to register, monitor, and query
+// clusters that host inference workloads.
+service FleetService {
+  // RegisterCluster adds a new cluster to the fleet and begins health monitoring.
+  rpc RegisterCluster(RegisterClusterRequest) returns (RegisterClusterResponse);
+
+  // DeregisterCluster removes a cluster from the fleet, draining active workloads first.
+  rpc DeregisterCluster(DeregisterClusterRequest) returns (DeregisterClusterResponse);
+
+  // ListClusters returns all clusters matching the given filter criteria.
+  rpc ListClusters(ListClustersRequest) returns (ListClustersResponse);
+
+  // GetClusterStatus returns the current status of a specific cluster.
+  rpc GetClusterStatus(GetClusterStatusRequest) returns (GetClusterStatusResponse);
+
+  // WatchClusterEvents opens a server-streaming connection that emits cluster
+  // lifecycle and health events in real time.
+  rpc WatchClusterEvents(WatchClusterEventsRequest) returns (stream ClusterEvent);
+}
+
+// Cluster represents a Kubernetes cluster registered with the fleet control plane.
+message Cluster {
+  // Unique identifier for the cluster.
+  string id = 1;
+
+  // Human-readable name for the cluster.
+  string name = 2;
+
+  // Cloud region or data center location (e.g., "us-east-1", "eu-west-2").
+  string region = 3;
+
+  // Arbitrary key-value labels for filtering and placement decisions.
+  map<string, string> labels = 4;
+
+  // Total GPU capacity available on this cluster.
+  GPUCapacity gpu_capacity = 5;
+
+  // Current high-level status of the cluster.
+  ClusterPhase status = 6;
+
+  // Timestamp when the cluster was first registered.
+  google.protobuf.Timestamp registered_at = 7;
+
+  // Timestamp of the last successful heartbeat from the fleet agent.
+  google.protobuf.Timestamp last_heartbeat = 8;
+}
+
+// GPUCapacity describes the GPU resources available on a cluster.
+message GPUCapacity {
+  // Total number of GPUs across all nodes.
+  int32 total = 1;
+
+  // Number of GPUs currently available for scheduling.
+  int32 available = 2;
+
+  // GPU hardware type (e.g., "A100", "H100", "L40S").
+  string gpu_type = 3;
+
+  // Total GPU memory in MiB across all devices.
+  int64 memory_mib = 4;
+}
+
+// ClusterPhase represents the high-level lifecycle phase of a cluster.
+enum ClusterPhase {
+  // Default value; phase is unknown or not yet determined.
+  CLUSTER_PHASE_UNSPECIFIED = 0;
+
+  // The cluster is being registered and configured.
+  CLUSTER_PHASE_PENDING = 1;
+
+  // The cluster is healthy and accepting workloads.
+  CLUSTER_PHASE_READY = 2;
+
+  // The cluster is online but experiencing degraded performance.
+  CLUSTER_PHASE_DEGRADED = 3;
+
+  // The cluster is not responding to health checks.
+  CLUSTER_PHASE_NOT_READY = 4;
+
+  // The cluster is being drained prior to removal.
+  CLUSTER_PHASE_DRAINING = 5;
+
+  // The cluster has been deregistered from the fleet.
+  CLUSTER_PHASE_DEREGISTERED = 6;
+}
+
+// ClusterCondition captures a specific aspect of cluster health.
+message ClusterCondition {
+  // Condition type (e.g., "GPUHealthy", "AgentConnected", "InferenceReady").
+  string type = 1;
+
+  // Whether the condition is currently met.
+  bool status = 2;
+
+  // Machine-readable reason code.
+  string reason = 3;
+
+  // Human-readable description of the condition.
+  string message = 4;
+
+  // When this condition was last updated.
+  google.protobuf.Timestamp last_transition_time = 5;
+}
+
+// InferencePoolSummary provides a brief view of an inference pool on a cluster.
+message InferencePoolSummary {
+  // Name of the inference pool.
+  string name = 1;
+
+  // Model being served by this pool.
+  string model = 2;
+
+  // Number of active replicas.
+  int32 replicas = 3;
+
+  // Number of GPUs allocated to this pool.
+  int32 gpu_count = 4;
+}
+
+// ClusterStatus provides a detailed snapshot of a cluster's current state.
+message ClusterStatus {
+  // Current lifecycle phase.
+  ClusterPhase phase = 1;
+
+  // Detailed health conditions.
+  repeated ClusterCondition conditions = 2;
+
+  // Number of GPUs currently available for new workloads.
+  int32 gpu_available = 3;
+
+  // Total number of GPUs on the cluster.
+  int32 gpu_total = 4;
+
+  // Inference pools currently running on this cluster.
+  repeated InferencePoolSummary inference_pools = 5;
+
+  // Timestamp when this status was last observed.
+  google.protobuf.Timestamp observed_at = 6;
+}
+
+// ClusterEventType classifies the nature of a cluster event.
+enum ClusterEventType {
+  // Default value; event type is unknown.
+  CLUSTER_EVENT_TYPE_UNSPECIFIED = 0;
+
+  // A new cluster was registered.
+  CLUSTER_EVENT_TYPE_REGISTERED = 1;
+
+  // A cluster was deregistered.
+  CLUSTER_EVENT_TYPE_DEREGISTERED = 2;
+
+  // A cluster's status changed (e.g., Ready -> Degraded).
+  CLUSTER_EVENT_TYPE_STATUS_CHANGED = 3;
+
+  // A cluster's heartbeat was received.
+  CLUSTER_EVENT_TYPE_HEARTBEAT = 4;
+
+  // A cluster's GPU capacity changed.
+  CLUSTER_EVENT_TYPE_CAPACITY_CHANGED = 5;
+}
+
+// ClusterEvent represents a lifecycle or health event for a cluster.
+message ClusterEvent {
+  // Type of event.
+  ClusterEventType type = 1;
+
+  // The cluster this event pertains to.
+  Cluster cluster = 2;
+
+  // When the event occurred.
+  google.protobuf.Timestamp timestamp = 3;
+
+  // Additional event-specific details.
+  map<string, string> details = 4;
+}
+
+// RegisterClusterRequest is sent by a fleet agent to join the fleet.
+message RegisterClusterRequest {
+  // The cluster to register.
+  Cluster cluster = 1;
+}
+
+// RegisterClusterResponse confirms registration.
+message RegisterClusterResponse {
+  // The registered cluster with server-assigned fields populated.
+  Cluster cluster = 1;
+}
+
+// DeregisterClusterRequest removes a cluster from the fleet.
+message DeregisterClusterRequest {
+  // ID of the cluster to deregister.
+  string cluster_id = 1;
+
+  // If true, force immediate removal without draining.
+  bool force = 2;
+}
+
+// DeregisterClusterResponse confirms deregistration.
+message DeregisterClusterResponse {
+  // The deregistered cluster.
+  Cluster cluster = 1;
+}
+
+// ListClustersRequest queries clusters with optional filters.
+message ListClustersRequest {
+  // Filter by region (empty means all regions).
+  string region = 1;
+
+  // Filter by labels; all specified labels must match.
+  map<string, string> label_selector = 2;
+
+  // Filter by cluster phase.
+  ClusterPhase phase = 3;
+
+  // Maximum number of results to return.
+  int32 page_size = 4;
+
+  // Pagination token from a previous response.
+  string page_token = 5;
+}
+
+// ListClustersResponse returns matching clusters.
+message ListClustersResponse {
+  // The matching clusters.
+  repeated Cluster clusters = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of clusters matching the filter.
+  int32 total_count = 3;
+}
+
+// GetClusterStatusRequest queries the status of a single cluster.
+message GetClusterStatusRequest {
+  // ID of the cluster to query.
+  string cluster_id = 1;
+}
+
+// GetClusterStatusResponse returns the cluster's current status.
+message GetClusterStatusResponse {
+  // The cluster's current status.
+  ClusterStatus status = 1;
+
+  // The cluster metadata.
+  Cluster cluster = 2;
+}
+
+// WatchClusterEventsRequest configures the event stream.
+message WatchClusterEventsRequest {
+  // If set, only watch events for this cluster. Empty means all clusters.
+  string cluster_id = 1;
+
+  // Filter to specific event types. Empty means all types.
+  repeated ClusterEventType event_types = 2;
+}

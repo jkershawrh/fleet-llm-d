@@ -1,0 +1,182 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["*"]
+  schedule:
+    - cron: "0 8 * * 1" # Every Monday at 08:00 UTC
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  go-security:
+    name: Go Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+
+      - name: Run gosec
+        # Scanned at medium/medium rather than high/high, which was discarding
+        # every medium finding. Scope is production code: test harnesses and mock
+        # binaries legitimately shell out, bind without timeouts, and use math/rand.
+        # The four findings this surfaced in pkg/ were each reviewed and carry a
+        # #nosec annotation naming the reason.
+        run: |
+          gosec -severity medium -confidence medium \
+            -exclude-dir=test -exclude-dir=web \
+            -exclude-dir=upstream-llm-d -exclude-dir=upstream-are-ledger \
+            -exclude-dir=upstream-model-spec \
+            -exclude=G115,G404,G114 \
+            -fmt json -out gosec-results.json ./...
+
+      - name: Upload gosec results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gosec-results
+          path: gosec-results.json
+          retention-days: 30
+
+  rust-security:
+    name: Rust Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
+
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: fleet-controller
+            dockerfile: deploy/docker/Dockerfile.controller
+          - name: fleet-agent
+            dockerfile: deploy/docker/Dockerfile.agent
+          - name: inference-mock
+            dockerfile: deploy/docker/Dockerfile.inference-mock
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+
+      - name: Run Trivy scan on ${{ matrix.image.name }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.image.name }}:scan
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Generate SBOM for ${{ matrix.image.name }}
+        if: matrix.image.name == 'fleet-controller'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ matrix.image.name }}:scan
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.image.name }}.json
+
+      - name: Upload SBOM for ${{ matrix.image.name }}
+        if: matrix.image.name == 'fleet-controller'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-security-${{ matrix.image.name }}
+          path: sbom-${{ matrix.image.name }}.json
+          retention-days: 30
+
+  dashboard-security:
+    name: Dashboard Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: cd web && npm ci
+      - name: Run npm audit
+        run: cd web && npm audit --audit-level=high
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check dependency graph availability
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          response="$(gh api --silent "repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" 2>&1)"
+          result=$?
+          set -e
+          if [ "${result}" -eq 0 ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif echo "${response}" | grep -q "HTTP 404"; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Dependency Review is unavailable. Enable Dependency graph in the repository security settings to enforce this check."
+          else
+            echo "::error::Unable to determine Dependency graph availability: ${response}"
+            exit "${result}"
+          fi
+
+      - name: Dependency Review
+        if: steps.dependency-graph.outputs.available == 'true'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

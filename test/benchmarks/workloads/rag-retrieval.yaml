@@ -1,0 +1,83 @@
+# RAG (Retrieval-Augmented Generation) workload for fleet-llm-d benchmarks.
+# Characteristics: variable context length from retrieved chunks, medium
+# latency tolerance, mixed short/long contexts.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: rag-retrieval
+  labels:
+    workload-type: interactive
+    latency-class: medium
+spec:
+  description: >-
+    Simulates a retrieval-augmented generation workload. Each request
+    includes a user query plus a variable number of retrieved context
+    chunks. The context length varies widely depending on the number and
+    size of retrieved documents. Prefix cache reuse is moderate since
+    system prompts and common chunk preambles are shared.
+
+  model:
+    name: meta-llama/Llama-3.1-70B-Instruct
+    source: huggingface
+    gpuType: nvidia-h100
+
+  prompt_template:
+    system_message: >-
+      Answer the user's question based on the provided context documents.
+      Cite your sources using [1], [2], etc. If the context does not
+      contain enough information, say so explicitly.
+    user_query_tokens:
+      min: 16
+      max: 256
+      mean: 64
+      distribution: log-normal
+    output_tokens:
+      min: 64
+      max: 1024
+      mean: 384
+      distribution: log-normal
+
+  # Distribution of retrieved context sizes.
+  context_sizes:
+    # Number of retrieved chunks per request.
+    num_chunks:
+      min: 1
+      max: 20
+      mean: 5
+      distribution: poisson
+    # Token count per chunk.
+    tokens_per_chunk:
+      min: 128
+      max: 2048
+      mean: 512
+      distribution: log-normal
+    # Total context distribution (chunks * tokens_per_chunk + query).
+    total_context_tokens:
+      p10: 512
+      p50: 2560
+      p90: 12288
+      p99: 32768
+      max: 65536
+
+  conversation_turns:
+    min: 1
+    max: 4
+    mean: 2
+    distribution: geometric
+
+  expected_prefix_reuse_ratio: 0.55
+
+  traffic:
+    target_qps: 30
+    concurrency: 150
+    arrival_pattern: poisson
+    duration: 600s
+    warmup: 30s
+
+  slo:
+    ttft_p50_ms: 150
+    ttft_p99_ms: 500
+    tpot_p50_ms: 15
+    tpot_p99_ms: 40
+    e2e_p99_ms: 8000
+    success_rate: 0.998

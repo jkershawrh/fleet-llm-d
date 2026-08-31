@@ -1,0 +1,64 @@
+# Document summarization workload definition for fleet-llm-d benchmarks.
+# Characteristics: long context input, medium output, batch-oriented,
+# throughput-optimized with relaxed latency requirements.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: document-summarization
+  labels:
+    workload-type: batch
+    latency-class: relaxed
+spec:
+  description: >-
+    Simulates batch document summarization. Input documents are long
+    (8k-128k tokens), outputs are structured summaries (500-2000 tokens).
+    This workload is throughput-sensitive rather than latency-sensitive;
+    the goal is to maximize tokens/second across the fleet while staying
+    within generous time budgets.
+
+  model:
+    name: meta-llama/Llama-3.1-70B-Instruct
+    source: huggingface
+    gpuType: nvidia-h100
+
+  prompt_template:
+    system_message: >-
+      Summarize the following document. Provide a structured summary
+      with key points, conclusions, and action items.
+    input_tokens:
+      min: 8192
+      max: 131072
+      mean: 32768
+      distribution: log-normal
+    output_tokens:
+      min: 256
+      max: 2048
+      mean: 1024
+      distribution: normal
+
+  conversation_turns:
+    min: 1
+    max: 1
+    mean: 1
+    distribution: constant
+
+  expected_prefix_reuse_ratio: 0.05
+
+  traffic:
+    target_qps: 5
+    concurrency: 50
+    arrival_pattern: constant
+    duration: 1800s
+    warmup: 60s
+
+  slo:
+    ttft_p50_ms: 2000
+    ttft_p99_ms: 8000
+    tpot_p50_ms: 20
+    tpot_p99_ms: 60
+    e2e_p99_ms: 120000
+    success_rate: 0.995
+
+  throughput_targets:
+    min_tokens_per_second: 5000
+    target_tokens_per_second: 12000

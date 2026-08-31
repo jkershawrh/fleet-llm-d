@@ -1,0 +1,113 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: inferenceproviders.grid.praxis-proxy.io
+spec:
+  group: grid.praxis-proxy.io
+  names:
+    kind: InferenceProvider
+    listKind: InferenceProviderList
+    plural: inferenceproviders
+    singular: inferenceprovider
+    shortNames: [ip]
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Network
+          type: string
+          jsonPath: .spec.gridNetworkRef
+        - name: Kind
+          type: string
+          jsonPath: .spec.providerKind
+        - name: Endpoint
+          type: string
+          jsonPath: .spec.endpoint
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [gridNetworkRef, providerKind, backendKind]
+              properties:
+                gridNetworkRef:
+                  type: string
+                providerKind:
+                  type: string
+                  enum: [InCluster, Remote, External]
+                backendKind:
+                  type: string
+                endpoint:
+                  type: string
+                models:
+                  type: array
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      capabilities:
+                        type: array
+                        items:
+                          type: string
+                      contextWindow:
+                        type: integer
+                metricsConfig:
+                  type: object
+                  properties:
+                    metricsEndpoint:
+                      type: string
+                    path:
+                      type: string
+                    timeout:
+                      type: string
+                    poolName:
+                      type: string
+                    queueCapacity:
+                      type: integer
+                    staleMetricsSeconds:
+                      type: integer
+                    signalNames:
+                      type: object
+                      additionalProperties:
+                        type: string
+                siteSelector:
+                  type: object
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    matchExpressions:
+                      type: array
+                      items:
+                        type: object
+                        required: [key, operator]
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [In, NotIn, Exists, DoesNotExist]
+                          values:
+                            type: array
+                            items:
+                              type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                ready:
+                  type: boolean
+                message:
+                  type: string

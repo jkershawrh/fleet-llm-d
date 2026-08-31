@@ -1,0 +1,256 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and targets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            rust-release-${{ runner.os }}-
+
+      - name: Install Rust cross compiler
+        run: cargo install cross --locked
+
+      - name: Build Go binaries (linux/amd64)
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist/linux-amd64
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-amd64/fleet-controller ./cmd/fleet-controller
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-amd64/fleetctl ./cmd/fleetctl
+
+      - name: Build Go binaries (linux/arm64)
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist/linux-arm64
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-arm64/fleet-controller ./cmd/fleet-controller
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o dist/linux-arm64/fleetctl ./cmd/fleetctl
+
+      - name: Build fleet-agent for both release architectures
+        run: |
+          cross build --release --locked --bin fleet-agent --target x86_64-unknown-linux-gnu
+          cross build --release --locked --bin fleet-agent --target aarch64-unknown-linux-gnu
+          install -m 0755 target/x86_64-unknown-linux-gnu/release/fleet-agent dist/linux-amd64/fleet-agent
+          install -m 0755 target/aarch64-unknown-linux-gnu/release/fleet-agent dist/linux-arm64/fleet-agent
+
+      - name: Create release archives
+        run: |
+          cd dist
+          tar czf fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz -C linux-amd64 .
+          tar czf fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz -C linux-arm64 .
+
+      - name: Build and verify portable OSS source bundle
+        run: |
+          bash hack/build-oss-release.sh "${{ steps.version.outputs.VERSION }}"
+          bash hack/check-public-boundary.sh
+          bash hack/verify-oss-release.sh "dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-oss-source.tar.gz"
+          cd dist
+          sha256sum *.tar.gz > checksums-sha256.txt
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push fleet-controller image
+        id: controller-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.controller
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:latest
+          cache-from: type=gha,scope=controller
+          cache-to: type=gha,mode=max,scope=controller
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign fleet-controller image
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller@${{ steps.controller-image.outputs.digest }}
+
+      - name: Attest fleet-controller build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller
+          subject-digest: ${{ steps.controller-image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Generate SBOM for fleet-controller
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller@${{ steps.controller-image.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-fleet-controller.json
+
+      - name: Upload SBOM for fleet-controller
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-fleet-controller
+          path: sbom-fleet-controller.json
+
+      - name: Attest fleet-controller SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller
+          subject-digest: ${{ steps.controller-image.outputs.digest }}
+          sbom-path: sbom-fleet-controller.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Build and push fleet-agent image
+        id: agent-image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:latest
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+
+      - name: Sign fleet-agent image
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent@${{ steps.agent-image.outputs.digest }}
+
+      - name: Attest fleet-agent build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent
+          subject-digest: ${{ steps.agent-image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Generate SBOM for fleet-agent
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent@${{ steps.agent-image.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-fleet-agent.json
+
+      - name: Upload SBOM for fleet-agent
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-fleet-agent
+          path: sbom-fleet-agent.json
+
+      - name: Attest fleet-agent SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent
+          subject-digest: ${{ steps.agent-image.outputs.digest }}
+          sbom-path: sbom-fleet-agent.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest downloadable release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-oss-source.tar.gz
+            dist/checksums-sha256.txt
+            sbom-fleet-controller.json
+            sbom-fleet-agent.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-oss-source.tar.gz
+            dist/checksums-sha256.txt
+            sbom-fleet-controller.json
+            sbom-fleet-agent.json
+
+  smoke-test:
+    name: Smoke Test Published Images
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and test fleet-controller
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+          docker run -d --name smoke-test -p 8080:8080 ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }} --port 8080
+          sleep 5
+          curl -f http://localhost:8080/healthz || exit 1
+          docker stop smoke-test

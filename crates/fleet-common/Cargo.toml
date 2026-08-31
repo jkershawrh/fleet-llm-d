@@ -1,0 +1,15 @@
+[package]
+name = "fleet-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared types, traits, and utilities for the fleet-llm-d orchestration platform"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }

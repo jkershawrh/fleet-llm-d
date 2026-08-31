@@ -1,0 +1,185 @@
+# Warm KV cache migration benchmark scenario.
+# Transfers KV cache between clusters during live traffic, measuring
+# TTFT impact, transfer throughput, and cache hit rate recovery.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: BenchmarkScenario
+metadata:
+  name: warm-migration
+  labels:
+    category: kv-migration
+    severity: performance
+spec:
+  description: >-
+    Measures the impact of live KV cache migration on inference
+    performance. A multi-turn chat workload builds up a warm prefix
+    cache on the source cluster, then the KV cache is transferred to
+    a destination cluster using the nixl protocol (per
+    KVCacheTransferPolicy CRD). Validates that TTFT on the destination
+    cluster improves after migration, that the transfer completes
+    within bandwidth limits, and that in-flight requests are not
+    disrupted during migration.
+
+  workload_ref: chat-multi-turn
+
+  fleet_topology:
+    clusters:
+      - name: us-east-1
+        region: us-east
+        gpu_type: nvidia-h100
+        replicas: 4
+        role: source
+      - name: us-west-2
+        region: us-west
+        gpu_type: nvidia-h100
+        replicas: 4
+        role: destination
+
+  kv_cache_transfer_policy:
+    triggers:
+      - type: loadMigration
+        action: transferHot
+        conditions:
+          min_cache_size: 2Gi
+          min_hit_rate: 0.40
+          max_staleness: 30m
+    transport:
+      protocol: nixl
+      max_bandwidth_mbps: 10000
+      compression: lz4
+      encryption: true
+      max_concurrent_transfers: 4
+    retention:
+      source_retention_after_transfer: 1h
+      max_retention_size: 20Gi
+
+  phases:
+    - name: warmup-source
+      description: >-
+        Send multi-turn chat traffic to the source cluster (us-east-1)
+        to build up a warm KV prefix cache. Destination cluster
+        receives no traffic.
+      duration: 600s
+      traffic:
+        target_cluster: us-east-1
+        qps: 30
+      metrics:
+        - source_kv_cache_size_gb
+        - source_kv_cache_hit_rate
+        - source_ttft_p50_ms
+        - source_ttft_p99_ms
+        - source_kv_cache_entry_count
+
+    - name: pre-migration-baseline
+      description: >-
+        Send identical traffic to both clusters to establish a TTFT
+        baseline. The destination cluster has a cold cache and should
+        have higher TTFT.
+      duration: 180s
+      traffic:
+        split:
+          - cluster: us-east-1
+            weight: 50
+            qps: 15
+          - cluster: us-west-2
+            weight: 50
+            qps: 15
+      metrics:
+        - source_ttft_p50_ms
+        - source_ttft_p99_ms
+        - dest_ttft_p50_ms
+        - dest_ttft_p99_ms
+        - source_kv_cache_hit_rate
+        - dest_kv_cache_hit_rate
+
+    - name: migration-active
+      description: >-
+        Initiate KV cache transfer from us-east-1 to us-west-2 while
+        continuing to serve traffic on both clusters. Measures transfer
+        throughput, network impact, and whether in-flight requests
+        experience latency spikes.
+      duration: 300s
+      traffic:
+        split:
+          - cluster: us-east-1
+            weight: 50
+            qps: 15
+          - cluster: us-west-2
+            weight: 50
+            qps: 15
+      kv_migration:
+        enabled: true
+        source: us-east-1
+        destination: us-west-2
+        trigger_at: 15s
+      metrics:
+        - source_ttft_p50_ms
+        - source_ttft_p99_ms
+        - dest_ttft_p50_ms
+        - dest_ttft_p99_ms
+        - source_kv_cache_hit_rate
+        - dest_kv_cache_hit_rate
+        - transfer_throughput_mbps
+        - transfer_duration_ms
+        - transfer_data_size_gb
+        - in_flight_request_latency_spike_count
+        - success_rate
+
+    - name: post-migration-validation
+      description: >-
+        After migration completes, continue serving on both clusters.
+        Destination cluster should now have a warm cache and TTFT
+        should approach source cluster baseline.
+      duration: 300s
+      traffic:
+        split:
+          - cluster: us-east-1
+            weight: 50
+            qps: 15
+          - cluster: us-west-2
+            weight: 50
+            qps: 15
+      metrics:
+        - source_ttft_p50_ms
+        - source_ttft_p99_ms
+        - dest_ttft_p50_ms
+        - dest_ttft_p99_ms
+        - source_kv_cache_hit_rate
+        - dest_kv_cache_hit_rate
+
+    - name: traffic-shift
+      description: >-
+        Shift majority traffic to the destination cluster to validate
+        the migrated cache performs well under primary load.
+      duration: 300s
+      traffic:
+        split:
+          - cluster: us-east-1
+            weight: 20
+            qps: 6
+          - cluster: us-west-2
+            weight: 80
+            qps: 24
+      metrics:
+        - dest_ttft_p50_ms
+        - dest_ttft_p99_ms
+        - dest_kv_cache_hit_rate
+        - dest_throughput_tokens_per_second
+        - success_rate
+
+  success_criteria:
+    # Destination TTFT should improve by at least 40% after migration
+    # compared to pre-migration cold-cache baseline.
+    dest_ttft_improvement_percent: 40
+    # Destination KV cache hit rate should reach at least 70% of the
+    # source cluster's hit rate within 60s of migration completion.
+    dest_min_kv_cache_hit_rate_ratio: 0.70
+    # No more than 5 in-flight requests should experience a latency
+    # spike (> 2x normal) during active migration.
+    max_in_flight_latency_spikes: 5
+    # Transfer must complete within 5 minutes.
+    max_transfer_duration_ms: 300000
+    # Source cluster TTFT should not degrade more than 15% during
+    # active transfer (bandwidth cap must prevent saturation).
+    source_max_ttft_degradation_percent: 15
+    # Overall success rate across all phases.
+    min_overall_success_rate: 0.998

@@ -1,0 +1,28 @@
+profile: federated-hub
+
+auth:
+  enabled: true
+
+tls:
+  enabled: true
+
+controller:
+  enabled: true
+  replicaCount: 1
+  podAnnotations:
+    fleet.llm-d.ai/mesh-enabled: "true"
+    fleet.llm-d.ai/peer-port: "8443"
+  extraEnv:
+    - name: FLEET_FEDERATION_ENABLED
+      value: "true"
+    - name: FLEET_PEER_DISCOVERY
+      value: dns
+
+agent:
+  enabled: false
+
+podDisruptionBudget:
+  controller:
+    enabled: false
+  agent:
+    enabled: false

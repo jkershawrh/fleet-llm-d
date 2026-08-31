@@ -1,0 +1,194 @@
+# The default remains a one-controller development profile. Kubernetes
+# deployments use Lease-based leader election and may be scaled when their
+# state backends are shared.
+profile: standalone-dev
+
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+clusterIdentity:
+  # Set clusterId directly or create existingConfigMap/key before installing.
+  # The ConfigMap reference is non-optional so a missing identity fails closed.
+  clusterId: ""
+  existingConfigMap: fleet-cluster-identity
+  key: cluster-id
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+rbac:
+  create: true
+
+auth:
+  # This is compatibility HMAC authentication, not production OIDC/workload
+  # identity. It remains opt-in until gateway/agent token presentation exists.
+  enabled: false
+  existingSecret: fleet-auth
+  secretKey: FLEET_AUTH_SECRET
+
+tls:
+  enabled: false
+  existingSecret: fleet-tls
+  certKey: tls.crt
+  keyKey: tls.key
+
+controller:
+  enabled: true
+  replicaCount: 1
+  # Exactly one adapter receives the fleet-qualified provider set.
+  # Praxis is the validated default; llm-d-router is the upstream-native beta.
+  routingProvider: praxis
+  llmdRouter:
+    endpointsDirectory: /var/lib/fleet-llm-d/router-endpoints
+    allowInsecure: false
+  image:
+    repository: ghcr.io/llm-d/fleet-controller
+    tag: ""
+    pullPolicy: IfNotPresent
+  mode: control
+  # Unsigned JSON v2 intents are an explicit development/operator
+  # compatibility surface. Production ingress uses verified GCL CloudEvents.
+  allowOperatorJSONIntents: false
+  ports:
+    api: 8080
+    metrics: 9091
+    grpc: 9092
+  grpc:
+    enabled: false
+  service:
+    type: ClusterIP
+    annotations: {}
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  rateLimit:
+    requestsPerSecond: 100
+    burst: 200
+  loadShedding:
+    maxInflight: 0
+  backends: []
+  extraArgs: []
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+agent:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/llm-d/fleet-agent
+    tag: ""
+    pullPolicy: IfNotPresent
+  ports:
+    agent: 8080
+    proxy: 8090
+    metrics: 9090
+  controlPlaneURL: ""
+  controlPlaneConfigMap:
+    existingConfigMap: fleet-control-plane
+    key: url
+  # Local llm-d EPP endpoint that receives proxied inference requests.
+  upstreamURL: http://localhost:8000
+  # URLs reachable from the hub gateway. Spoke deployments normally expose
+  # the agent proxy through a cross-cluster Service, Route, or load balancer.
+  advertisedHealthURL: ""
+  advertisedInferenceURL: ""
+  # Empty preserves the binary default. Set this to the real, TLS-protected
+  # Prometheus endpoint for production metrics reporting.
+  localPrometheusURL: ""
+  service:
+    type: ClusterIP
+    annotations: {}
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+podDisruptionBudget:
+  controller:
+    enabled: false
+    minAvailable: 1
+  agent:
+    enabled: false
+    minAvailable: 1
+
+# External systems are opt-in. The chart does not install PostgreSQL, Redis,
+# Kafka, the standalone immutable ledger, GCL, DeepField, ModelPlane, or
+# Prometheus subcharts.
+externalDependencies:
+  gcl:
+    enabled: false
+    existingSecret: ""
+    secretKey: decision-signing-key
+    keyID: gcl-decision-v1
+  ledger:
+    mode: disabled
+    endpoint: ""
+    # Optional bearer token for the immutable-ledger REST compatibility gateway.
+    existingSecret: ""
+    secretKey: api-token
+  postgres:
+    enabled: false
+    existingSecret: fleet-postgres
+    secretKey: url
+  eventPublisher:
+    enabled: false
+    endpoint: ""
+  modelPlane:
+    enabled: false
+    endpoint: ""
+    namespace: default
+  semanticClassifier:
+    endpoint: "" # gRPC target, e.g. "llm-d-semantic-classifier.fleet-llm-d.svc:50051"
+  platformMetrics:
+    gclURL: ""
+    deepfieldURL: ""
+    ledgerGatewayURL: ""
+
+route:
+  enabled: false
+  host: ""
+  annotations: {}

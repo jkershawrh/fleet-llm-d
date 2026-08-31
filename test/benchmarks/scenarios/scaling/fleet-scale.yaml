@@ -1,0 +1,78 @@
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: BenchmarkScenario
+metadata:
+  name: fleet-scale
+  labels:
+    category: scaling
+    severity: capacity
+spec:
+  description: >-
+    Measures how fleet-llm-d control plane performance scales as the
+    number of registered clusters grows from 10 to 1000. Tests
+    registration throughput, List() latency, reconciliation time,
+    routing decision latency, and memory consumption at each level.
+    Identifies the knee point where O(n) operations become bottlenecks.
+
+  fleet_topology:
+    levels:
+      - cluster_count: 10
+      - cluster_count: 50
+      - cluster_count: 100
+      - cluster_count: 250
+      - cluster_count: 500
+      - cluster_count: 1000
+
+  phases:
+    - name: registration-throughput
+      description: >-
+        Bulk-register N clusters concurrently via POST /api/v1/clusters.
+        Measure wall time and success rate.
+      metrics:
+        - registration_wall_time_ms
+        - registration_success_rate
+        - clusters_per_second
+
+    - name: list-latency
+      description: >-
+        With N clusters registered, measure GET /api/v1/clusters latency.
+        This exercises the unpaginated List() path that copies all records.
+      iterations: 100
+      metrics:
+        - list_p50_ms
+        - list_p95_ms
+        - list_p99_ms
+
+    - name: reconciliation
+      description: >-
+        Create 5 fleet inference pools and measure reconciliation time.
+        Each pool's reconciler calls List() then runs the constraint solver.
+      pool_count: 5
+      metrics:
+        - reconcile_total_ms
+        - reconcile_per_pool_ms
+
+    - name: memory-profile
+      description: >-
+        Measure heap allocation before and after registration.
+      metrics:
+        - memory_before_mb
+        - memory_after_mb
+        - memory_delta_mb
+
+    - name: healthz-control
+      description: >-
+        Verify healthz latency is independent of cluster count.
+      iterations: 100
+      metrics:
+        - healthz_p50_ms
+        - healthz_p95_ms
+
+  success_criteria:
+    list_p95_ms_at_100: 50
+    reconcile_5_pools_ms_at_100: 1000
+    list_p95_ms_at_500: 500
+    reconcile_5_pools_ms_at_500: 10000
+    list_p95_ms_at_1000: 2000
+    reconcile_5_pools_ms_at_1000: 30000
+    healthz_p95_ms_max: 10
+    memory_growth_factor_max: 2.5

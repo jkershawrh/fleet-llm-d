@@ -1,0 +1,79 @@
+# Praxis AI Gateway Configuration for fleet-llm-d
+#
+# Routes inference requests to OVMS backends on HubCluster.
+# Extracts model name from request body for model-based routing.
+# Counts tokens for fleet-llm-d tenant metering.
+
+listeners:
+  - name: fleet-inference-gateway
+    address: "0.0.0.0:8080"
+    filter_chains:
+      - inference-pipeline
+
+filter_chains:
+  - name: inference-pipeline
+    filters:
+      - filter: model_to_header
+        header: X-AI-Model
+
+      - filter: router
+        routes:
+          # Granite 2B (OVMS, fast CPU inference)
+          - path_prefix: "/v1/"
+            headers:
+              x-ai-model: "granite-sovereign"
+            cluster: ovms-granite-2b
+          - path_prefix: "/v3/"
+            headers:
+              x-ai-model: "granite-sovereign"
+            cluster: ovms-granite-2b
+
+          # Granite 2B by OVMS name
+          - path_prefix: "/"
+            headers:
+              x-ai-model: "granite-2b-cpu"
+            cluster: ovms-granite-2b
+
+          # Granite 8B (OVMS, larger model)
+          - path_prefix: "/"
+            headers:
+              x-ai-model: "granite-8b"
+            cluster: ovms-granite-8b
+
+          # Granite 4.1 3B (OVMS)
+          - path_prefix: "/"
+            headers:
+              x-ai-model: "granite-41-3b"
+            cluster: ovms-granite41-3b
+
+          # Granite 3.3 2B (vLLM CPU, slower)
+          - path_prefix: "/"
+            headers:
+              x-ai-model: "granite-3.3-2b"
+            cluster: vllm-granite
+
+          # Default: route to fastest OVMS backend
+          - path_prefix: "/"
+            cluster: ovms-granite-2b
+
+      - filter: token_count
+        provider: openai
+
+      - filter: token_usage_headers
+
+      - filter: access_log
+
+      - filter: load_balancer
+        clusters:
+          - name: ovms-granite-2b
+            endpoints:
+              - "ovms-granite-2b.fleet-llm-d.svc:8080"
+          - name: ovms-granite-8b
+            endpoints:
+              - "ovms-granite-8b.fleet-llm-d.svc:8080"
+          - name: ovms-granite41-3b
+            endpoints:
+              - "ovms-granite41-3b.fleet-llm-d.svc:8080"
+          - name: vllm-granite
+            endpoints:
+              - "granite-real.fleet-llm-d.svc:8000"

@@ -1,0 +1,45 @@
+groups:
+  - name: fleet-production-readiness
+    rules:
+      - alert: FleetNoEligibleInferenceProvider
+        expr: increase(fleet_inference_errors_total{reason="no_eligible_provider"}[5m]) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: No compatible healthy inference provider
+      - alert: FleetInferenceErrorRateHigh
+        expr: sum(rate(fleet_inference_errors_total[5m])) / clamp_min(sum(rate(fleet_inference_requests_total[5m])), 0.001) > 0.001
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: Fleet inference error rate exceeds 0.1 percent
+      - alert: FleetInferenceGatewaySaturated
+        expr: increase(fleet_inference_errors_total{reason="concurrency_limit"}[5m]) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Fleet inference gateway is shedding load
+      - alert: FleetClusterHealthStale
+        expr: time() - fleet_agent_last_seen_timestamp_seconds > 30
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Fleet cluster health is stale
+      - alert: FleetGatewayReplicaUnavailable
+        expr: kube_deployment_status_replicas_available{namespace="fleet-llm-d",deployment="fleet-inference-gateway"} < 2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Fewer than two inference gateway replicas are available
+      - alert: PraxisReplicaUnavailable
+        expr: kube_deployment_status_replicas_available{namespace="fleet-llm-d",deployment="praxis-ai"} < 2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Fewer than two Praxis replicas are available
+      - alert: FleetGPUModelNotHighlyAvailable
+        expr: fleet_ready_endpoints{capability="gpu",ha="required"} < 2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: GPU capability is available but not highly available

@@ -1,0 +1,311 @@
+# fleet-llm-d Prometheus Recording Rules and Alerts
+# Generated for multi-cluster LLM inference orchestrator
+#
+# Metrics prefix: fleet_
+# Key subsystems: inference throughput, TTFT latency, GPU utilization,
+#                 KV cache, tenant management, autoscaling, ARE ledger
+
+groups:
+  # ──────────────────────────────────────────────────────────────────────
+  # Group 1: Recording Rules
+  # Pre-computed aggregations for dashboards and downstream alerting.
+  # ──────────────────────────────────────────────────────────────────────
+  - name: fleet_llm_d_recording_rules
+    interval: 15s
+    rules:
+      # ── Throughput (tokens/sec) ──────────────────────────────────────
+      - record: fleet:throughput:total
+        expr: sum(rate(fleet_inference_tokens_total[5m]))
+
+      - record: fleet:throughput:by_cluster
+        expr: sum(rate(fleet_inference_tokens_total[5m])) by (cluster)
+
+      - record: fleet:throughput:by_model
+        expr: sum(rate(fleet_inference_tokens_total[5m])) by (model)
+
+      # ── TTFT Latency (by cluster) ───────────────────────────────────
+      - record: fleet:ttft_p50:by_cluster
+        expr: histogram_quantile(0.50, sum(rate(fleet_ttft_seconds_bucket[5m])) by (cluster, le))
+
+      - record: fleet:ttft_p95:by_cluster
+        expr: histogram_quantile(0.95, sum(rate(fleet_ttft_seconds_bucket[5m])) by (cluster, le))
+
+      - record: fleet:ttft_p99:by_cluster
+        expr: histogram_quantile(0.99, sum(rate(fleet_ttft_seconds_bucket[5m])) by (cluster, le))
+
+      # ── TTFT Latency (by model) ─────────────────────────────────────
+      - record: fleet:ttft_p50:by_model
+        expr: histogram_quantile(0.50, sum(rate(fleet_ttft_seconds_bucket[5m])) by (model, le))
+
+      - record: fleet:ttft_p95:by_model
+        expr: histogram_quantile(0.95, sum(rate(fleet_ttft_seconds_bucket[5m])) by (model, le))
+
+      - record: fleet:ttft_p99:by_model
+        expr: histogram_quantile(0.99, sum(rate(fleet_ttft_seconds_bucket[5m])) by (model, le))
+
+      # ── GPU Utilization ──────────────────────────────────────────────
+      - record: fleet:gpu_utilization:avg_by_cluster
+        expr: avg(fleet_gpu_utilization_percent) by (cluster)
+
+      - record: fleet:gpu_utilization:avg_total
+        expr: avg(fleet_gpu_utilization_percent)
+
+      # ── KV Cache Hit Rate ───────────────────────────────────────────
+      - record: fleet:kv_cache_hit_rate:by_model
+        expr: sum(rate(fleet_kv_cache_hits_total[5m])) by (model) / sum(rate(fleet_kv_cache_requests_total[5m])) by (model)
+
+      - record: fleet:kv_cache_hit_rate:total
+        expr: sum(rate(fleet_kv_cache_hits_total[5m])) / sum(rate(fleet_kv_cache_requests_total[5m]))
+
+      # ── Tenant Token Rate ───────────────────────────────────────────
+      - record: fleet:tenant_tokens:rate5m
+        expr: sum(rate(fleet_tenant_tokens_total[5m])) by (tenant)
+
+      # ── Fleet Topology ──────────────────────────────────────────────
+      - record: fleet:active_models:total
+        expr: count(count by (model) (fleet_inference_pool_replicas > 0))
+
+      - record: fleet:active_clusters:total
+        expr: count(fleet_cluster_info)
+
+      - record: fleet:active_tenants:total
+        expr: count(fleet_tenant_active)
+
+      # ── Replica Counts ──────────────────────────────────────────────
+      - record: fleet:replicas:by_pool
+        expr: sum(fleet_inference_pool_replicas) by (pool, cluster)
+
+      - record: fleet:replicas:total
+        expr: sum(fleet_inference_pool_replicas)
+
+      # ── Queue Depth ─────────────────────────────────────────────────
+      - record: fleet:queue_depth:by_cluster
+        expr: fleet_queue_depth
+
+      - record: fleet:queue_depth:total
+        expr: sum(fleet_queue_depth)
+
+      # ── Scaling Activity ────────────────────────────────────────────
+      - record: fleet:scaling_rate:by_cluster
+        expr: sum(rate(fleet_scaling_events_total[5m])) by (cluster, direction)
+
+      # ── Tenant Quota Usage ──────────────────────────────────────────
+      - record: fleet:tenant_quota_usage:ratio
+        expr: fleet_tenant_tokens_consumed / fleet_tenant_quota_tokens
+
+      # ── Approximate Cost (per-token estimate) ──────────────────────
+      - record: fleet:cost:by_tenant
+        expr: sum(rate(fleet_tenant_tokens_total[5m])) by (tenant) * 0.00001
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Group 2: Alert Rules
+  # SLO-driven alerts for latency, capacity, quotas, and availability.
+  # ──────────────────────────────────────────────────────────────────────
+  - name: fleet_llm_d_alerts
+    rules:
+      # ── TTFT SLO Alerts ─────────────────────────────────────────────
+      - alert: FleetTTFTSLOBreach
+        expr: fleet:ttft_p99:by_cluster > 0.200
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TTFT p99 exceeds 200ms on cluster {{ $labels.cluster }}"
+          description: >-
+            The p99 time-to-first-token latency on cluster {{ $labels.cluster }}
+            has exceeded the 200ms SLO threshold for more than 5 minutes.
+            Current value: {{ $value | humanizeDuration }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetTTFTSLOBreach"
+
+      - alert: FleetTTFTCritical
+        expr: fleet:ttft_p99:by_cluster > 0.500
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TTFT p99 exceeds 500ms on cluster {{ $labels.cluster }}"
+          description: >-
+            The p99 time-to-first-token latency on cluster {{ $labels.cluster }}
+            has exceeded the critical 500ms threshold for more than 2 minutes.
+            This indicates severe degradation in inference serving.
+            Current value: {{ $value | humanizeDuration }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetTTFTCritical"
+
+      # ── GPU Utilization Alerts ──────────────────────────────────────
+      - alert: FleetGPUUtilizationHigh
+        expr: fleet:gpu_utilization:avg_by_cluster > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU utilization exceeds 90% on cluster {{ $labels.cluster }}"
+          description: >-
+            Average GPU utilization on cluster {{ $labels.cluster }} has been
+            above 90% for more than 10 minutes. Consider scaling out or
+            redistributing workloads to prevent saturation.
+            Current value: {{ $value }}%.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetGPUUtilizationHigh"
+
+      - alert: FleetGPUUtilizationCritical
+        expr: fleet:gpu_utilization:avg_by_cluster > 98
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU utilization near capacity on cluster {{ $labels.cluster }}"
+          description: >-
+            Average GPU utilization on cluster {{ $labels.cluster }} has exceeded
+            98% for more than 5 minutes. The cluster is at effective capacity
+            and inference requests are likely queuing or being rejected.
+            Current value: {{ $value }}%.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetGPUUtilizationCritical"
+
+      # ── Queue Depth Alerts ──────────────────────────────────────────
+      - alert: FleetQueueDepthHigh
+        expr: fleet:queue_depth:by_cluster > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth exceeds 100 on cluster {{ $labels.cluster }}"
+          description: >-
+            The inference request queue on cluster {{ $labels.cluster }} has had
+            more than 100 pending requests for over 5 minutes. This may indicate
+            insufficient capacity or a downstream bottleneck.
+            Current depth: {{ $value }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetQueueDepthHigh"
+
+      - alert: FleetQueueDepthCritical
+        expr: fleet:queue_depth:by_cluster > 500
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queue depth exceeds 500 on cluster {{ $labels.cluster }}"
+          description: >-
+            The inference request queue on cluster {{ $labels.cluster }} has
+            exceeded 500 pending requests for over 2 minutes. Immediate action
+            is required to prevent request timeouts and cascading failures.
+            Current depth: {{ $value }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetQueueDepthCritical"
+
+      # ── KV Cache Alerts ─────────────────────────────────────────────
+      - alert: FleetKVCacheHitRateLow
+        expr: fleet:kv_cache_hit_rate:by_model < 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KV cache hit rate below 50% for model {{ $labels.model }}"
+          description: >-
+            The KV cache hit rate for model {{ $labels.model }} has been below
+            50% for more than 15 minutes. Low cache hit rates increase TTFT
+            and reduce overall throughput. Check if prompt diversity has changed
+            or if the cache is undersized.
+            Current hit rate: {{ $value | humanizePercentage }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetKVCacheHitRateLow"
+
+      # ── Tenant Quota Alerts ─────────────────────────────────────────
+      - alert: FleetTenantQuotaNearLimit
+        expr: fleet:tenant_quota_usage:ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} approaching token quota ({{ $value | humanizePercentage }})"
+          description: >-
+            Tenant {{ $labels.tenant }} has consumed more than 80% of their
+            allocated token quota. If consumption continues at the current rate,
+            the quota will be exhausted soon. Consider notifying the tenant or
+            adjusting their quota.
+            Current usage ratio: {{ $value | humanizePercentage }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetTenantQuotaNearLimit"
+
+      - alert: FleetTenantQuotaExceeded
+        expr: fleet:tenant_quota_usage:ratio > 1.0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant {{ $labels.tenant }} has exceeded token quota ({{ $value | humanizePercentage }})"
+          description: >-
+            Tenant {{ $labels.tenant }} has exceeded their allocated token quota.
+            Depending on enforcement policy, requests may be throttled or rejected.
+            Immediate review is required.
+            Current usage ratio: {{ $value | humanizePercentage }}.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetTenantQuotaExceeded"
+
+      # ── Availability Alerts ─────────────────────────────────────────
+      - alert: FleetClusterDown
+        expr: up{job="fleet-controller"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fleet controller is down on {{ $labels.instance }}"
+          description: >-
+            The fleet-controller process on {{ $labels.instance }} has been
+            unreachable for more than 2 minutes. The orchestrator cannot manage
+            inference pools or process routing decisions while the controller
+            is unavailable.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetClusterDown"
+
+      - alert: FleetNoActiveModels
+        expr: fleet:active_models:total == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active models serving inference"
+          description: >-
+            There are zero models with active replicas across all clusters.
+            No inference requests can be served. This likely indicates a
+            complete fleet outage or misconfiguration.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetNoActiveModels"
+
+      # ── Scaling Alerts ──────────────────────────────────────────────
+      - alert: FleetScalingStorm
+        expr: sum(rate(fleet_scaling_events_total[5m])) by (cluster) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Excessive scaling events on cluster {{ $labels.cluster }}"
+          description: >-
+            Cluster {{ $labels.cluster }} is experiencing more than 10 scaling
+            events per second (averaged over 5 minutes). This may indicate
+            oscillating autoscaler behavior (flapping). Check autoscaler
+            configuration, cooldown periods, and target metrics.
+            Current rate: {{ $value }}/s.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetScalingStorm"
+
+      # ── Throughput Alerts ───────────────────────────────────────────
+      - alert: FleetThroughputDrop
+        expr: fleet:throughput:total < 100 and fleet:active_models:total > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fleet-wide throughput has dropped below 100 tokens/sec"
+          description: >-
+            Total inference throughput across all clusters has fallen below
+            100 tokens per second despite having active model replicas. This
+            may indicate network issues, upstream traffic loss, or inference
+            engine problems.
+            Current throughput: {{ $value }} tokens/s.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetThroughputDrop"
+
+      # ── Ledger Integrity Alerts ─────────────────────────────────────
+      - alert: FleetLedgerVerificationFailed
+        expr: fleet_ledger_chain_valid == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ARE ledger chain verification failed"
+          description: >-
+            The Append-Record-Evidence (ARE) ledger chain verification has
+            failed. This indicates potential data integrity issues in the
+            accounting ledger. All financial and usage records should be
+            considered suspect until the chain is repaired and re-verified.
+          runbook_url: "https://fleet-llm-d.ai/runbooks/FleetLedgerVerificationFailed"

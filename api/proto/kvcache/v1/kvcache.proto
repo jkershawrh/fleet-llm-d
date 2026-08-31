@@ -1,0 +1,272 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.kvcache.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/kvcache/v1;kvcachev1";
+
+import "google/protobuf/timestamp.proto";
+
+// KVCacheService manages cross-cluster KV cache transfers, enabling
+// prefix cache sharing and session migration between clusters for
+// improved inference latency and resource utilization.
+service KVCacheService {
+  // InitiateTransfer starts a KV cache transfer between clusters.
+  rpc InitiateTransfer(InitiateTransferRequest) returns (InitiateTransferResponse);
+
+  // GetTransferStatus returns the current status of a cache transfer.
+  rpc GetTransferStatus(GetTransferStatusRequest) returns (GetTransferStatusResponse);
+
+  // CancelTransfer aborts an in-progress cache transfer.
+  rpc CancelTransfer(CancelTransferRequest) returns (CancelTransferResponse);
+
+  // ListTransfers returns all transfers matching the given filters.
+  rpc ListTransfers(ListTransfersRequest) returns (ListTransfersResponse);
+
+  // GetCacheIndex returns the current KV cache index for a cluster,
+  // listing all cached prefixes and their metadata.
+  rpc GetCacheIndex(GetCacheIndexRequest) returns (GetCacheIndexResponse);
+}
+
+// TransferType defines the kind of KV cache transfer.
+enum TransferType {
+  // Default value; transfer type is unknown.
+  TRANSFER_TYPE_UNSPECIFIED = 0;
+
+  // Transfer a prefix cache entry for prompt reuse across clusters.
+  TRANSFER_TYPE_PREFIX = 1;
+
+  // Transfer a full session state for live migration.
+  TRANSFER_TYPE_SESSION = 2;
+
+  // Replicate a cache entry for redundancy.
+  TRANSFER_TYPE_REPLICATION = 3;
+
+  // Preemptive transfer to warm a target cluster's cache.
+  TRANSFER_TYPE_PREFETCH = 4;
+}
+
+// TransferPhase tracks the lifecycle of a cache transfer.
+enum TransferPhase {
+  // Default value; phase is unknown.
+  TRANSFER_PHASE_UNSPECIFIED = 0;
+
+  // Transfer has been requested but not yet started.
+  TRANSFER_PHASE_PENDING = 1;
+
+  // Source cluster is preparing the cache data for transfer.
+  TRANSFER_PHASE_PREPARING = 2;
+
+  // Data is actively being transferred.
+  TRANSFER_PHASE_TRANSFERRING = 3;
+
+  // Target cluster is loading the received cache data.
+  TRANSFER_PHASE_LOADING = 4;
+
+  // Transfer completed successfully.
+  TRANSFER_PHASE_COMPLETED = 5;
+
+  // Transfer failed.
+  TRANSFER_PHASE_FAILED = 6;
+
+  // Transfer was cancelled.
+  TRANSFER_PHASE_CANCELLED = 7;
+}
+
+// TransferRequest describes a KV cache transfer between clusters.
+message TransferRequest {
+  // Cluster where the cache currently resides.
+  string source_cluster = 1;
+
+  // Cluster where the cache should be transferred to.
+  string target_cluster = 2;
+
+  // Model associated with this cache entry.
+  string model = 3;
+
+  // Type of transfer to perform.
+  TransferType transfer_type = 4;
+
+  // Specific prefix hash to transfer (for prefix transfers).
+  string prefix_hash = 5;
+
+  // Session ID to transfer (for session migrations).
+  string session_id = 6;
+
+  // Priority of this transfer (lower values are higher priority).
+  int32 priority = 7;
+
+  // Maximum time in seconds to allow for the transfer.
+  int32 timeout_seconds = 8;
+
+  // Compression algorithm to use (e.g., "zstd", "lz4", "none").
+  string compression = 9;
+}
+
+// TransferStatus provides the current state of a cache transfer.
+message TransferStatus {
+  // Unique identifier for this transfer.
+  string id = 1;
+
+  // Current phase of the transfer.
+  TransferPhase phase = 2;
+
+  // Number of bytes transferred so far.
+  int64 bytes_transferred = 3;
+
+  // Total bytes to transfer.
+  int64 bytes_total = 4;
+
+  // Estimated time to completion.
+  google.protobuf.Timestamp estimated_completion = 5;
+
+  // When the transfer was initiated.
+  google.protobuf.Timestamp started_at = 6;
+
+  // When the transfer completed (if finished).
+  google.protobuf.Timestamp completed_at = 7;
+
+  // Transfer throughput in bytes per second.
+  double throughput_bps = 8;
+
+  // Error message if the transfer failed.
+  string error = 9;
+
+  // The original transfer request.
+  TransferRequest request = 10;
+}
+
+// CacheEntry describes a single KV cache entry stored on a cluster.
+message CacheEntry {
+  // Hash of the cached prefix or session key.
+  string prefix_hash = 1;
+
+  // Cluster where this cache entry resides.
+  string cluster = 2;
+
+  // Size of the cache entry in bytes.
+  int64 size_bytes = 3;
+
+  // When this cache entry was last accessed.
+  google.protobuf.Timestamp last_access = 4;
+
+  // When this cache entry was created.
+  google.protobuf.Timestamp created_at = 5;
+
+  // Model associated with this cache entry.
+  string model = 6;
+
+  // Number of tokens in the cached prefix.
+  int64 token_count = 7;
+
+  // Number of times this cache entry has been hit.
+  int64 hit_count = 8;
+
+  // The layer range this cache covers (e.g., 0-31 for all layers).
+  int32 layer_start = 9;
+  int32 layer_end = 10;
+}
+
+// InitiateTransferRequest starts a new cache transfer.
+message InitiateTransferRequest {
+  // The transfer to initiate.
+  TransferRequest request = 1;
+}
+
+// InitiateTransferResponse confirms the transfer was initiated.
+message InitiateTransferResponse {
+  // Status of the initiated transfer.
+  TransferStatus status = 1;
+}
+
+// GetTransferStatusRequest queries the status of a transfer.
+message GetTransferStatusRequest {
+  // ID of the transfer to query.
+  string transfer_id = 1;
+}
+
+// GetTransferStatusResponse returns the transfer status.
+message GetTransferStatusResponse {
+  // Current status of the transfer.
+  TransferStatus status = 1;
+}
+
+// CancelTransferRequest aborts an in-progress transfer.
+message CancelTransferRequest {
+  // ID of the transfer to cancel.
+  string transfer_id = 1;
+
+  // Reason for cancellation (for audit logging).
+  string reason = 2;
+}
+
+// CancelTransferResponse confirms the cancellation.
+message CancelTransferResponse {
+  // Updated status of the cancelled transfer.
+  TransferStatus status = 1;
+}
+
+// ListTransfersRequest queries transfers with optional filters.
+message ListTransfersRequest {
+  // Filter by source cluster.
+  string source_cluster = 1;
+
+  // Filter by target cluster.
+  string target_cluster = 2;
+
+  // Filter by transfer phase.
+  TransferPhase phase = 3;
+
+  // Filter by model.
+  string model = 4;
+
+  // Maximum number of results to return.
+  int32 page_size = 5;
+
+  // Pagination token from a previous response.
+  string page_token = 6;
+}
+
+// ListTransfersResponse returns matching transfers.
+message ListTransfersResponse {
+  // The matching transfers.
+  repeated TransferStatus transfers = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of transfers matching the filter.
+  int32 total_count = 3;
+}
+
+// GetCacheIndexRequest queries the cache index for a cluster.
+message GetCacheIndexRequest {
+  // Cluster to query the cache index for.
+  string cluster_id = 1;
+
+  // Filter by model. Empty means all models.
+  string model = 2;
+
+  // Maximum number of entries to return.
+  int32 page_size = 3;
+
+  // Pagination token from a previous response.
+  string page_token = 4;
+}
+
+// GetCacheIndexResponse returns the cache index entries.
+message GetCacheIndexResponse {
+  // Cache entries on the requested cluster.
+  repeated CacheEntry entries = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of cache entries matching the filter.
+  int32 total_count = 3;
+
+  // Total cache size in bytes on this cluster.
+  int64 total_size_bytes = 4;
+}

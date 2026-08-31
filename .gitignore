@@ -1,0 +1,130 @@
+# Go
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Rust
+/target/
+crates/*/target/
+**/*.rs.bk
+# Don't ignore Cargo.lock — needed for reproducible Docker builds
+
+# Node/TypeScript
+node_modules/
+web/node_modules/
+web/.next/
+web/out/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+/build/
+/dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Test harness results (may contain cluster URLs)
+test/harness/results/
+
+# Generated
+pkg/apis/fleet/v1alpha1/zz_generated.*
+api/proto/**/*.pb.go
+api/proto/**/*.pb.ts
+web/src/lib/api-client.generated.ts
+upstream-are-ledger/
+upstream-llm-d/
+upstream-model-spec/
+
+# Deployment-specific (cluster snapshots, rollback data)
+rollback/
+deploy/prod-cluster-1/
+deploy/local/
+deploy/environments/
+deploy/private/
+# Physical-fleet overlays belong in the private downstream repository.
+deploy/oberon/
+deploy/arena/
+deploy/brutus/
+deploy/certification/
+deploy/kustomize/overlays/oberon/
+deploy/kustomize/overlays/oberon-router-beta/
+deploy/kustomize/overlays/arena/
+deploy/kustomize/overlays/brutus/
+*.kubeconfig
+*kubeconfig*
+*-snapshot-*.yaml
+*.credentials.yaml
+*.credentials.yml
+*.secrets.local.yaml
+*.secrets.local.yml
+
+# Local model exports (large binaries)
+ovms-models*/
+ovms-tmp*/
+
+# Internal documentation (not for public repos)
+docs/internal/
+/AGENTS.md
+
+# Generated operational evidence and local dashboards
+docs/operations/*-status.json
+docs/operations/*-tracker.html
+docs/operations/generated/
+docs/operations/private/
+docs/operations/evidence/
+
+# Generated benchmark and certification evidence
+test/benchmarks/reports/
+
+# Built binaries (use make build)
+/fleet-controller
+/harness
+
+# Cluster credentials and secrets
+secrets/
+*.kubeconfig
+**/oberon.env
+
+# Claude Code session data (contains cluster credentials, settings)
+.claude/
+
+# Soak/harness results (may contain cluster URLs and metrics)
+test/harness/results/
+test/soak/results/
+
+# Container image build caches
+.git-backup-*
+fleetctl
+.secrets.env

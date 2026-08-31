@@ -1,0 +1,387 @@
+apiVersion: fleet-llm-d.io/v1alpha1
+kind: Workflow
+metadata:
+  name: model-update
+  description: >
+    Progressive model version update workflow using canary deployment strategy.
+    Gradually shifts traffic from the current model version to the new version
+    while monitoring SLOs, with automatic rollback on degradation.
+  version: "1.0.0"
+  labels:
+    category: update
+    criticality: high
+
+spec:
+  timeout: 7200s
+  concurrency:
+    maxParallel: 1
+    policy: cancel-pending
+
+  parameters:
+    - name: modelId
+      type: string
+      required: true
+      description: Fully qualified model identifier
+    - name: currentRevision
+      type: string
+      required: true
+      description: Currently deployed model revision
+    - name: targetRevision
+      type: string
+      required: true
+      description: New model revision to deploy
+    - name: canarySteps
+      type: list
+      default: [5, 10, 25, 50, 75, 100]
+      description: Canary traffic percentage progression
+    - name: observationWindowSeconds
+      type: integer
+      default: 300
+      description: Observation window per canary step
+    - name: quantization
+      type: string
+      default: none
+      enum: [none, awq-int4, gptq-int4, fp8]
+      description: Quantization method for the new revision
+    - name: autoRollback
+      type: boolean
+      default: true
+      description: Enable automatic rollback on SLO violation
+
+  rollbackTriggers:
+    - name: latency-degradation
+      condition: "canary.p99_latency_ms > baseline.p99_latency_ms * 1.3"
+      severity: critical
+      action: immediate-rollback
+    - name: error-rate-spike
+      condition: "canary.error_rate > 0.02 || canary.error_rate > baseline.error_rate * 3.0"
+      severity: critical
+      action: immediate-rollback
+    - name: quality-regression
+      condition: "canary.quality_score < baseline.quality_score * 0.95"
+      severity: warning
+      action: pause-and-alert
+    - name: throughput-drop
+      condition: "canary.tokens_per_second < baseline.tokens_per_second * 0.8"
+      severity: warning
+      action: pause-and-alert
+    - name: gpu-memory-pressure
+      condition: "canary.gpu_memory_utilization > 0.96"
+      severity: critical
+      action: immediate-rollback
+
+  stages:
+    - name: validate
+      description: >
+        Validate the new model revision, ensure compatibility with the current
+        runtime configuration, and establish baseline metrics from the running version.
+      timeout: 600s
+      steps:
+        - name: verify-new-artifact
+          action: model.verifyArtifact
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.targetRevision }}"
+            checksumAlgorithm: sha256
+          successCriteria:
+            - expr: "result.checksumValid == true"
+            - expr: "result.formatSupported == true"
+
+        - name: check-backward-compatibility
+          action: model.checkCompatibility
+          params:
+            modelId: "{{ parameters.modelId }}"
+            currentRevision: "{{ parameters.currentRevision }}"
+            targetRevision: "{{ parameters.targetRevision }}"
+            checks:
+              - tokenizer-compatibility
+              - context-length
+              - input-output-schema
+              - quantization-support
+          successCriteria:
+            - expr: "result.tokenizerCompatible == true"
+            - expr: "result.schemaCompatible == true"
+
+        - name: capture-baseline-metrics
+          action: monitoring.captureBaseline
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.currentRevision }}"
+            metrics:
+              - p50_latency_ms
+              - p99_latency_ms
+              - time_to_first_token_p99_ms
+              - tokens_per_second
+              - error_rate
+              - gpu_memory_utilization
+              - gpu_utilization
+              - quality_score
+            window: 1800s
+          successCriteria:
+            - expr: "result.metricsCollected == true"
+            - expr: "result.sampleCount >= 1000"
+
+        - name: validate-fleet-capacity
+          action: fleet.validateCapacity
+          params:
+            modelId: "{{ parameters.modelId }}"
+            additionalReplicasNeeded: 1
+            gpuType: "{{ stages.validate.steps.verify-new-artifact.result.gpuType }}"
+          successCriteria:
+            - expr: "result.capacityAvailable == true"
+
+      on_failure:
+        action: workflow.abort
+        params:
+          reason: "Validation failed for model update"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+
+    - name: canary-deploy
+      description: >
+        Deploy the new model revision as a canary alongside the existing version.
+        Initially receives zero traffic until the monitoring stage begins shifting load.
+      timeout: 1200s
+      steps:
+        - name: deploy-canary-replica
+          action: runtime.deployCanary
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.targetRevision }}"
+            quantization: "{{ parameters.quantization }}"
+            replicaCount: 1
+            config:
+              maxModelLen: 32768
+              gpuMemoryUtilization: 0.92
+              enableChunkedPrefill: true
+              maxNumBatchedTokens: 16384
+            labels:
+              deployment-type: canary
+              target-revision: "{{ parameters.targetRevision }}"
+          successCriteria:
+            - expr: "result.canaryReady == true"
+            - expr: "result.healthCheckPassed == true"
+
+        - name: register-canary-endpoint
+          action: routing.registerEndpoints
+          params:
+            modelId: "{{ parameters.modelId }}"
+            replicas: "{{ steps.deploy-canary-replica.result.replicas }}"
+            healthCheckPath: /health
+            healthCheckIntervalSeconds: 5
+            trafficWeight: 0
+            labels:
+              deployment-type: canary
+          successCriteria:
+            - expr: "result.allRegistered == true"
+
+        - name: run-canary-smoke-test
+          action: testing.runSmokeTests
+          params:
+            modelId: "{{ parameters.modelId }}"
+            endpoints: "{{ steps.register-canary-endpoint.result.endpoints }}"
+            testSuite: canary-smoke
+            concurrency: 2
+            requests: 50
+          successCriteria:
+            - expr: "result.passRate == 1.0"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: validate
+          cleanup:
+            - action: routing.deregisterEndpoints
+              params:
+                modelId: "{{ parameters.modelId }}"
+                labels:
+                  deployment-type: canary
+            - action: runtime.teardownCanary
+              params:
+                modelId: "{{ parameters.modelId }}"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+
+    - name: monitor
+      description: >
+        Progressively shift traffic to the canary through configured percentage
+        steps. At each step, observe SLOs for the configured window and compare
+        against baseline metrics. Automatically roll back on SLO violations.
+      timeout: 3600s
+      steps:
+        - name: progressive-rollout
+          action: canary.progressiveRollout
+          params:
+            modelId: "{{ parameters.modelId }}"
+            canaryEndpoints: "{{ stages.canary-deploy.steps.register-canary-endpoint.result.endpoints }}"
+            baselineEndpoints: "{{ stages.validate.steps.capture-baseline-metrics.result.endpoints }}"
+            baseline: "{{ stages.validate.steps.capture-baseline-metrics.result }}"
+            steps: "{{ parameters.canarySteps }}"
+            observationWindow: "{{ parameters.observationWindowSeconds }}s"
+            autoRollback: "{{ parameters.autoRollback }}"
+            sloGates:
+              - name: latency-gate
+                metric: p99_latency_ms
+                maxDegradation: 1.2
+                comparisonType: ratio-to-baseline
+              - name: ttft-gate
+                metric: time_to_first_token_p99_ms
+                maxDegradation: 1.2
+                comparisonType: ratio-to-baseline
+              - name: error-rate-gate
+                metric: error_rate
+                maxAbsolute: 0.01
+                comparisonType: absolute-threshold
+              - name: throughput-gate
+                metric: tokens_per_second
+                maxDegradation: 0.85
+                comparisonType: ratio-to-baseline
+              - name: quality-gate
+                metric: quality_score
+                maxDegradation: 0.97
+                comparisonType: ratio-to-baseline
+            scaleUpCanaryAt:
+              - percentage: 25
+                additionalReplicas: 1
+              - percentage: 50
+                additionalReplicas: 2
+              - percentage: 75
+                additionalReplicas: 3
+          successCriteria:
+            - expr: "result.finalPercentage == 100"
+            - expr: "result.allGatesPassed == true"
+            - expr: "result.rollbackTriggered == false"
+
+        - name: extended-soak
+          action: monitoring.soak
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.targetRevision }}"
+            duration: 600s
+            metrics:
+              - p99_latency_ms
+              - error_rate
+              - gpu_memory_utilization
+              - tokens_per_second
+            baseline: "{{ stages.validate.steps.capture-baseline-metrics.result }}"
+            autoRollback: "{{ parameters.autoRollback }}"
+          conditions:
+            pre:
+              - expr: "stages.monitor.steps.progressive-rollout.result.finalPercentage == 100"
+                message: "Extended soak only runs after full canary promotion"
+          successCriteria:
+            - expr: "result.soakPassed == true"
+            - expr: "result.anomaliesDetected == 0"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: validate
+          steps:
+            - name: redirect-all-traffic
+              action: routing.setTrafficWeight
+              params:
+                modelId: "{{ parameters.modelId }}"
+                endpoints: "{{ stages.validate.steps.capture-baseline-metrics.result.endpoints }}"
+                weight: 100
+            - name: teardown-canary
+              action: runtime.teardownCanary
+              params:
+                modelId: "{{ parameters.modelId }}"
+            - name: deregister-canary
+              action: routing.deregisterEndpoints
+              params:
+                modelId: "{{ parameters.modelId }}"
+                labels:
+                  deployment-type: canary
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+            - channel: pagerduty
+              severity: critical
+              message: "Canary rollback triggered for {{ parameters.modelId }}"
+
+    - name: promote-or-rollback
+      description: >
+        Finalize the update by either completing the promotion (replacing old
+        replicas with the new revision) or rolling back if the operator or
+        automated checks have flagged issues.
+      timeout: 900s
+      steps:
+        - name: evaluate-promotion-decision
+          action: canary.evaluatePromotion
+          params:
+            modelId: "{{ parameters.modelId }}"
+            canaryMetrics: "{{ stages.monitor.steps.progressive-rollout.result.metrics }}"
+            soakMetrics: "{{ stages.monitor.steps.extended-soak.result.metrics }}"
+            baseline: "{{ stages.validate.steps.capture-baseline-metrics.result }}"
+            promotionCriteria:
+              maxLatencyDegradation: 1.15
+              maxErrorRate: 0.005
+              minThroughputRatio: 0.9
+              minQualityScore: 0.85
+          successCriteria:
+            - expr: "result.decision == 'promote'"
+
+        - name: replace-baseline-replicas
+          action: runtime.replaceReplicas
+          params:
+            modelId: "{{ parameters.modelId }}"
+            fromRevision: "{{ parameters.currentRevision }}"
+            toRevision: "{{ parameters.targetRevision }}"
+            strategy: rolling
+            maxUnavailable: 1
+            drainTimeoutSeconds: 60
+          conditions:
+            pre:
+              - expr: "steps.evaluate-promotion-decision.result.decision == 'promote'"
+          successCriteria:
+            - expr: "result.allReplicasReplaced == true"
+            - expr: "result.trafficUninterrupted == true"
+
+        - name: cleanup-canary-resources
+          action: canary.cleanup
+          params:
+            modelId: "{{ parameters.modelId }}"
+            removeCanaryLabels: true
+            archiveCanaryMetrics: true
+          successCriteria:
+            - expr: "result.cleanupComplete == true"
+
+        - name: update-model-registry
+          action: registry.updateStatus
+          params:
+            modelId: "{{ parameters.modelId }}"
+            revision: "{{ parameters.targetRevision }}"
+            previousRevision: "{{ parameters.currentRevision }}"
+            status: serving
+            updateMetadata:
+              updateType: canary
+              canaryDuration: "{{ stages.monitor.duration }}"
+              promotedAt: "{{ now() }}"
+          successCriteria:
+            - expr: "result.registryUpdated == true"
+
+      on_failure:
+        action: workflow.rollback
+        params:
+          rollbackTo: validate
+          steps:
+            - name: restore-baseline-traffic
+              action: routing.setTrafficWeight
+              params:
+                modelId: "{{ parameters.modelId }}"
+                revision: "{{ parameters.currentRevision }}"
+                weight: 100
+            - name: teardown-new-replicas
+              action: runtime.teardown
+              params:
+                modelId: "{{ parameters.modelId }}"
+                revision: "{{ parameters.targetRevision }}"
+          notify:
+            - channel: slack
+              target: "#fleet-llm-ops"
+            - channel: pagerduty
+              severity: critical

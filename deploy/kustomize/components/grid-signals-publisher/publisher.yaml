@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grid-signals-publisher
+  labels:
+    app.kubernetes.io/name: grid-signals-publisher
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grid-signals-publisher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grid-signals-publisher
+        app.kubernetes.io/part-of: fleet-llm-d
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: publisher
+          image: grid-signals-publisher:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GRID_SIGNALS_SITE
+              value: configure-site
+            - name: GRID_SIGNALS_PROVIDER
+              value: configure-provider
+            - name: GRID_SIGNALS_SOURCE_URL
+              value: http://configure-epp-metrics:9090/metrics
+            - name: GRID_SIGNALS_HEALTH_URL
+              value: http://configure-provider/health
+            - name: GRID_SIGNALS_TLS_CERT
+              value: /var/run/grid-signals/tls/tls.crt
+            - name: GRID_SIGNALS_TLS_KEY
+              value: /var/run/grid-signals/tls/tls.key
+            - name: GRID_SIGNALS_CLIENT_CA
+              value: /var/run/grid-signals/client-ca/ca.crt
+            - name: GRID_SIGNALS_PEER_FINGERPRINTS
+              valueFrom:
+                secretKeyRef:
+                  name: grid-signals-peer-identity
+                  key: fingerprints
+          ports:
+            - name: mtls-metrics
+              containerPort: 9443
+            - name: health
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - name: server-tls
+              mountPath: /var/run/grid-signals/tls
+              readOnly: true
+            - name: client-ca
+              mountPath: /var/run/grid-signals/client-ca
+              readOnly: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: server-tls
+          secret:
+            secretName: grid-signals-server-tls
+        - name: client-ca
+          secret:
+            secretName: grid-signals-client-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grid-signals-publisher
+  labels:
+    app.kubernetes.io/name: grid-signals-publisher
+    app.kubernetes.io/part-of: fleet-llm-d
+spec:
+  selector:
+    app.kubernetes.io/name: grid-signals-publisher
+  ports:
+    - name: https
+      port: 443
+      targetPort: mtls-metrics

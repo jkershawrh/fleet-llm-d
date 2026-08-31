@@ -1,0 +1,356 @@
+package controller
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/llm-d/fleet-llm-d/pkg/tlsutil"
+)
+
+var errLeaseNotFound = errors.New("leader lease not found")
+
+const (
+	leaseNamespace     = "fleet-llm-d"
+	leaseName          = "fleet-controller-leader"
+	leaseDurationSecs  = 15
+	leaseRenewInterval = 5 * time.Second
+	leaseRetryInterval = 3 * time.Second
+	serviceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount"
+	leaderLabelKey     = "fleet.llm-d.ai/leader"
+)
+
+// LeaderElector implements leader election using Kubernetes Lease objects
+// via raw HTTPS (no client-go dependency).
+type LeaderElector struct {
+	apiServer string
+	namespace string
+	token     string
+	identity  string
+	http      *http.Client
+	isLeader  atomic.Bool
+}
+
+// NewLeaderElector creates a leader elector that uses the K8s Lease API.
+// identity should be unique per controller instance (e.g., pod name).
+func NewLeaderElector(apiServer, namespace, identity string) *LeaderElector {
+	if namespace == "" {
+		namespace = leaseNamespace
+	}
+
+	token := os.Getenv("KUBE_TOKEN")
+	if token == "" {
+		if data, err := os.ReadFile(serviceAccountPath + "/token"); err == nil {
+			token = strings.TrimSpace(string(data))
+		}
+	}
+
+	tlsOptions := tlsutil.TLSOptions{}
+	if _, err := os.Stat(serviceAccountPath + "/ca.crt"); err == nil {
+		tlsOptions.CAPath = serviceAccountPath + "/ca.crt"
+	}
+	tlsConfig, err := tlsutil.NewTLSConfig(tlsOptions)
+	if err != nil {
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+	}
+	tlsConfig.MinVersion = tls.VersionTLS13
+
+	return &LeaderElector{
+		apiServer: strings.TrimRight(apiServer, "/"),
+		namespace: namespace,
+		identity:  identity,
+		token:     token,
+		http:      &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig}},
+	}
+}
+
+// IsLeader returns whether this instance currently holds the lease.
+func (le *LeaderElector) IsLeader() bool {
+	return le.isLeader.Load()
+}
+
+func (le *LeaderElector) setLeader(ctx context.Context, leader bool) error {
+	value := "false"
+	if leader {
+		value = "true"
+	}
+	patch := map[string]any{"metadata": map[string]any{"labels": map[string]string{leaderLabelKey: value}}}
+	data, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s", le.apiServer, le.namespace, le.identity)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+le.token)
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+	resp, err := le.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("patch leader pod label: %d %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+	le.isLeader.Store(leader)
+	return nil
+}
+
+func (le *LeaderElector) acquireServingLeadership(ctx context.Context) error {
+	if err := le.setLeader(ctx, true); err != nil {
+		le.isLeader.Store(false)
+		return err
+	}
+	return nil
+}
+
+// Run starts the leader election loop. Blocks until context is cancelled.
+func (le *LeaderElector) Run(ctx context.Context) error {
+	slog.Info("leader election started", "identity", le.identity, "namespace", le.namespace)
+	defer func() {
+		if le.isLeader.Load() {
+			withdrawCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := le.setLeader(withdrawCtx, false); err != nil {
+				slog.Warn("leader election: failed to withdraw endpoint during shutdown", "error", err)
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			le.isLeader.Store(false)
+			return ctx.Err()
+		default:
+		}
+
+		lease, err := le.getLease(ctx)
+		if err != nil {
+			if !errors.Is(err, errLeaseNotFound) {
+				slog.Warn("leader election: failed to read lease", "error", err)
+				if !waitForLeaderRetry(ctx) {
+					return ctx.Err()
+				}
+				continue
+			}
+			if err := le.createLease(ctx); err != nil {
+				slog.Warn("leader election: failed to create lease", "error", err)
+				if !waitForLeaderRetry(ctx) {
+					return ctx.Err()
+				}
+				continue
+			}
+			if err := le.acquireServingLeadership(ctx); err != nil {
+				return fmt.Errorf("publish new leader endpoint: %w", err)
+			}
+			slog.Info("leader election: acquired lease (new)")
+			le.renewLoop(ctx)
+			continue
+		}
+
+		if le.isHeldByMe(lease) {
+			if err := le.acquireServingLeadership(ctx); err != nil {
+				return fmt.Errorf("publish leader endpoint: %w", err)
+			}
+			le.renewLoop(ctx)
+			continue
+		}
+
+		if le.isExpired(lease) {
+			if err := le.acquireLease(ctx, lease); err != nil {
+				slog.Warn("leader election: failed to acquire expired lease", "error", err)
+				if !waitForLeaderRetry(ctx) {
+					return ctx.Err()
+				}
+				continue
+			}
+			if err := le.acquireServingLeadership(ctx); err != nil {
+				return fmt.Errorf("publish acquired leader endpoint: %w", err)
+			}
+			slog.Info("leader election: acquired expired lease")
+			le.renewLoop(ctx)
+			continue
+		}
+
+		if le.isLeader.Load() {
+			_ = le.setLeader(ctx, false)
+		}
+		if !waitForLeaderRetry(ctx) {
+			return ctx.Err()
+		}
+	}
+}
+
+func (le *LeaderElector) renewLoop(ctx context.Context) {
+	ticker := time.NewTicker(leaseRenewInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			le.isLeader.Store(false)
+			return
+		case <-ticker.C:
+			if err := le.renewLease(ctx); err != nil {
+				slog.Warn("leader election: lost lease", "error", err)
+				if labelErr := le.setLeader(ctx, false); labelErr != nil {
+					slog.Warn("leader election: failed to withdraw leader endpoint", "error", labelErr)
+				}
+				return
+			}
+		}
+	}
+}
+
+type k8sLease struct {
+	APIVersion string           `json:"apiVersion"`
+	Kind       string           `json:"kind"`
+	Metadata   k8sLeaseMetadata `json:"metadata"`
+	Spec       k8sLeaseSpec     `json:"spec"`
+}
+
+type k8sLeaseMetadata struct {
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+}
+
+type k8sLeaseSpec struct {
+	HolderIdentity       string `json:"holderIdentity"`
+	LeaseDurationSeconds int    `json:"leaseDurationSeconds"`
+	AcquireTime          string `json:"acquireTime,omitempty"`
+	RenewTime            string `json:"renewTime,omitempty"`
+}
+
+func (le *LeaderElector) leaseURL() string {
+	return fmt.Sprintf("%s/apis/coordination.k8s.io/v1/namespaces/%s/leases/%s",
+		le.apiServer, le.namespace, leaseName)
+}
+
+func (le *LeaderElector) getLease(ctx context.Context) (*k8sLease, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, le.leaseURL(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+le.token)
+
+	resp, err := le.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errLeaseNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get lease: %d %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+
+	var lease k8sLease
+	if err := json.Unmarshal(body, &lease); err != nil {
+		return nil, fmt.Errorf("unmarshal lease: %w", err)
+	}
+	return &lease, nil
+}
+
+func waitForLeaderRetry(ctx context.Context) bool {
+	timer := time.NewTimer(leaseRetryInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (le *LeaderElector) createLease(ctx context.Context) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	lease := k8sLease{
+		APIVersion: "coordination.k8s.io/v1",
+		Kind:       "Lease",
+		Metadata:   k8sLeaseMetadata{Name: leaseName, Namespace: le.namespace},
+		Spec: k8sLeaseSpec{
+			HolderIdentity:       le.identity,
+			LeaseDurationSeconds: leaseDurationSecs,
+			AcquireTime:          now,
+			RenewTime:            now,
+		},
+	}
+	return le.writeLease(ctx, http.MethodPost,
+		fmt.Sprintf("%s/apis/coordination.k8s.io/v1/namespaces/%s/leases", le.apiServer, le.namespace),
+		&lease)
+}
+
+func (le *LeaderElector) acquireLease(ctx context.Context, existing *k8sLease) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	existing.Spec.HolderIdentity = le.identity
+	existing.Spec.AcquireTime = now
+	existing.Spec.RenewTime = now
+	return le.writeLease(ctx, http.MethodPut, le.leaseURL(), existing)
+}
+
+func (le *LeaderElector) renewLease(ctx context.Context) error {
+	lease, err := le.getLease(ctx)
+	if err != nil {
+		return err
+	}
+	if lease.Spec.HolderIdentity != le.identity {
+		return fmt.Errorf("lease held by %s, not %s", lease.Spec.HolderIdentity, le.identity)
+	}
+	lease.Spec.RenewTime = time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	return le.writeLease(ctx, http.MethodPut, le.leaseURL(), lease)
+}
+
+func (le *LeaderElector) writeLease(ctx context.Context, method, url string, lease *k8sLease) error {
+	data, err := json.Marshal(lease)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+le.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := le.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("%s lease: %d %s", method, resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+	return nil
+}
+
+func (le *LeaderElector) isHeldByMe(lease *k8sLease) bool {
+	return lease.Spec.HolderIdentity == le.identity
+}
+
+func (le *LeaderElector) isExpired(lease *k8sLease) bool {
+	renewTime, err := time.Parse("2006-01-02T15:04:05.000000Z", lease.Spec.RenewTime)
+	if err != nil {
+		return true
+	}
+	return time.Since(renewTime) > time.Duration(lease.Spec.LeaseDurationSeconds)*time.Second
+}

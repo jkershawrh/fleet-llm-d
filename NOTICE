@@ -1,0 +1,12 @@
+fleet-llm-d
+Copyright 2026 fleet-llm-d contributors
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+The source distribution uses third-party Go, Rust, JavaScript, and container
+dependencies under their respective licenses. Generated SBOMs distributed with
+release images are the machine-readable dependency inventory.
+
+Optional integrations and model artifacts are not distributed as part of the
+portable community source bundle. Their names identify compatibility surfaces
+and do not change the license of fleet-llm-d.

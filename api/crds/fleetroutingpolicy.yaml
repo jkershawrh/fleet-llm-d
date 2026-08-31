@@ -1,0 +1,341 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: fleetroutingpolicies.fleet.llm-d.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: fleet.llm-d.ai
+  names:
+    kind: FleetRoutingPolicy
+    listKind: FleetRoutingPolicyList
+    plural: fleetroutingpolicies
+    singular: fleetroutingpolicy
+    shortNames:
+      - frp
+      - frps
+    categories:
+      - fleet-llm-d
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: false
+      additionalPrinterColumns:
+        - name: Strategy
+          type: string
+          jsonPath: .spec.strategy
+          description: Routing strategy
+        - name: Rules
+          type: integer
+          jsonPath: .status.ruleCount
+          description: Number of routing rules
+          priority: 1
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            FleetRoutingPolicy defines cross-cluster traffic routing rules
+            for directing inference requests to the optimal cluster based on
+            locality, cost, latency, KV cache affinity, and health.
+          properties:
+            apiVersion:
+              type: string
+              description: API version of the resource.
+            kind:
+              type: string
+              description: Kind of the resource.
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired routing policy configuration.
+              required:
+                - strategy
+              properties:
+                strategy:
+                  type: string
+                  description: >-
+                    Top-level routing strategy that governs how traffic is
+                    distributed across clusters.
+                  enum:
+                    - weighted
+                    - geographic
+                    - failover
+                rules:
+                  type: array
+                  description: >-
+                    Ordered list of routing rules. Rules are evaluated in order
+                    and the first matching rule is applied. If no rule matches,
+                    the default strategy is used.
+                  items:
+                    type: object
+                    required:
+                      - action
+                    properties:
+                      name:
+                        type: string
+                        description: >-
+                          Optional human-readable name for this routing rule.
+                      match:
+                        type: object
+                        description: >-
+                          Conditions that must be met for this rule to apply.
+                          If omitted the rule matches all requests.
+                        properties:
+                          headers:
+                            type: object
+                            description: >-
+                              HTTP headers to match against. Keys are header
+                              names, values are exact-match strings or regex
+                              patterns.
+                            additionalProperties:
+                              type: string
+                          source:
+                            type: string
+                            description: >-
+                              Source identifier to match (e.g. tenant name,
+                              cluster name, IP CIDR).
+                          semanticTier:
+                            type: string
+                            description: >-
+                              Semantic classification tier to match. When set,
+                              the rule only applies if the prompt was classified
+                              into this tier by the semantic classifier.
+                            enum:
+                              - SIMPLE
+                              - MEDIUM
+                              - COMPLEX
+                              - REASONING
+                          minConfidence:
+                            type: number
+                            format: double
+                            minimum: 0
+                            maximum: 2
+                            description: >-
+                              Minimum classification margin (score gap between
+                              top two labels) required for this rule to match.
+                              Prevents routing on low-confidence classifications.
+                      action:
+                        type: object
+                        description: >-
+                          Routing action to take when this rule matches.
+                        properties:
+                          preferLocal:
+                            type: boolean
+                            description: >-
+                              When true, prefer routing to the cluster closest
+                              to the request origin.
+                          preferCheapest:
+                            type: boolean
+                            description: >-
+                              When true, prefer routing to the lowest-cost
+                              cluster with available capacity.
+                          kvCacheAffinity:
+                            type: boolean
+                            description: >-
+                              When true, prefer routing to clusters that have
+                              relevant KV cache entries for the request prefix.
+                          sessionAffinity:
+                            type: boolean
+                            description: >-
+                              Route requests with the same X-Session-ID to the
+                              same cluster for KV cache reuse.
+                          maxLatencyMs:
+                            type: integer
+                            format: int32
+                            minimum: 1
+                            description: >-
+                              Maximum acceptable latency in milliseconds.
+                              Clusters that cannot meet this target are
+                              excluded from routing.
+                          targetModelTier:
+                            type: string
+                            description: >-
+                              Target model tier for semantic routing. When set,
+                              routes to clusters serving models matching this
+                              tier (e.g. "gpu-large", "cpu-small"). Used with
+                              semanticTier match to map prompt complexity to
+                              model capability.
+                          failover:
+                            type: object
+                            description: >-
+                              Failover configuration for when the preferred
+                              cluster is unavailable.
+                            properties:
+                              clusters:
+                                type: array
+                                description: >-
+                                  Ordered list of cluster names to fail over to.
+                                  Clusters are tried in order until one accepts
+                                  the request.
+                                items:
+                                  type: string
+                          weights:
+                            type: array
+                            description: >-
+                              Explicit traffic weight distribution across
+                              clusters. Used with the "weighted" strategy.
+                            items:
+                              type: object
+                              required:
+                                - cluster
+                                - weight
+                              properties:
+                                cluster:
+                                  type: string
+                                  description: Name of the target cluster.
+                                weight:
+                                  type: integer
+                                  format: int32
+                                  minimum: 0
+                                  maximum: 100
+                                  description: >-
+                                    Traffic weight percentage (0-100) for this
+                                    cluster.
+                healthCheck:
+                  type: object
+                  description: >-
+                    Health check configuration for monitoring cluster
+                    availability and removing unhealthy clusters from routing.
+                  properties:
+                    interval:
+                      type: string
+                      description: >-
+                        Interval between health checks (e.g. "10s", "30s").
+                      default: "10s"
+                    unhealthyThreshold:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      description: >-
+                        Number of consecutive failed health checks before a
+                        cluster is considered unhealthy and removed from
+                        the routing pool.
+                      default: 3
+    - name: v1beta1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [strategy]
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                provider:
+                  type: string
+                  enum: [ModelPlaneGateway, FleetGateway, PraxisGateway]
+                  default: ModelPlaneGateway
+                authorizationRef:
+                  type: object
+                  required:
+                    - grantId
+                    - subject
+                    - actionClass
+                    - objectUid
+                    - specDigest
+                    - audience
+                    - expiresAt
+                    - idempotencyKey
+                  properties:
+                    grantId:
+                      type: string
+                      minLength: 1
+                    subject:
+                      type: string
+                      minLength: 1
+                    actionClass:
+                      type: string
+                      minLength: 1
+                    objectUid:
+                      type: string
+                      minLength: 1
+                    specDigest:
+                      type: string
+                      pattern: "^[a-fA-F0-9]{64}$"
+                    audience:
+                      type: string
+                      minLength: 1
+                    expiresAt:
+                      type: string
+                      format: date-time
+                    idempotencyKey:
+                      type: string
+                      minLength: 1
+                    breakGlass:
+                      type: boolean
+                      default: false
+                    incidentRef:
+                      type: string
+                  x-kubernetes-validations:
+                    - rule: "self.audience == 'fleet-llm-d'"
+                      message: audience must be fleet-llm-d
+                    - rule: "!has(self.breakGlass) || !self.breakGlass || (has(self.incidentRef) && size(self.incidentRef) > 0)"
+                      message: incidentRef is required for break-glass grants
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - reason
+                      - lastTransitionTime
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                specDigest:
+                  type: string
+                  pattern: "^[a-fA-F0-9]{64}$"
+                providerRefs:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, name]
+                    x-kubernetes-preserve-unknown-fields: true
+                freshness:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                correlationId:
+                  type: string
+                lastSuccessfulReconciliation:
+                  type: string
+                  format: date-time

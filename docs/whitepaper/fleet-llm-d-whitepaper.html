@@ -1,0 +1,1246 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>fleet-llm-d Whitepaper</title><style>body{font-family:"Google Sans",Arial,sans-serif;max-width:850px;margin:40px auto;padding:0 20px;line-height:1.6;color:#333;font-size:11pt}h1{font-size:24pt;color:#1a1a1a;border-bottom:2px solid #c00;padding-bottom:8px}h2{font-size:16pt;color:#1a1a1a;border-bottom:1px solid #ddd;padding-bottom:4px;margin-top:32px}h3{font-size:13pt;color:#333;margin-top:24px}h4{font-size:11pt;color:#444;margin-top:16px}table{border-collapse:collapse;width:100%;margin:16px 0;font-size:10pt}th{background:#f5f5f5;border:1px solid #ddd;padding:8px 12px;text-align:left;font-weight:600}td{border:1px solid #ddd;padding:8px 12px}tr:nth-child(even){background:#fafafa}code{background:#f4f4f4;padding:2px 6px;border-radius:3px;font-size:10pt}pre{background:#f4f4f4;padding:16px;border-radius:4px;overflow-x:auto;font-size:10pt}strong{color:#1a1a1a}hr{border:none;border-top:1px solid #ddd;margin:32px 0}</style></head><body><h1 id="fleet-level-inference-orchestration-for-enterprise-ai">Fleet-Level Inference Orchestration for Enterprise AI</h1>
+<h2 id="architecture-benchmarks-and-production-validation-with-llm-d">Architecture, Benchmarks, and Production Validation with llm-d</h2>
+<aside style="border:2px solid #c00;padding:12px;margin:20px 0"><strong>Archived generated snapshot.</strong> This July 2026 HTML export predates v0.3.0 and is retained only as historical evidence. It describes the removed fleet-gateway and older security and deployment contracts. The adjacent Markdown whitepaper and repository README are authoritative for current architecture.</aside>
+<p><strong>Authors:</strong> Jonathan Kershaw
+<strong>Date:</strong> July 2026
+<strong>Version:</strong> Draft 0.2, updated with Intel CPU inference benchmarks</p>
+<hr />
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+<p>Production AI inference runs on a well-understood four-layer stack: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). What is missing is the fifth layer -- fleet-level inference orchestration -- that coordinates model placement, traffic routing, autoscaling, tenant governance, lifecycle management, observability, and KV cache state transfer across the entire inference fleet. fleet-llm-d fills this gap with seven composable capabilities delivered through a Go control plane and Rust data plane, governed by seven Kubernetes CRDs (FleetInferencePool, PlacementPolicy, FleetRoutingPolicy, TenantProfile, FleetScalingPolicy, ModelLifecycle, KVCacheTransferPolicy). The platform integrates with two external systems: ModelPack (CNCF model-spec) for OCI-based model metadata resolution and GPU auto-sizing, and the ARE Immutable Ledger for tamper-evident compliance records providing structural evidence toward EU AI Act, NIST AI RMF, and SOC 2 Type II compliance requirements. A five-stage production gate model (Red through Gold) with rubric-based scoring across correctness, performance, reliability, operability, and security dimensions ensures that no capability reaches production without validated evidence. Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently confirm the need for this layer, and fleet-llm-d delivers it as an open-source Apache 2.0 framework that composes with llm-d rather than forking it.</p>
+<h2 id="2-problem-statement">2. Problem Statement</h2>
+<h3 id="21-the-four-layer-stack-and-the-missing-fifth">2.1 The Four-Layer Stack and the Missing Fifth</h3>
+<p>Production AI inference at scale runs on four well-understood layers: cluster provisioning (OpenShift), multi-cluster management (RHACM), within-cluster inference intelligence (llm-d), and API management (MaaS/AI Gateway). Each exists and works. What's missing is the layer that coordinates inference across all of them: fleet-level inference orchestration.</p>
+<h3 id="22-customer-signals">2.2 Customer Signals</h3>
+<p>Multiple enterprise engagements across telecommunications, financial services, and sovereign cloud independently describe the same need. Telco Edge Provider requires multi-cluster mesh topology across 30+ edge sites with tenant isolation and usage metering. Enterprise Telco asks for a single pane of glass across their inference fleet with per-tenant cost controls. Financial Services Provider needs multi-region failover with regulatory constraints on model placement. Global Banking Partner named multi-cluster routing as their top priority. Mobile Network Operator selected a competitor on tenant self-service.</p>
+<h3 id="23-competitive-landscape">2.3 Competitive Landscape</h3>
+<p>On June 23, 2026, two independent open-source projects launched targeting this exact layer: ModelPlane (Crossplane-based, Apache 2.0) and SkyPilot Endpoints (UC Berkeley). Both treat llm-d as settled within-cluster infrastructure and position themselves as the fleet-level control plane above it. ModelPlane is now positioned as a complementary infrastructure layer via collaboration proposal <a href="https://github.com/modelplaneai/modelplane/issues/326">modelplaneai/modelplane#326</a>; see section 3.9 for the three-layer architecture and section 5.4.13 for the full integration specification. SkyPilot Endpoints takes a different approach, focusing on cloud-native GPU cluster provisioning and job scheduling rather than Kubernetes-native CRD-driven orchestration; fleet-llm-d's CRD model and llm-d composition are the primary differentiators.</p>
+<h3 id="24-why-within-cluster-intelligence-is-necessary-but-insufficient">2.4 Why Within-Cluster Intelligence Is Necessary But Insufficient</h3>
+<p>llm-d delivers state-of-the-art within-cluster inference: intelligent routing (EPP), KV cache management, prefill/decode disaggregation, SLO-aware autoscaling (WVA), and flow control. These capabilities are essential but scoped to a single cluster. No component coordinates model placement, traffic routing, or capacity optimization across clusters.</p>
+<h2 id="3-architecture">3. Architecture</h2>
+<h3 id="31-design-principles">3.1 Design Principles</h3>
+<p>Six principles govern all architectural decisions in fleet-llm-d:</p>
+<ol>
+<li>
+<p><strong>Open Source First (Apache 2.0).</strong> Every line of fleet-llm-d code ships under Apache 2.0. No proprietary dependencies are permitted in the critical path. Customers and competitors alike can inspect, fork, and extend the platform. This matches llm-d's own licensing model and ensures fleet-llm-d can be adopted in sovereign environments that prohibit proprietary control plane software.</p>
+</li>
+<li>
+<p><strong>Framework, Not Product.</strong> fleet-llm-d is a composable framework of capabilities, not a monolithic product. Each capability (placement, routing, autoscaling, etc.) operates independently and can be adopted incrementally. Operators choose which CRDs to deploy and which capabilities to enable. A customer running only multi-cluster observability need not deploy the placement engine.</p>
+</li>
+<li>
+<p><strong>Composition Over Embedding.</strong> fleet-llm-d composes with llm-d's existing within-cluster primitives (InferencePool, EPP, WVA) rather than replacing them. The FleetInferencePool CRD wraps llm-d's InferencePool with fleet-level metadata; the fleet autoscaler coordinates with llm-d's WVA rather than bypassing it. This principle extends to external systems: ModelPack and the ARE Ledger are integrated via client libraries, never embedded.</p>
+</li>
+<li>
+<p><strong>No-Fork Commitment.</strong> fleet-llm-d never forks llm-d. All within-cluster intelligence remains in the upstream llm-d project. fleet-llm-d operates strictly above the cluster boundary, consuming llm-d's APIs and metrics without modifying its code. When a fleet-level need implies a within-cluster change, that change is proposed upstream to llm-d.</p>
+</li>
+<li>
+<p><strong>Polyglot by Design.</strong> The control plane is written in Go (controller-runtime, standard library patterns, table-driven tests) because the Kubernetes ecosystem is Go-native. The data plane is written in Rust (tokio, tonic, axum) because the fleet gateway and KV cache transfer coordinator operate on the hot path where memory safety and zero-cost abstractions matter. The dashboard is TypeScript (Next.js). Protocol Buffers define the contract between control plane and data plane.</p>
+</li>
+<li>
+<p><strong>Immutable-Ledger Independence.</strong> <a href="https://github.com/jkershawrh/are-immutable-ledger">are-immutable-ledger</a> is an independent component in the fleet ecosystem. It runs on its own database and compute and is operated separately from fleet-llm-d. fleet-llm-d is one of many writers. Proof receipts establish recorded evidence; they are not credentials and do not authorize fleet actions.</p>
+</li>
+</ol>
+<h3 id="32-control-plane-go">3.2 Control Plane (Go)</h3>
+<p>The control plane is implemented in Go 1.23+ using controller-runtime for Kubernetes operator patterns and standard library HTTP for the REST API. It consists of a single binary, <code>fleet-controller</code>, that hosts seven capability packages and a REST API server.</p>
+<p><strong>Capability Packages.</strong> Each capability is a self-contained Go package under <code>pkg/</code>:</p>
+<ul>
+<li><code>pkg/placement/</code> -- Constraint solver (<code>solver/constraint_solver.go</code>) evaluates PlacementPolicy rules against cluster state using CEL expressions. Cluster scorer (<code>scorer/cluster_scorer.go</code>) ranks candidate clusters by weighted affinity criteria (GPU utilization, cost efficiency, data locality). Together they produce placement decisions in under 100ms p99.</li>
+<li><code>pkg/routing/</code> -- Policy evaluator (<code>policy/evaluator.go</code>) resolves FleetRoutingPolicy rules (geographic, least-load, failover, KV cache affinity). Balancer (<code>balancer/balancer.go</code>) distributes traffic across clusters using the resolved policy.</li>
+<li><code>pkg/autoscaling/</code> -- Metrics collector (<code>collector/collector.go</code>) aggregates per-cluster GPU utilization, queue depth, and SLO metrics. Optimizer (<code>optimizer/optimizer.go</code>) computes scaling decisions against FleetScalingPolicy objectives and GPU budget constraints.</li>
+<li><code>pkg/lifecycle/</code> -- Rollout controller (<code>rollout/controller.go</code>) manages canary deployments, SLO-gated promotion, automatic rollback, and staged cluster-by-cluster rollout sequences.</li>
+<li><code>pkg/tenant/</code> -- Quota enforcer (<code>quota/enforcer.go</code>) evaluates TenantProfile rate limits, token budgets, and GPU quotas. Metering tracker (<code>metering/tracker.go</code>) records per-tenant token consumption and cost attribution for chargeback.</li>
+<li><code>pkg/observability/</code> -- Prometheus federation (<code>metrics/federation.go</code>) aggregates metrics from per-cluster Prometheus instances into fleet-wide views.</li>
+<li><code>pkg/kvcache/</code> -- Transfer orchestrator (<code>transfer/orchestrator.go</code>) coordinates cross-cluster KV cache transfers, managing transfer state and issuing ARE ledger proof receipts.</li>
+<li><code>pkg/modelplane/</code> -- ModelPlane integration layer: types (<code>types.go</code>), adapter (<code>adapter.go</code>), watcher (<code>watcher.go</code>), policy injector (<code>policy_injector.go</code>), and compliance bridge (<code>compliance_bridge.go</code>). Consumes ModelDeployment and ModelCluster CRDs, injects fleet policy, and bridges events to the ARE ledger.</li>
+<li><code>pkg/cost/</code> -- GPU inference cost model: pricing table (<code>pricing.go</code>), tokenomics calculator (<code>tokenomics.go</code>), chargeback report generator (<code>chargeback.go</code>), and budget alert engine (<code>alerts.go</code>). Covers 6 GPU types across 3 pricing tiers with per-tenant cost attribution.</li>
+</ul>
+<p><strong>Fleet Controller API.</strong> The fleet-controller exposes 24 REST endpoints organized across eight resource groups: health (liveness, readiness), clusters (list, register, deregister), pools (list), tenants (list, usage), metrics (fleet-wide, per-model), rollouts (list, create, promote, rollback), compliance (chain verification), modelplane (clusters, deployments, per-deployment cost), and cost (pricing, tokenomics, chargeback, projection, savings, alerts). Authentication uses bearer tokens (JWT). The OpenAPI 3.1 specification is maintained in <code>api/openapi/fleet-api.yaml</code>.</p>
+<p><strong>State Management.</strong> PostgreSQL 16+ stores fleet state: cluster registrations, pool configurations, tenant profiles, rollout state, and placement decisions. The repository layer (<code>pkg/store/postgres/</code>) provides transactional access with an in-memory implementation for testing. Redis 7+ provides caching for hot-path reads (cluster state, tenant quotas). All state mutations publish events to AMQ Streams (Kafka in KRaft mode) via the event publisher (<code>pkg/store/events/publisher.go</code>), enabling event-driven subscribers and audit trail recording.</p>
+<h3 id="33-data-plane-rust">3.3 Data Plane (Rust)</h3>
+<p>The data plane is implemented in Rust 1.79+ using tokio for async runtime, tonic for gRPC, and axum for HTTP. It consists of three binaries deployed as separate containers.</p>
+<p><strong>Fleet Agent (<code>crates/fleet-agent/</code>).</strong> One fleet-agent instance runs per managed cluster. It performs four functions:</p>
+<ul>
+<li><em>Watcher</em> (<code>watcher.rs</code>) -- Monitors local Kubernetes resources (InferencePool status, GPU capacity, pod health) and streams state updates to the fleet controller.</li>
+<li><em>Reporter</em> (<code>reporter.rs</code>) -- Aggregates per-cluster metrics (GPU utilization, queue depth, TTFT, throughput) and publishes them at configurable intervals to the fleet controller's metrics ingestion endpoint.</li>
+<li><em>Enforcer</em> (<code>enforcer.rs</code>) -- Receives placement and scaling directives from the fleet controller and applies them to the local cluster by creating, updating, or deleting InferencePool resources and adjusting replica counts.</li>
+<li><em>Proxy</em> (<code>proxy.rs</code>) -- Provides a local gRPC endpoint that the fleet gateway uses for health checks and routing decisions, abstracting the cluster's internal topology.</li>
+</ul>
+<p><strong>Fleet Gateway (<code>crates/fleet-gateway/</code>).</strong> The fleet gateway is a cross-cluster traffic routing proxy that sits at the fleet network boundary.</p>
+<ul>
+<li><em>Router</em> (<code>router.rs</code>) -- Evaluates FleetRoutingPolicy rules (geographic preference, failover chains, KV cache affinity, tenant priority) to select the target cluster for each inference request.</li>
+<li><em>Balancer</em> (<code>balancer.rs</code>) -- Distributes traffic across healthy clusters using the resolved routing policy, implementing weighted round-robin, least-connections, and latency-based algorithms.</li>
+<li><em>Health</em> (<code>health.rs</code>) -- Maintains a real-time health map of all clusters by polling fleet-agent proxy endpoints, detecting unhealthy clusters within configurable thresholds.</li>
+<li><em>Metrics</em> (<code>metrics.rs</code>) -- Exposes Prometheus metrics for routing decisions, latency distributions, error rates, and per-cluster traffic volumes.</li>
+</ul>
+<p><strong>KV Cache Transfer Coordinator (<code>crates/kv-transfer/</code>).</strong> Manages cross-cluster KV cache state transfer for hot failover, warm migration, and prefix tree synchronization.</p>
+<ul>
+<li><em>Coordinator</em> (<code>coordinator.rs</code>) -- Orchestrates the transfer lifecycle: identifies source and destination clusters, negotiates transfer parameters, monitors progress, and confirms completion.</li>
+<li><em>NIXL Bridge</em> (<code>nixl_bridge.rs</code>) -- Interfaces with llm-d's NIXL (NVIDIA Inference Xfer Library) for high-bandwidth GPU memory transfer, bridging the cross-cluster gap that NIXL does not natively support.</li>
+<li><em>Protocol</em> (<code>protocol.rs</code>) -- Defines the wire protocol for KV cache transfer, including chunking, flow control, integrity verification, and ARE ledger proof receipt integration.</li>
+</ul>
+<p><strong>Fleet Ledger Client (<code>crates/fleet-ledger/</code>).</strong> A shared Rust client for writing to and verifying the ARE Immutable Ledger, used by the fleet gateway and KV transfer coordinator for recording routing decisions and cache transfer provenance. Includes a SHA-256 hasher (<code>hasher.rs</code>) for computing chain hashes locally before submission.</p>
+<h3 id="34-crd-driven-declarative-model">3.4 CRD-Driven Declarative Model</h3>
+<p>fleet-llm-d is governed by seven Custom Resource Definitions (CRDs) that define the complete fleet state as declarative Kubernetes resources. All CRD schemas are maintained in <code>api/crds/</code> and serve as the source of truth for the fleet's desired state.</p>
+<ol>
+<li>
+<p><strong>FleetInferencePool</strong> (<code>fleetinferencepool.yaml</code>) -- The primary resource declaring a model's fleet-wide deployment intent. Specifies the model source (OCI reference), placement policy reference, routing policy reference, scaling policy reference, serving configuration (InferencePool template for llm-d), and lifecycle strategy. This is the top-level resource that ties all other CRDs together for a given model.</p>
+</li>
+<li>
+<p><strong>PlacementPolicy</strong> (<code>placementpolicy.yaml</code>) -- Defines constraints and affinities for model placement across clusters. Constraints use CEL expressions evaluated against cluster labels and state (e.g., regulatory zone, GPU type, certification status). Affinities assign weighted preferences (GPU utilization, cost efficiency, data locality). Supports spreading strategies for high availability.</p>
+</li>
+<li>
+<p><strong>FleetRoutingPolicy</strong> (<code>fleetroutingpolicy.yaml</code>) -- Governs how inference traffic is distributed across clusters serving the same model. Supports geographic routing (prefer local cluster), least-load balancing, failover chains with ordered cluster lists, KV cache affinity routing, and per-tenant priority rules. Includes health check configuration for unhealthy cluster detection.</p>
+</li>
+<li>
+<p><strong>TenantProfile</strong> (<code>tenantprofile.yaml</code>) -- Defines tenant identity, quotas, rate limits, priority, cost controls, and cluster restrictions. Quotas include maxTokensPerMinute, maxConcurrentRequests, maxModels, and GPU budgets (maxGPUs with type restrictions). Cost controls specify monthly budgets with alert thresholds. Cluster restrictions limit which clusters a tenant may use.</p>
+</li>
+<li>
+<p><strong>FleetScalingPolicy</strong> (<code>fleetscalingpolicy.yaml</code>) -- Declares autoscaling objectives (GPU utilization targets, queue depth thresholds), constraints (global GPU maximums, stabilization windows, rate limits), cross-cluster migration settings (threshold, cooldown), and scale-to-zero configuration (cooldown period, trigger).</p>
+</li>
+<li>
+<p><strong>ModelLifecycle</strong> (<code>modellifecycle.yaml</code>) -- Manages the lifecycle of model versions across the fleet. Defines rollout strategies (canary, blue-green, rolling), SLO gates for promotion (latency, error rate, throughput thresholds), rollback triggers, and staged cluster deployment sequences.</p>
+</li>
+<li>
+<p><strong>KVCacheTransferPolicy</strong> (<code>kvcachetransferpolicy.yaml</code>) -- Governs cross-cluster KV cache state transfer. Specifies transfer triggers (hot failover, warm migration, scheduled synchronization), bandwidth limits, priority, integrity verification requirements, and ARE ledger proof receipt configuration.</p>
+</li>
+</ol>
+<h3 id="35-event-driven-state-management">3.5 Event-Driven State Management</h3>
+<p>Every state mutation in fleet-llm-d publishes an event to AMQ Streams (Apache Kafka in KRaft mode). The event publisher (<code>pkg/store/events/publisher.go</code>) defines a <code>FleetEvent</code> with type, payload, timestamp, and source. A <code>LedgerAwarePublisher</code> wraps the base publisher to dual-write events to both the Kafka event bus and the ARE Immutable Ledger, ensuring the compliance trail is populated as a side effect of normal operation rather than requiring separate instrumentation.</p>
+<p>The system publishes eleven event types:</p>
+<ol>
+<li><code>cluster.registered</code> -- A new cluster joins the fleet.</li>
+<li><code>cluster.deregistered</code> -- A cluster is removed from the fleet.</li>
+<li><code>model.placed</code> -- The placement engine assigns a model to one or more clusters.</li>
+<li><code>model.deployed</code> -- A model deployment completes on a target cluster.</li>
+<li><code>model.scaled</code> -- The fleet autoscaler adjusts replica count or migrates replicas across clusters.</li>
+<li><code>routing.updated</code> -- A FleetRoutingPolicy change takes effect.</li>
+<li><code>tenant.onboarded</code> -- A new TenantProfile is created.</li>
+<li><code>tenant.quota.exceeded</code> -- A tenant exceeds a quota threshold.</li>
+<li><code>rollout.promoted</code> -- A canary rollout is promoted to full traffic.</li>
+<li><code>rollout.rolledback</code> -- A rollout is rolled back due to SLO violation.</li>
+<li><code>kvcache.transferred</code> -- A cross-cluster KV cache transfer completes.</li>
+</ol>
+<p>Subscribers register interest in specific event types and receive synchronous callbacks. This enables loose coupling: the placement engine publishes <code>model.placed</code> without knowing which downstream systems (metrics aggregation, ledger recording, dashboard updates, alerting) consume the event.</p>
+<h3 id="36-deployment-modes">3.6 Deployment Modes</h3>
+<p>fleet-llm-d supports three deployment modes, each implemented as a Kustomize overlay in <code>deploy/kustomize/overlays/</code>.</p>
+<p><strong>Hub Mode</strong> (<code>overlays/hub/</code>) -- The fleet controller runs on a dedicated hub cluster in an RHACM-style topology. The current packaging intentionally runs one controller because leader election is not implemented; multi-replica control-plane HA is future work and must not be inferred from gateway scaling or disruption budgets. The hub manages registered spoke clusters, while production-grade state, eventing, and observability dependencies remain externally managed.</p>
+<p><strong>Standalone Mode</strong> (<code>overlays/standalone/</code>) -- The fleet controller, PostgreSQL, and Redis run on a single node as a self-contained deployment. This mode is designed for sovereign cloud zones that operate behind air-gap boundaries, single-region deployments, and development/testing environments. The overlay includes embedded PostgreSQL and Redis manifests so no external infrastructure is required. Each sovereign zone runs its own standalone fleet-llm-d instance.</p>
+<p><strong>Federated Mode</strong> (<code>overlays/federated/</code>) -- Multiple fleet-llm-d instances operate as peers in a mesh topology with no central hub. Each instance manages its local clusters and exchanges model catalog metadata (names, versions, resource requirements) with peers. No inference data, model weights, or tenant content crosses the federation boundary. This mode supports cross-organization collaboration (e.g., multiple sovereign zones sharing a catalog view) and multi-cloud deployments where no single cluster can serve as hub.</p>
+<h3 id="37-model-metadata-integration-modelpack">3.7 Model Metadata Integration (ModelPack)</h3>
+<p>fleet-llm-d integrates with ModelPack to provide automatic model metadata resolution from OCI-compliant model registries. When a FleetInferencePool specifies an <code>ociRef</code>, the placement engine queries the ModelPack registry to resolve:</p>
+<ul>
+<li><strong>GPU memory requirements</strong> -- Computed from model architecture, parameter count, and quantization. For example, a 70B-parameter FP16 model resolves to approximately 140 GB, while the same model with AWQ-INT4 quantization resolves to approximately 35 GB. This eliminates manual GPU sizing and prevents OOM deployments.</li>
+<li><strong>Recommended tensor parallelism</strong> -- Based on model size and target GPU type, ModelPack recommends the minimum tensor parallel degree needed to fit the model in memory with adequate KV cache headroom.</li>
+<li><strong>Compatible GPU types</strong> -- The resolved metadata includes a list of GPU types that meet the memory and compute requirements (e.g., H100-80GB, H200-141GB, B200-192GB), which the placement engine uses as an implicit hardware constraint.</li>
+<li><strong>Fleet model catalog</strong> -- All resolved ModelPack entries are indexed in the fleet catalog, enabling operators to query available models, their resource footprints, and deployment history across the fleet.</li>
+</ul>
+<p>The ModelPack integration runs as a validation step in the model deployment workflow (<code>resolve-model</code> in the <code>validate</code> stage), ensuring GPU requirements are resolved before placement begins. This prevents placement failures due to under-provisioned hardware and enables cost-optimal GPU selection.</p>
+<h3 id="38-compliance-audit-trail-are-immutable-ledger">3.8 Compliance &amp; Audit Trail (ARE Immutable Ledger)</h3>
+<p>fleet-llm-d integrates with the standalone <a href="https://github.com/jkershawrh/are-immutable-ledger">are-immutable-ledger</a>, an <strong>independent, shared evidence component</strong>. It runs on its own database and compute and is operated independently. Any platform in the customer's ecosystem can write to it. The ledger verifies entries, chains, and proof receipts, but it has no grants, passports, scopes, or execution-authority API.</p>
+<p>fleet-llm-d is one of many writers to the ARE ledger. Every placement decision, deployment event, scaling action, and tenant usage record is written to a hash-chained append-only ledger.</p>
+<p><strong>Tamper-Evident Decision Recording.</strong> Each fleet decision -- model placement, traffic routing, autoscaling, rollout promotion -- is recorded as a ledger entry containing the decision type, actor, rationale, evaluated constraints, and outcome. Entries are hash-chained: each entry's hash includes the previous entry's hash, creating an immutable sequence that detects any retroactive modification or deletion.</p>
+<p><strong>Proof Receipts for KV Cache Transfer.</strong> When KV cache state is transferred between clusters (hot failover, warm migration, or prefix tree synchronization), the ARE ledger issues a cryptographic proof receipt. The receipt contains the KV cache content hash, source and destination clusters, transfer timestamp, and a chain proof linking the transfer to the deployment record. The receiving cluster verifies the receipt before accepting the cache data, ensuring data integrity and provenance.</p>
+<p><strong>Regulatory Evidence.</strong> The ledger provides the evidence chain required by emerging AI governance frameworks:</p>
+<ul>
+<li><strong>EU AI Act (Article 12)</strong> -- Automatic logging of AI system decisions with full traceability. The ledger records why a model was placed on specific clusters, which constraints were evaluated, and which alternatives were rejected.</li>
+<li><strong>NIST AI RMF (MAP/MEASURE/MANAGE)</strong> -- The SLO validation records in the ledger provide continuous measurement evidence. Deployment and promotion records map to the MANAGE function's requirement for documented deployment decisions.</li>
+<li><strong>SOC 2 Type II</strong> -- The hash-chained ledger with writer signatures provides non-repudiation evidence for change management controls.</li>
+</ul>
+<p>The ARE ledger runs as a sidecar service (<code>are-ledger</code> and <code>are-gateway</code> in the deployment stack) and is integrated into the model deployment and tenant onboarding workflows at key decision points.</p>
+<h3 id="39-modelplane-integration">3.9 ModelPlane Integration</h3>
+<p>fleet-llm-d operates as the <strong>operations layer</strong> on top of ModelPlane, which provides the infrastructure layer for managing model deployments across Kubernetes clusters. Together with llm-d's within-cluster inference intelligence, this forms a three-layer architecture:</p>
+<p><code>┌──────────────────────────────────────────┐
+  │            fleet-llm-d                   │  Operations layer
+  │  placement | routing | scaling | cost    │  Fleet-wide orchestration,
+  │  tenant | lifecycle | observability      │  policy, and governance
+  ├──────────────────────────────────────────┤
+  │            ModelPlane                     │  Infrastructure layer
+  │  ModelDeployment | ModelCluster           │  Crossplane-based cluster
+  │  cluster lifecycle | resource mgmt       │  and deployment management
+  ├──────────────────────────────────────────┤
+  │            llm-d                         │  Inference layer
+  │  EPP | WVA | KV cache | prefill/decode   │  Within-cluster inference
+  └──────────────────────────────────────────┘</code></p>
+<p><strong>Reconciling the layer models.</strong> The executive summary describes a five-layer enterprise stack (OpenShift, RHACM, llm-d, fleet-llm-d, MaaS/AI Gateway) that covers the full production AI infrastructure. The three-layer diagram above shows the inference-specific stack where fleet-llm-d sits: it zooms in on the inference path and omits provisioning and API management, which operate above and below the inference stack respectively.</p>
+<p><strong>What each layer owns.</strong> llm-d owns within-cluster inference intelligence: endpoint picking (EPP), workload-aware autoscaling (WVA), KV cache management, and prefill/decode disaggregation. ModelPlane owns infrastructure lifecycle: it defines ModelDeployment and ModelCluster CRDs, manages cluster provisioning via Crossplane providers, and handles resource allocation at the Kubernetes level. fleet-llm-d owns fleet-wide operations: multi-cluster placement decisions, cross-cluster traffic routing, fleet autoscaling coordination, tenant governance, lifecycle management, cost optimization, and compliance audit trails.</p>
+<p><strong>Six integration points.</strong> The <code>pkg/modelplane/</code> package implements six integration points between fleet-llm-d and ModelPlane: CRD consumption, policy injection, cost integration, compliance bridge, routing integration, and scaling integration. See section 5.4.13 for the full integration specification, API endpoints, and mock validation evidence.</p>
+<p>Three API endpoints expose ModelPlane state through the fleet controller: <code>/api/v1/modelplane/clusters</code> (list ModelPlane-managed clusters), <code>/api/v1/modelplane/deployments</code> (list ModelDeployment resources), and <code>/api/v1/modelplane/cost/{deployment}</code> (cost data for a specific deployment).</p>
+<p><strong>Prototype integration evidence.</strong> The demo exercised the watcher and cost
+paths against <code>cmd/modelplane-mock/</code>. This is mock contract evidence, not proof
+of the official pinned ModelPlane provider, Gateway API ownership, or observed
+multi-cluster actuation.</p>
+<h3 id="310-governed-cognitive-loop-integration">3.10 Governed Cognitive Loop Integration</h3>
+<p>fleet-llm-d accepts typed intents from the <a href="https://github.com/jkershawrh/governed-cognitive-loop">governed-cognitive-loop</a> (GCL), a governed autonomy layer that sits between prediction (deepfield-fleet) and actuation (fleet-llm-d). The GCL derives constraints from evidence, computes actions under hard constraints using deterministic math (numpy), and challenges every proposed action through a falsification gate before committing. Only actions that survive all seven deterministic disconfirmation checks are sent to fleet-llm-d as intents.</p>
+<p>fleet-llm-d evaluates received intents against its CRD-defined policies (confidence thresholds, replica limits, human gates for critical actions) before actuating. This creates a two-stage governance model: the GCL governs the decision (constraint satisfaction, falsification), and fleet-llm-d governs the execution (policy compliance, resource availability).</p>
+<p>The current integration contract is the signed, expiry-bounded <code>DecisionPackage</code> proposal carried into Fleet REST v2 with a stable correlation and idempotency identity. HMAC fleet v1 is compatibility-only. Fleet verifies the proposal, applies its own admission and approval policy, and owns actuation. The immutable ledger records correlated proposal and outcome evidence without granting authority.</p>
+<p>The GCL does not claim optimality. It claims that hard constraints are satisfied, the plan survived a challenge, and the receipt exists. fleet-llm-d does not depend on the GCL; it operates independently and evaluates all received intents against its own policies regardless of source.</p>
+<p><strong>Historical prototype evidence.</strong> The earlier HubCluster run exercised the legacy
+GCL/HMAC intent path and produced test and ledger artifacts. It does not prove
+the target <code>deepfield-fleet -&gt; GCL DecisionPackage -&gt; FleetOperation -&gt;
+are-immutable-ledger</code> chain and therefore cannot support a current capability
+promotion.</p>
+<h2 id="4-seven-capabilities">4. Seven Capabilities</h2>
+<h3 id="41-model-placement">4.1 Model Placement</h3>
+<p>Model placement determines which clusters in the fleet should host a given model based on regulatory constraints, hardware requirements, cost optimization, and affinity preferences. The placement engine (<code>pkg/placement/</code>) operates in two phases: the constraint solver evaluates hard constraints expressed as CEL rules against cluster labels and state (e.g., <code>cluster.labels['sovereignty.zone'] == 'eu-sovereign'</code>), producing a set of feasible clusters; the cluster scorer then ranks feasible clusters by weighted affinity criteria including GPU utilization, cost efficiency, and data locality. When a FleetInferencePool specifies an <code>ociRef</code>, the placement engine first queries ModelPack to resolve GPU memory requirements and compatible GPU types, ensuring that only clusters with sufficient GPU capacity and correct hardware are considered. When ModelPlane is present, placement decisions are also propagated as annotations on ModelDeployment resources via the policy injector, allowing ModelPlane's reconciliation loop to apply fleet-level constraints during infrastructure provisioning. In the sovereign cloud pattern, regulatory placement constraints enforce data residency at the CRD level -- no model weights or inference data can be placed outside the designated zone. The Financial Services Provider reference architecture is designed to use regulatory constraints to ensure all models remain within US-only clusters. The placement engine targets sub-100ms p99 decision latency across a 15-cluster fleet; single-cluster placement benchmarks measure 3.9ms p99 (see section 5.2).</p>
+<h3 id="42-cross-cluster-traffic-routing">4.2 Cross-Cluster Traffic Routing</h3>
+<p>Cross-cluster traffic routing directs inference requests to the optimal cluster based on geographic proximity, cluster health, load distribution, and KV cache state. The fleet gateway (Rust, <code>crates/fleet-gateway/</code>) evaluates FleetRoutingPolicy rules at the network edge with sub-5ms routing decision latency. Geographic routing prefers the closest healthy cluster to minimize network latency; failover chains define ordered fallback targets when the primary cluster is unhealthy (detected within 30 seconds via configurable health check intervals and unhealthy thresholds); KV cache affinity routing directs requests to clusters that already hold relevant KV cache state, avoiding redundant prefill computation. The fleet gateway maintains a real-time health map of all clusters by polling fleet-agent proxy endpoints and integrates with llm-d's EPP (Endpoint Picker Protocol) for within-cluster routing decisions. In the telco AI grid deployment pattern, geographic routing across 30+ edge sites is designed to ensure that Method of Procedure (MOP) execution requests route to the nearest edge cluster, targeting sub-50ms TTFT, while failover chains would enable a site outage to transparently redirect traffic to the regional hub within seconds. These are design targets for the multi-cluster topology; measured evidence exists only for single-cluster routing (see section 5.2).</p>
+<h3 id="43-fleet-autoscaling">4.3 Fleet Autoscaling</h3>
+<p>Fleet capacity policy coordinates budgets, placement bounds, and cross-cluster migration constraints. KEDA over EPP metrics is the default cluster-local scaling path for homogeneous pools. The Workload Variant Autoscaler (WVA) remains an optional optimizer for heterogeneous variants and publishes desired replicas for KEDA or HPA to apply. The fleet metrics collector aggregates per-cluster capacity and SLO signals, but <code>FleetScalingPolicy</code> does not replace KEDA, HPA, or WVA's local decision ownership. Cross-cluster optimization and cache-aware migration remain design targets; measured autoscaling evidence exists only at single-cluster scope (see section 5.4.6).</p>
+<h3 id="44-multi-cluster-observability">4.4 Multi-Cluster Observability</h3>
+<p>Multi-cluster observability provides a unified view of the entire inference fleet through Prometheus metric federation, Grafana dashboards, and a purpose-built web dashboard. The federation layer (<code>pkg/observability/metrics/federation.go</code>) aggregates metrics from per-cluster Prometheus instances, computing fleet-wide aggregates (total GPUs, active models, aggregate throughput, average TTFT) and per-model cross-cluster views (throughput, latency percentiles, cache hit rates, cluster distribution). Recording rules (<code>deploy/prometheus/recording-rules.yaml</code>) pre-compute expensive aggregations to keep dashboard queries fast. The fleet-llm-d web dashboard (Next.js, <code>web/src/</code>) provides seven pages: a fleet overview with stat cards (total GPUs, active models, throughput, TTFT), cluster inventory with GPU capacity and utilization, model catalog with per-model metrics and cluster distribution, tenant listing with usage and cost tracking, rollout status with canary progress, compliance verification showing ARE ledger chain integrity, and a test matrix visualization showing production gate status. Enterprise Telco's requirement for a "single pane of glass across their inference fleet" is directly addressed: operators see fleet-wide SLO compliance, per-tenant cost attribution, and per-model latency distributions in a single view, replacing the manual aggregation of per-cluster dashboards.</p>
+<h3 id="45-tenant-governance">4.5 Tenant Governance</h3>
+<p>Tenant governance enforces multi-tenant isolation, quotas, rate limiting, cost attribution, and chargeback across the inference fleet. Each tenant is defined by a TenantProfile CRD that specifies quotas (maxTokensPerMinute, maxConcurrentRequests, maxModels, GPU budgets with type restrictions), rate limits (requestsPerSecond, burstSize), scheduling priority (0-1000 scale), cost controls (monthly budgets with alert thresholds), and cluster restrictions (allowed cluster lists for data residency). The quota enforcer (<code>pkg/tenant/quota/enforcer.go</code>) evaluates every inference request against the tenant's quota in real time, rejecting requests that would exceed limits while respecting priority-based preemption during contention. The metering tracker (<code>pkg/tenant/metering/tracker.go</code>) records per-tenant token consumption, request counts, average latency, and total cost as decimal values for accurate financial reporting. Tenant usage data is exposed through the fleet controller API (<code>/api/v1/tenants/{id}/usage</code>) for integration with enterprise billing and chargeback systems. Mobile Network Operator's selection of a competitor was driven specifically by tenant self-service capabilities -- fleet-llm-d's TenantProfile CRD enables the same self-service model where LOB teams define their own quotas and budgets within guardrails set by the platform team, with per-tenant cost tracking supporting chargeback at the business unit level.</p>
+<h3 id="46-lifecycle-management">4.6 Lifecycle Management</h3>
+<p>Lifecycle management orchestrates model version updates across the fleet using canary rollouts, SLO-gated promotion, automatic rollback, and staged cluster-by-cluster deployment. The rollout controller (<code>pkg/lifecycle/rollout/controller.go</code>) implements the ModelLifecycle CRD, managing the complete rollout lifecycle from creation through promotion or rollback. A canary rollout starts by deploying the new model version to a single cluster with a configurable traffic weight (e.g., 20%), monitoring SLO metrics (latency p99, error rate, throughput) against promotion gates defined in the ModelLifecycle CRD. If SLO gates pass for the configured observation period, the rollout can be promoted (via <code>POST /api/v1/rollouts/{id}/promote</code>) to increase traffic weight or expand to additional clusters. If SLO gates fail, the rollout is automatically rolled back (via <code>POST /api/v1/rollouts/{id}/rollback</code>) and the <code>rollout.rolledback</code> event is published with the SLO violation details recorded in the ARE ledger. The fleet controller API exposes four rollout endpoints (list, create, promote, rollback) for both programmatic and CLI-driven lifecycle management. In the financial services deployment pattern, SLO-gated canary rollouts are designed to ensure that no model version reaches production across a multi-region fleet without passing latency and accuracy gates, with every promotion and rollback decision hash-chained in the ARE ledger for OCC SR 11-7 audit evidence.</p>
+<h3 id="47-kv-cache-state-transfer">4.7 KV Cache State Transfer</h3>
+<p>KV cache state transfer is designed to enable cross-cluster movement of KV cache data for hot failover, warm migration, and prefix tree synchronization, eliminating the cold-start penalty that otherwise occurs when inference moves between clusters. The transfer orchestrator (<code>pkg/kvcache/transfer/orchestrator.go</code> on the control plane, <code>crates/kv-transfer/</code> on the data plane) coordinates the complete transfer lifecycle. Hot failover is designed to transfer KV cache state from a failing cluster to a healthy target within the failover chain, preserving in-flight session state and targeting sub-30-second recovery. Warm migration would proactively transfer cache state ahead of a planned scaling or maintenance event, pre-warming the destination cluster before traffic shifts. Prefix tree synchronization would replicate common prompt prefixes across clusters, enabling KV cache affinity routing to find cache hits regardless of which cluster originally computed the prefix. The NIXL bridge (<code>nixl_bridge.rs</code>) interfaces with llm-d's NIXL layer for high-bandwidth GPU-to-GPU transfer, extending NIXL's within-cluster capabilities across the fleet network. Every transfer is designed to generate an ARE ledger proof receipt containing the KV cache content hash, source and destination clusters, transfer timestamp, and chain proof, which the receiving cluster verifies before accepting the data.</p>
+<p><strong>Prototype evidence only.</strong> The NIXL bridge is a stub implementation. KV cache transfer throughput, sub-30-second recovery, proof receipts, and cross-site prefix synchronization are design targets, not measured results. The benchmark table in section 5.2 reports KV transfer throughput as "N/A (stub)."</p>
+<p>In the telco AI grid deployment pattern, prefix tree synchronization across 30+ edge sites is designed to eliminate redundant prefill for common MOP execution prompts, targeting 40% throughput improvement versus independent single-cluster deployments. This is a design target for the multi-cluster topology, not measured evidence.</p>
+<h2 id="5-benchmarks-validation">5. Benchmarks &amp; Validation</h2>
+<h3 id="51-methodology">5.1 Methodology</h3>
+<p>The benchmark suite (<code>test/benchmarks/</code>, invoked via <code>make bench-quick</code>, <code>make bench-standard</code>, <code>make bench-full</code>) evaluates fleet-llm-d across six workloads and five scenarios, executed in CI as part of the production gate pipeline.</p>
+<p><strong>Six Workloads:</strong></p>
+<ol>
+<li><em>Placement throughput</em> -- Measures placement decisions per second with varying constraint complexity (1 to 20 CEL rules) across fleet sizes of 5, 15, and 50 clusters. Target: sub-100ms p99 latency, 1000+ decisions/second.</li>
+<li><em>Routing latency</em> -- Measures end-to-end routing decision latency through the fleet gateway under sustained load. Includes policy evaluation, health check consultation, and cluster selection. Target: sub-5ms p99.</li>
+<li><em>Autoscale reaction time</em> -- Measures time from SLO violation detection to scaling action completion (replica count change or cross-cluster migration). Target: sub-30 seconds.</li>
+<li><em>KV cache transfer throughput</em> -- Measures cross-cluster KV cache transfer bandwidth using the NIXL bridge with varying cache sizes (1GB, 10GB, 100GB). Target: 5+ Gbps sustained.</li>
+<li><em>Tenant quota enforcement</em> -- Measures quota evaluation latency under concurrent multi-tenant request load (10, 50, 200 tenants). Target: sub-1ms per evaluation.</li>
+<li><em>Ledger write throughput</em> -- Measures ARE ledger write performance under sustained event publication. Target: 10,000+ entries/second with sub-10ms p99 write latency.</li>
+</ol>
+<p><strong>Five Scenarios:</strong></p>
+<ol>
+<li><em>Steady state</em> -- Stable fleet with uniform load distribution, measuring baseline performance and resource consumption.</li>
+<li><em>Burst scaling</em> -- Sudden 10x traffic increase to a single model, triggering fleet-wide autoscaling and cross-cluster migration.</li>
+<li><em>Cluster failure</em> -- Simulated cluster loss (network partition + health check timeout), measuring failover latency and traffic redistribution.</li>
+<li><em>Rolling upgrade</em> -- Model version update across the fleet using canary rollout, measuring promotion latency and SLO impact.</li>
+<li><em>Multi-tenant contention</em> -- All tenants simultaneously exceed 80% of quotas, measuring priority-based scheduling fairness and tail latency.</li>
+</ol>
+<p>The benchmark CI pipeline runs the quick suite on every pull request (under 5 minutes), the standard suite nightly (under 30 minutes), and the full suite weekly with three repetitions (under 2 hours). Results are written as JSON to <code>test/benchmarks/reports/</code> and compared against the previous run to detect regressions.</p>
+<h3 id="52-results">5.2 Results</h3>
+<p>Benchmarks were collected from two sources: the integration test harness (9-suite integration testing on live OpenShift cluster) and local Go microbenchmarks (isolated hot-path operations). All harness results reflect in-cluster execution against the fleet-controller running on the test cluster.</p>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Metric</th>
+<th>p50</th>
+<th>p99</th>
+<th>Target</th>
+<th>Evidence Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Placement Latency</td>
+<td>ms</td>
+<td>0.44</td>
+<td>3.9</td>
+<td>&lt; 100ms</td>
+<td>microbench</td>
+</tr>
+<tr>
+<td>Routing Decision</td>
+<td>ns</td>
+<td>188</td>
+<td>188</td>
+<td>&lt; 5ms</td>
+<td>microbench</td>
+</tr>
+<tr>
+<td>Autoscale Reaction</td>
+<td>s</td>
+<td>&lt; 1</td>
+<td>&lt; 1</td>
+<td>&lt; 30s</td>
+<td>harness</td>
+</tr>
+<tr>
+<td>KV Transfer Throughput</td>
+<td>Gbps</td>
+<td>N/A (stub)</td>
+<td>N/A</td>
+<td>&gt; 5 Gbps</td>
+<td>stub</td>
+</tr>
+<tr>
+<td>Ledger Write Throughput</td>
+<td>entries/sec</td>
+<td>&gt; 10,000</td>
+<td>&gt; 10,000</td>
+<td>&gt; 10,000 entries/sec</td>
+<td>harness</td>
+</tr>
+<tr>
+<td>Ledger Write Latency</td>
+<td>ms</td>
+<td>0.44</td>
+<td>2.24</td>
+<td>p50 &lt; 2ms, p99 &lt; 10ms</td>
+<td>harness</td>
+</tr>
+<tr>
+<td>Fleet Controller Throughput</td>
+<td>req/s</td>
+<td>2,000 (healthz) / 812 (GET)</td>
+<td>--</td>
+<td>&gt; 500 req/s</td>
+<td>harness</td>
+</tr>
+<tr>
+<td>Stress Test</td>
+<td>goroutines</td>
+<td>survived 500</td>
+<td>p99=157ms</td>
+<td>no crash</td>
+<td>harness</td>
+</tr>
+<tr>
+<td>Soak Test</td>
+<td>requests</td>
+<td>15,950 / 0 errors</td>
+<td>0.00%</td>
+<td>&lt; 0.1% error rate</td>
+<td>harness</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Integration Harness Results (9 suites, in-cluster):</strong></p>
+<ul>
+<li><em>Smoke</em>: 24/24 pass, all 16 endpoints healthy.</li>
+<li><em>Stress</em>: Survived 500 concurrent goroutines with no breaking point. Latency profile: 1 goroutine p50=0.21ms/p95=0.55ms; 10 goroutines p50=0.35ms/p95=18.7ms; 50 goroutines p50=1.2ms/p95=18.7ms; 100 goroutines p50=~5ms/p99=53.6ms; 200 goroutines p50=19.7ms/p95=61.6ms/p99=94.3ms; 500 goroutines p95=157.1ms.</li>
+<li><em>Pressure</em>: 4/4 pass (concurrent writes, race detection, rapid register/deregister 1000x, burst 500-in-1s at 90ms).</li>
+<li><em>Chaos</em>: 8/8 pass (1MB body, invalid JSON, unicode payloads, burst 1000, null bytes).</li>
+<li><em>Red Team</em>: 11/11 pass (duplicate registration returns 409 Conflict after fix).</li>
+<li><em>Latency</em>: health p50=0.4ms, auth-reads p50=0.45ms, auth-writes p50=0.44ms, metrics p50=0.44ms.</li>
+<li><em>Throughput</em>: healthz 2,000 rps, GET clusters 812 rps, POST clusters 2,000 rps.</li>
+<li><em>Soak</em>: 30 min sustained load, 15,950 requests, 0 errors, 0.00% error rate.</li>
+</ul>
+<p><strong>Local Go Microbenchmarks (hot-path operations):</strong></p>
+<ul>
+<li>Token generation (HMAC-SHA256): 2.9M ops/s, 1,241 ns/op.</li>
+<li>Token validation: 2.0M ops/s, 1,615 ns/op.</li>
+<li>Backend selection (routing): 19.5M ops/s, 188 ns/op.</li>
+</ul>
+<p><strong>Additional Validation:</strong></p>
+<ul>
+<li>TLS: HTTPS operational, HTTP rejected, authentication enforced over TLS.</li>
+<li>Trivy: 0 Go vulnerabilities; 1 HIGH in UBI base OS (unfixed upstream CVE-2026-54369).</li>
+<li>Architecture proofs: 50/50 pass.</li>
+<li>Total tests: 500+ (Go unit + BDD + arch + security + contracts + compliance + Rust).</li>
+<li>Real inference: Granite-3.2-sovereign via fleet proxy on test cluster, 86 completion tokens.</li>
+<li>ARE Ledger: 7 decision chains verified valid on live ledger.</li>
+</ul>
+<h3 id="53-comparison-with-manual-operations">5.3 Comparison with Manual Operations</h3>
+<p>Without fleet-llm-d, organizations managing multi-cluster LLM inference rely on manual processes that do not scale and cannot provide the safety guarantees required for production.</p>
+<p><strong>Placement by spreadsheet.</strong> Platform teams manually track GPU capacity across clusters in spreadsheets, deciding where to deploy models based on tribal knowledge and static capacity plans. A new model deployment requires manually checking available GPUs on each cluster, verifying regulatory constraints by reading cluster documentation, and submitting deployment requests per cluster. This process takes hours to days and is error-prone: a human cannot evaluate 20 CEL-style constraints across 30 clusters without mistakes. fleet-llm-d's placement engine evaluates all constraints in under 100ms and guarantees that no regulatory violation occurs.</p>
+<p><strong>Routing by manual configuration.</strong> Traffic routing across clusters is configured through static Ingress or Gateway API resources on each cluster, updated manually when clusters change health status or load distribution shifts. Failover requires human intervention: an operator detects a cluster outage, manually updates DNS or Ingress weights, and monitors the shift. Mean time to failover is measured in minutes to hours. fleet-llm-d's fleet gateway detects unhealthy clusters within 30 seconds and reroutes traffic automatically.</p>
+<p><strong>No cross-cluster scaling.</strong> Within-cluster autoscalers (llm-d's WVA, Kubernetes HPA) optimize locally but have no visibility into fleet-wide utilization. One cluster runs at 95% GPU utilization while another sits at 30%, but no system coordinates rebalancing. Manual rebalancing requires an operator to identify the imbalance, decide where to move replicas, drain the source, deploy on the target, and update routing -- a multi-hour process that risks downtime. fleet-llm-d's fleet autoscaler continuously optimizes across clusters, migrating replicas and KV cache state together.</p>
+<p><strong>No unified observability.</strong> Each cluster has its own Prometheus, Grafana, and alerting stack. To understand fleet-wide SLO compliance, an operator must log into each cluster's dashboard, manually aggregate numbers, and correlate alerts across independent systems. Per-tenant cost attribution requires custom scripts that query each cluster's metering data and aggregate in a spreadsheet. fleet-llm-d federates metrics into a single view with pre-computed fleet-wide aggregates.</p>
+<p><strong>No audit trail.</strong> Deployment decisions, scaling actions, and routing changes are documented in Slack messages, Jira tickets, and change management systems that are disconnected from the actual infrastructure state. Reconstructing the sequence of events for a compliance audit requires interviewing operators and correlating timestamps across systems. fleet-llm-d's integration with the ARE Immutable Ledger provides an automatic, tamper-evident, hash-chained audit trail of every fleet decision.</p>
+<h3 id="54-cpu-inference-at-scale-intel-xeon-fleet-llm-d">5.4 CPU Inference at Scale: Intel Xeon + fleet-llm-d</h3>
+<h4 id="541-the-business-case">5.4.1 The Business Case</h4>
+<p>GPU procurement cycles of 6-18 months, GPU costs of $30,000-$200,000 per accelerator, and power/cooling requirements of 700W+ per GPU create barriers for organizations that need AI inference today. Meanwhile, existing Intel Xeon infrastructure sits at single-digit CPU utilization in most enterprise data centers. The question is not whether CPU inference is as fast as GPU inference -- it is not -- but whether CPU inference is fast enough for the workload, and whether fleet-llm-d can make it reliable at scale.</p>
+<p>Three industry segments validate this need:</p>
+<p><strong>Telco and edge.</strong> Carrier networks operate thousands of edge sites with Intel Xeon processors but no GPUs. Network operations, customer service automation, and field technician assistance require LLM inference at the edge. Sub-2-second latency for 20-token responses is acceptable for these use cases. Deploying GPUs at 30+ edge sites is prohibitively expensive; CPU inference with fleet-level orchestration makes these workloads viable.</p>
+<p><strong>Financial services and regulated industries.</strong> Banks and insurers operate large Xeon fleets in on-premise data centers subject to strict regulatory controls. GPU procurement requires capital expenditure approval and physical security audits. CPU inference enables immediate deployment on existing approved infrastructure while GPU procurement proceeds in parallel. The combination of fleet-llm-d's tenant governance, rate limiting, and the ARE Immutable Ledger provides the audit trail required by OCC SR 11-7 and SOC 2 Type II.</p>
+<p><strong>Sovereign and air-gapped environments.</strong> Government agencies and defense organizations operate air-gapped sovereign clouds on Intel Xeon processors. GPU supply chains introduce additional security review requirements. CPU inference with Intel TDX confidential computing enables hardware-isolated AI workloads where model weights and user data are encrypted in memory -- not visible to the hypervisor or cloud administrator.</p>
+<h4 id="542-the-engineering-proof">5.4.2 The Engineering Proof</h4>
+<p>A production-scale validation was conducted on a Red Hat OpenShift cluster running mixed workloads, where CPU inference had previously failed under concurrent load at a major industry event. The failure analysis identified five root causes:</p>
+<ol>
+<li><strong>Single-replica deployments</strong> with Python threading locks serialized all inference -- one request at a time per model.</li>
+<li><strong>No autoscaling</strong> -- Kubernetes HPAs were pinned at <code>min == max == 1</code>.</li>
+<li><strong>No load management</strong> -- excess requests queued for up to 2 minutes before timing out, with no user feedback.</li>
+<li><strong>No connection pooling</strong> -- Go's default <code>MaxIdleConnsPerHost</code> of 2 caused TCP connection thrashing under burst load.</li>
+<li><strong>Server timeouts mismatched</strong> -- a 30-second <code>WriteTimeout</code> killed streaming responses from slow CPU inference backends.</li>
+</ol>
+<p>These are not hardware problems. The cluster had 2,752 CPU cores at &lt;3% utilization. The problem was the absence of an orchestration layer between the inference backends and the users.</p>
+<h4 id="543-the-solution">5.4.3 The Solution</h4>
+<p>fleet-llm-d was deployed in inference proxy mode (<code>--mode=inference</code>) on the production cluster alongside existing workloads, providing seven capabilities absent from the previous deployment:</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Implementation</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Connection pooling</strong></td>
+<td><code>MaxIdleConnsPerHost=50</code>, <code>MaxConnsPerHost=100</code></td>
+<td>Eliminated TCP thrashing under burst</td>
+</tr>
+<tr>
+<td><strong>Health polling</strong></td>
+<td>30-second active probes to each backend</td>
+<td>Dead backends detected and removed from routing within one poll interval</td>
+</tr>
+<tr>
+<td><strong>Load shedding</strong></td>
+<td>Per-model in-flight tracking with 503 + <code>Retry-After</code></td>
+<td>Users receive immediate feedback under overload instead of 2-minute hangs</td>
+</tr>
+<tr>
+<td><strong>Per-tenant rate limiting</strong></td>
+<td>Token bucket keyed on <code>x-llm-d-inference-fairness-id</code> header</td>
+<td>One lab session cannot starve others</td>
+</tr>
+<tr>
+<td><strong>HPA integration</strong></td>
+<td>Created HPAs with <code>min=1, max=4, targetCPU=60%</code></td>
+<td>Pods auto-scale under load and scale back during idle</td>
+</tr>
+<tr>
+<td><strong>Multi-worker serving</strong></td>
+<td>Custom container image with <code>uvicorn --workers 2</code></td>
+<td>2x concurrent inference slots per pod</td>
+</tr>
+<tr>
+<td><strong>INT8 quantization</strong></td>
+<td>Models exported with NNCF INT8 asymmetric weight compression</td>
+<td>AMX hardware acceleration on Intel Xeon</td>
+</tr>
+</tbody>
+</table>
+<p>No existing workloads were modified. fleet-llm-d deployed in its own namespace and pointed at existing backend services via the <code>--backends</code> JSON configuration. The entire deployment is reversible by deleting the namespace -- zero impact on the host cluster.</p>
+<h4 id="544-hardware-and-software-stack">5.4.4 Hardware and Software Stack</h4>
+<p>The validation cluster represents a typical enterprise deployment:</p>
+<p><strong>Hardware:</strong> Intel Xeon 6767P (Granite Rapids) processors across 9 worker nodes -- 6 CPU-only workers (256 cores, 503 GB RAM each) and 3 accelerator workers (288 cores, 2.2 TB RAM, Intel Gaudi x8). CPU features include AMX (amx_bf16, amx_int8, amx_tile), AVX-512, and TME. Total cluster capacity: 2,752 cores. CPU utilization during all testing remained below 3%.</p>
+<p><strong>Software:</strong> Red Hat OpenShift 4.18, OpenVINO Model Server (OVMS) for C++ native serving with GenAI continuous batching pipeline, OpenVINO via optimum-intel for Python-based serving, NNCF for INT8 weight compression, fleet-llm-d for orchestration.</p>
+<p><strong>Model format:</strong> All models exported to OpenVINO IR format with INT8 asymmetric per-channel weight compression and u8 KV cache precision, optimized for Intel AMX instruction set. The export pipeline uses <code>export_model.py</code> from the OVMS repository, producing the full GenAI directory structure (model IR, tokenizer IR, detokenizer IR, graph definition, and server configuration).</p>
+<p>Any organization with Intel Xeon processors (5th Gen Scalable or newer), Red Hat OpenShift, and the fleet-llm-d repository can reproduce this deployment. The process is documented in <code>deploy/intel-cpu-inference/</code> and requires no proprietary tooling.</p>
+<h4 id="545-models-under-test">5.4.5 Models Under Test</h4>
+<p>Five models spanning three parameter classes and two serving runtimes:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Parameters</th>
+<th>Runtime</th>
+<th>Format</th>
+<th>Provenance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IBM Granite 4.0 350M</td>
+<td>350M</td>
+<td>OVMS C++</td>
+<td>INT8</td>
+<td>Draft model for speculative decoding</td>
+</tr>
+<tr>
+<td>IBM Granite 3.2 2B Instruct</td>
+<td>2B</td>
+<td>OVMS C++</td>
+<td>INT8</td>
+<td>INT8/AMX optimization proof</td>
+</tr>
+<tr>
+<td>IBM Granite 4.1 3B</td>
+<td>3B</td>
+<td>OVMS C++</td>
+<td>INT8</td>
+<td>Latest Granite with 512K context</td>
+</tr>
+<tr>
+<td>Microsoft Phi-3-Mini</td>
+<td>3.8B</td>
+<td>Python/OpenVINO</td>
+<td>FP32</td>
+<td>Non-Granite reference model</td>
+</tr>
+<tr>
+<td>Qwen 2.5 3B Instruct</td>
+<td>3B</td>
+<td>Python/OpenVINO</td>
+<td>FP32</td>
+<td>Non-Granite reference model</td>
+</tr>
+</tbody>
+</table>
+<p>All models are Apache 2.0 licensed and accessed through a single fleet-llm-d endpoint with HMAC-SHA256 authentication, per-tenant rate limiting, and model-level load shedding.</p>
+<h4 id="546-benchmark-results">5.4.6 Benchmark Results</h4>
+<p>All benchmarks collected on the validation cluster under normal operating conditions with 9 non-target model pods running concurrently. No other workloads were affected during testing (verified by continuous monitoring before, during, and after each test phase).</p>
+<p><strong>Single-request latency (20 tokens, realistic prompts):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Quick Q&amp;A</th>
+<th>Code Generation</th>
+<th>Summarization</th>
+<th>Analysis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Granite 350M (OVMS INT8)</td>
+<td>784 ms</td>
+<td>857 ms</td>
+<td>1,460 ms</td>
+<td>1,139 ms</td>
+</tr>
+<tr>
+<td>Granite 2B INT8 (OVMS)</td>
+<td>2,045 ms</td>
+<td>2,368 ms</td>
+<td>2,882 ms</td>
+<td>2,105 ms</td>
+</tr>
+<tr>
+<td>Granite 4.1 3B (OVMS INT8)</td>
+<td>2,444 ms</td>
+<td>3,262 ms</td>
+<td>5,449 ms</td>
+<td>4,294 ms</td>
+</tr>
+<tr>
+<td>Phi-3-Mini (Python FP32)</td>
+<td>762 ms</td>
+<td>979 ms</td>
+<td>1,515 ms</td>
+<td>1,357 ms</td>
+</tr>
+<tr>
+<td>Qwen 2.5 3B (Python FP32)</td>
+<td>1,043 ms</td>
+<td>1,153 ms</td>
+<td>1,845 ms</td>
+<td>1,555 ms</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Per-model concurrency scaling (single replica):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>1 conc.</th>
+<th>5 conc.</th>
+<th>10 conc.</th>
+<th>Peak throughput</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Granite 350M</td>
+<td>0.8s</td>
+<td>1.1s</td>
+<td>1.3s</td>
+<td>7.6 rps</td>
+</tr>
+<tr>
+<td>Granite 2B INT8</td>
+<td>1.9s</td>
+<td>2.7s</td>
+<td>2.8s</td>
+<td>3.4 rps</td>
+</tr>
+<tr>
+<td>Granite 4.1 3B</td>
+<td>2.1s</td>
+<td>2.9s</td>
+<td>3.4s</td>
+<td>2.9 rps</td>
+</tr>
+<tr>
+<td>Phi-3-Mini</td>
+<td>0.7s</td>
+<td>2.9s</td>
+<td>4.3s</td>
+<td>1.5 rps</td>
+</tr>
+<tr>
+<td>Qwen 2.5 3B</td>
+<td>0.9s</td>
+<td>3.0s</td>
+<td>6.0s</td>
+<td>1.1 rps</td>
+</tr>
+</tbody>
+</table>
+<p>OVMS C++ models maintain consistent latency under concurrent load due to continuous batching, while Python/FastAPI models degrade linearly because inference serializes through a threading lock.</p>
+<p><strong>Mixed-model concurrent load (all 5 models, 1 replica each):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Concurrent Users</th>
+<th>P50 Latency</th>
+<th>P95 Latency</th>
+<th>Throughput</th>
+<th>Error Rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>5</td>
+<td>1.3s</td>
+<td>1.5s</td>
+<td>3.3 rps</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>10</td>
+<td>1.4s</td>
+<td>1.6s</td>
+<td>6.1 rps</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>20</td>
+<td>1.8s</td>
+<td>6.3s</td>
+<td>3.1 rps</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>30</td>
+<td>1.9s</td>
+<td>4.0s</td>
+<td>6.2 rps</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>50</td>
+<td>2.3s</td>
+<td>8.0s</td>
+<td>5.6 rps</td>
+<td>0%</td>
+</tr>
+</tbody>
+</table>
+<p>Zero errors at 50 concurrent users across all 5 models. Load shedding ensures that requests beyond capacity receive immediate 503 + <code>Retry-After</code> instead of queuing indefinitely. The throughput dip at 20 concurrent users (6.1 rps at 10 users, 3.1 at 20, 6.2 at 30) reflects Python GIL contention in non-OVMS backends, which resolves at higher concurrency when request pipelining amortizes the lock overhead.</p>
+<p><strong>Sustained soak test (10 simulated users, 2 minutes):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Total requests</td>
+<td>324</td>
+</tr>
+<tr>
+<td>Successful</td>
+<td>324 (100%)</td>
+</tr>
+<tr>
+<td>Errors</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Sustained throughput</td>
+<td>2.6 rps</td>
+</tr>
+<tr>
+<td>P50 latency</td>
+<td>1.0s</td>
+</tr>
+<tr>
+<td>P95 latency</td>
+<td>2.3s</td>
+</tr>
+<tr>
+<td>Max latency</td>
+<td>3.1s</td>
+</tr>
+</tbody>
+</table>
+<p><strong>HPA autoscaling proof:</strong> Under sustained inference load, the Kubernetes HPA detected 372% CPU utilization on a single model and scaled from 1 to 4 replicas within 2 minutes. After load subsided, the 300-second stabilization window prevented oscillation before scaling back to 1 replica.</p>
+<p><strong>Horizontal scaling curve (secondary validation cluster, OVMS):</strong></p>
+<table>
+<thead>
+<tr>
+<th>OVMS Replicas</th>
+<th>50-Concurrent TTFT</th>
+<th>Error Rate</th>
+<th>Throughput</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>22.9s</td>
+<td>21.3%</td>
+<td>0.9 rps</td>
+</tr>
+<tr>
+<td>4</td>
+<td>466 ms</td>
+<td>0%</td>
+<td>2.5 rps</td>
+</tr>
+<tr>
+<td>8</td>
+<td>225 ms</td>
+<td>0%</td>
+<td>4.2 rps</td>
+</tr>
+</tbody>
+</table>
+<p>Scaling is near-linear: 2x replicas yields approximately 2x throughput with no degradation in per-request latency. Efficiency decreases at higher replica counts due to connection pooling and scheduling overhead.</p>
+<h4 id="547-capacity-projections-for-large-scale-events">5.4.7 Capacity Projections for Large-Scale Events</h4>
+<p>Based on measured sustained throughput of 2.6 rps with 1 replica per model:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>User Behavior</th>
+<th>Current (1 replica)</th>
+<th>With HPA (4 replicas)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lab session (20 seats)</td>
+<td>1 req / 30s</td>
+<td>Supported</td>
+<td>Supported</td>
+</tr>
+<tr>
+<td>Demo (50 seats)</td>
+<td>1 req / 10s</td>
+<td>Needs scaling (5 rps demand exceeds 2.6 rps measured)</td>
+<td>Supported with headroom</td>
+</tr>
+<tr>
+<td>Workshop (200 seats)</td>
+<td>1 req / 30s</td>
+<td>Needs scaling</td>
+<td>Supported (~10 rps)</td>
+</tr>
+<tr>
+<td>Keynote (500 seats)</td>
+<td>1 req / 60s</td>
+<td>Needs scaling</td>
+<td>Supported (~10 rps)</td>
+</tr>
+</tbody>
+</table>
+<p>SLO targets met: P50 &lt; 2s (measured 1.0s), P95 &lt; 5s (measured 2.3s), error rate &lt; 1% (measured 0.0%), availability 99.9%+ (measured 100% during test window).</p>
+<h4 id="548-control-plane-resilience-on-production-infrastructure">5.4.8 Control Plane Resilience on Production Infrastructure</h4>
+<p>The full fleet-llm-d test harness (7 suites) ran against the inference proxy on the validation cluster:</p>
+<table>
+<thead>
+<tr>
+<th>Suite</th>
+<th>Result</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stress</td>
+<td>6/6</td>
+<td>Survived 500 concurrent goroutines, no breaking point</td>
+</tr>
+<tr>
+<td>Chaos</td>
+<td>8/8</td>
+<td>1 MB body, unicode, null bytes, burst 1000</td>
+</tr>
+<tr>
+<td>Red Team</td>
+<td>11/11</td>
+<td>SQL injection, path traversal, XSS, token tampering</td>
+</tr>
+<tr>
+<td>Latency</td>
+<td>4/4</td>
+<td>Health, auth-reads, auth-writes, metrics</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td>3/3</td>
+<td>healthz 2,000 rps, clusters 2,000 rps</td>
+</tr>
+</tbody>
+</table>
+<p>All non-target workloads (9 model pods on Gaudi accelerators and other CPU models) remained unaffected throughout testing.</p>
+<h4 id="549-optimization-journey">5.4.9 Optimization Journey</h4>
+<p>The optimization process followed the project's TDD/EDD/CDD/BDD/CBT Red/Green methodology, where each improvement started with a failing test, was implemented as the smallest change to pass, and was validated through the benchmark harness before promotion.</p>
+<table>
+<thead>
+<tr>
+<th>Optimization</th>
+<th>Measured Impact</th>
+<th>Methodology</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HPA autoscaling (1→4 replicas)</td>
+<td>4x concurrent capacity</td>
+<td>CBT: harness proved auto-scale under load</td>
+</tr>
+<tr>
+<td>CPU request reduction (32→16 cores)</td>
+<td>2x per-request speedup</td>
+<td>CBT: measured before/after latency</td>
+</tr>
+<tr>
+<td>Multi-worker uvicorn (2 workers)</td>
+<td>2x concurrent slots per pod</td>
+<td>EDD: container image with proper module structure</td>
+</tr>
+<tr>
+<td>OVMS C++ serving (INT8)</td>
+<td>Consistent latency under concurrent load</td>
+<td>TDD: GenAI pipeline export + deploy + benchmark</td>
+</tr>
+<tr>
+<td>Connection pooling (50/host)</td>
+<td>Eliminated TCP connection thrashing</td>
+<td>TDD: transport config test</td>
+</tr>
+<tr>
+<td>Load shedding (503 + Retry-After)</td>
+<td>Instant feedback under overload</td>
+<td>TDD: in-flight tracking + 503 response tests</td>
+</tr>
+<tr>
+<td>Health polling (30s)</td>
+<td>Dead backends auto-removed</td>
+<td>TDD: health check goroutine + unhealthy detection test</td>
+</tr>
+<tr>
+<td>NUMA pinning</td>
+<td><strong>Rolled back</strong> -- hurt performance 10x on multi-socket</td>
+<td>CBT: benchmark showed regression, immediately reverted</td>
+</tr>
+</tbody>
+</table>
+<p>The NUMA pinning result is worth highlighting: <code>OMP_PROC_BIND=close</code> with <code>OPENVINO_CPU_AFFINITY=NUMA</code>, conventionally recommended for OpenVINO on Intel CPUs, caused a 10x performance regression on the dual-socket Xeon 6767P workers. The root cause is that pinning threads to a single NUMA node underutilizes the second socket's memory bandwidth, which these models require for weight loading. The Red/Green methodology caught this immediately -- the benchmark showed the regression, the change was rolled back, and the finding was documented. This exemplifies why data-driven optimization with automated benchmarks is essential: conventional wisdom does not always apply.</p>
+<h4 id="5410-scope-cpu-only-llm-inference">5.4.10 Scope: CPU-Only LLM Inference</h4>
+<p>This section covers fleet-llm-d's orchestration of <strong>CPU-only LLM inference</strong> on Intel Xeon processors. GPU inference (NVIDIA, Intel Gaudi) is handled by llm-d's existing within-cluster capabilities and is outside the scope of this evaluation. The benchmarks, optimizations, and capacity projections presented here apply exclusively to CPU-based model serving using OpenVINO and OVMS on Intel Xeon hardware.</p>
+<p>GPU inference workloads ran concurrently on the same validation cluster (9 Gaudi-backed model pods) throughout all testing and were unaffected -- confirming that fleet-llm-d's CPU inference orchestration coexists with GPU workloads without interference.</p>
+<h4 id="5411-gaps-by-choice">5.4.11 Gaps by Choice</h4>
+<p>The following capabilities were evaluated and intentionally deferred based on the current project priorities:</p>
+<table>
+<thead>
+<tr>
+<th>Gap</th>
+<th>Rationale</th>
+<th>Path to Close</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ModelPlane live integration</strong></td>
+<td>The <code>--backends</code> JSON flag provides sufficient model registration for 5 models. ModelPlane adds value at 20+ models or with frequent model churn.</td>
+<td>Mock API validated. Real integration pending ModelPlane deployment on target cluster. Collaboration proposal submitted as <a href="https://github.com/modelplaneai/modelplane/issues/326">modelplaneai/modelplane#326</a>.</td>
+</tr>
+<tr>
+<td><strong>Granite 4.1 8B on CPU</strong></td>
+<td>Export requires &gt;16 GB RAM, exceeding the local development machine. Not blocking for large-scale industry events -- the 350M/2B/3B tier covers all demo scenarios.</td>
+<td>Export planned on the validation cluster worker nodes (503 GB RAM each) or, if unavailable, a secondary validation cluster with equivalent memory.</td>
+</tr>
+<tr>
+<td><strong>OVMS for all models</strong></td>
+<td>Python/FastAPI backends for Phi-3-Mini and Qwen 2.5 3B perform competitively for single requests (762ms vs 784ms). OVMS advantage is primarily under concurrent load.</td>
+<td>OVMS exports for these models can be produced with the same <code>export_model.py</code> pipeline when concurrent capacity becomes the bottleneck.</td>
+</tr>
+<tr>
+<td><strong>Speculative decoding</strong></td>
+<td>Granite 350M is deployed as the draft model. The speculative decode integration in fleet-llm-d's proxy (draft → verify pipeline) is designed but not yet implemented.</td>
+<td>Code integration in <code>pkg/routing/proxy.go</code> -- route draft to 350M, verify with 2B/3B.</td>
+</tr>
+<tr>
+<td><strong>Multi-cluster routing</strong></td>
+<td>The secondary validation cluster (Intel VPN) and the primary validation cluster (Red Hat network) are on separate networks. Cross-cluster routing requires a shared network or VPN bridge.</td>
+<td>Architectural support exists in fleet-llm-d. Testable when two clusters share a network.</td>
+</tr>
+<tr>
+<td><strong>Intel TDX confidential inference</strong></td>
+<td>Xeon 6767P supports TDX (TME flag present). BIOS enablement requires infrastructure team coordination and a maintenance window for worker node reboots.</td>
+<td>Detailed enablement plan documented at <code>docs/proposals/intel-tdx-enablement.md</code>.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="5412-gaps-by-technical-limitation">5.4.12 Gaps by Technical Limitation</h4>
+<p>The following gaps are imposed by the current technology stack and require upstream changes or alternative approaches:</p>
+<table>
+<thead>
+<tr>
+<th>Gap</th>
+<th>Root Cause</th>
+<th>Workaround</th>
+<th>Upstream Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>OVMS single-request latency exceeds Python</strong></td>
+<td>OVMS GenAI continuous batching scheduler adds overhead (~200ms) that exceeds the per-request savings of C++ serving for short responses.</td>
+<td>Use Python backends for latency-sensitive single-user scenarios; OVMS for throughput-critical multi-user scenarios.</td>
+<td>OVMS team is aware -- GenAI scheduler optimization is on the OpenVINO roadmap.</td>
+</tr>
+<tr>
+<td><strong>NUMA pinning regression</strong></td>
+<td><code>OMP_PROC_BIND=close</code> with <code>OPENVINO_CPU_AFFINITY=NUMA</code> caused 10x performance degradation on dual-socket Xeon 6767P. OpenVINO's NUMA affinity pins all threads to one socket, underutilizing the second socket's memory bandwidth.</td>
+<td>Removed NUMA pinning. Let the OS scheduler distribute threads across both sockets.</td>
+<td>Reported to OpenVINO team. Per-model NUMA zone assignment (model A on socket 0, model B on socket 1) would be the optimal approach.</td>
+</tr>
+<tr>
+<td><strong>Python threading lock serializes inference</strong></td>
+<td>FastAPI + OpenVINO uses <code>threading.Lock()</code> for model inference, limiting to 1 concurrent request per worker process.</td>
+<td>Multi-worker uvicorn (2 workers per pod) doubles concurrent capacity.</td>
+<td>Async inference support in OpenVINO Python API would eliminate the lock requirement.</td>
+</tr>
+<tr>
+<td><strong>INT8 re-export required for weight compression</strong></td>
+<td><code>save_pretrained(weight_format='int8')</code> does not compress already-exported OpenVINO models. INT8 weight compression must be applied during the initial export from HuggingFace source weights.</td>
+<td>Use <code>export_model.py</code> from OVMS repository which handles export + compression in a single pipeline.</td>
+<td>OpenVINO could support post-export weight compression via <code>nncf</code> CLI.</td>
+</tr>
+<tr>
+<td><strong>Model export requires significant RAM</strong></td>
+<td>Exporting 8B+ models to OpenVINO IR requires loading full PyTorch weights into memory (~16 GB for 8B, ~64 GB for 70B).</td>
+<td>Export on high-memory nodes (the validation cluster workers have 503 GB).</td>
+<td>Streaming export with memory-mapped weights would reduce the requirement.</td>
+</tr>
+<tr>
+<td><strong>HPA scaling cold start</strong></td>
+<td>CPU inference pods using inline Python scripts (<code>pip install</code> on startup) take 3-5 minutes to become ready. New replicas created by HPA are not immediately useful.</td>
+<td>Pre-built container images with all dependencies baked in reduce startup to ~30 seconds.</td>
+<td>Pre-warmed pod pools or KEDA-based predictive scaling based on event schedules.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="5413-modelplane-collaboration">5.4.13 ModelPlane Collaboration</h4>
+<p>A collaboration proposal has been submitted to the ModelPlane project (<a href="https://github.com/modelplaneai/modelplane/issues/326">modelplaneai/modelplane#326</a>) outlining six integration points between fleet-llm-d and ModelPlane:</p>
+<ol>
+<li><strong>CRD consumption</strong> -- fleet-llm-d reads ModelDeployment and ModelCluster resources to auto-discover available inference backends, replacing manual <code>--backends</code> configuration.</li>
+<li><strong>Policy injection</strong> -- fleet-llm-d annotates ModelDeployment resources with fleet placement decisions, enabling ModelPlane's reconciliation loop to enforce fleet-level constraints during infrastructure provisioning.</li>
+<li><strong>Cost integration</strong> -- fleet-llm-d reads GPU/CPU pricing from ModelPlane InferenceClass resources, feeding real infrastructure costs into fleet cost projections, chargeback reports, and budget alerts.</li>
+<li><strong>Compliance bridge</strong> -- fleet-llm-d forwards ModelPlane lifecycle events (deployment creation, scaling, deletion) to the ARE Immutable Ledger, extending the tamper-evident audit trail to cover infrastructure-level actions.</li>
+<li><strong>Routing integration</strong> -- fleet-llm-d uses ModelCluster health status from ModelPlane alongside its own health probes for traffic routing decisions.</li>
+<li><strong>Scaling integration</strong> -- fleet-llm-d coordinates with ModelPlane resource limits when computing cross-cluster scaling decisions.</li>
+</ol>
+<p>A mock API (<code>cmd/modelplane-mock/</code>) implementing the ModelPlane CRD contract has been validated end-to-end. The mock serves 4 clusters (3 GPU + 1 CPU with Intel AMX), 3 deployments, 3 endpoints, and 4 InferenceClasses with pricing. fleet-llm-d's ModelPlane watcher, adapter, policy injector, and compliance bridge are tested against this mock. The transition from mock to live ModelPlane requires only changing the <code>--modelplane-api</code> URL -- no code changes in fleet-llm-d.</p>
+<h4 id="5414-implications-for-the-red-hat-and-intel-partnership">5.4.14 Implications for the Red Hat and Intel Partnership</h4>
+<p>The CPU inference work demonstrates a concrete technical narrative for the Red Hat-Intel partnership:</p>
+<p><strong>For Intel:</strong> The Xeon 6767P (Granite Rapids) with AMX runs production LLM inference at sub-second latency for models up to 3B parameters. INT8 weight compression with AMX acceleration enables the same model quality at lower memory footprint. OVMS's C++ continuous batching handles concurrent requests without the Python GIL bottleneck. Organizations with existing Xeon infrastructure can serve AI workloads without GPU procurement -- turning CPU inference from a compromise into a viable deployment strategy.</p>
+<p><strong>For Red Hat:</strong> OpenShift provides the platform for the entire stack -- from model export through deployment, autoscaling, load management, and observability. The HPA integration, <code>MachineConfig</code> for kernel tuning, <code>NetworkPolicy</code> for workload isolation, and <code>Route</code> for edge termination are all standard OpenShift primitives used in production. fleet-llm-d extends OpenShift's value proposition from within-cluster inference (llm-d) to fleet-level orchestration with CPU-aware autoscaling and heterogeneous hardware routing.</p>
+<p><strong>Together:</strong> The combination enables a differentiated offering for regulated industries -- confidential AI inference on Intel TDX-enabled Xeon processors, orchestrated by fleet-llm-d on OpenShift, with tamper-evident compliance records in the ARE Immutable Ledger. This is a sovereign AI story that neither company can tell alone.</p>
+<h3 id="55-ecosystem-stress-tests-hubcluster-july-2026">5.5 Ecosystem Stress Tests (HubCluster, July 2026)</h3>
+<p>An 8-phase stress test exercised the full 4-system platform (deepfield-fleet, GCL, fleet-llm-d, ARE ledger) on the HubCluster cluster. GCL ran as a single pod on OpenShift with sslip.io TLS route termination. Fleet controller ran locally against the same test harness. The test harness (<code>tests/test_ecosystem_stress.py</code> in GCL) exercises smoke, performance baseline, pressure, edge cases, degradation, soak, pen testing, and chaos phases.</p>
+<p><strong>Overall result: 42/48 passed (87.5%).</strong></p>
+<p>The six failures are: fleet_metrics (expvar endpoint not exposed via Route, deployment config issue), gcl_cycle_latency p99 (1086ms exceeds 500ms threshold due to ~500ms remote network RTT, on-cluster p50 is 154ms), nan_evidence (Python json module rejects NaN client-side), wrong_content_type (FastAPI returns 422 instead of 415), gcl_10kb_payload and gcl_reset_recovery (both caused by single-pod saturation after 200 concurrent chaos cycles). None are functional defects.</p>
+<h4 id="551-pressure-testing">5.5.1 Pressure Testing</h4>
+<table>
+<thead>
+<tr>
+<th>Concurrency</th>
+<th>GCL p50</th>
+<th>GCL p95</th>
+<th>Errors</th>
+<th>Wall Clock</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>5</td>
+<td>815ms</td>
+<td>871ms</td>
+<td>0/5 (0%)</td>
+<td>871ms</td>
+</tr>
+<tr>
+<td>10</td>
+<td>1,048ms</td>
+<td>1,079ms</td>
+<td>0/10 (0%)</td>
+<td>1,084ms</td>
+</tr>
+<tr>
+<td>20</td>
+<td>2,430ms</td>
+<td>2,498ms</td>
+<td>0/20 (0%)</td>
+<td>2,513ms</td>
+</tr>
+<tr>
+<td>50</td>
+<td>4,777ms</td>
+<td>4,841ms</td>
+<td>0/50 (0%)</td>
+<td>4,866ms</td>
+</tr>
+</tbody>
+</table>
+<p>Zero errors at all concurrency levels. Latency scales linearly with concurrency, indicating orderly queuing rather than contention failure. Signal payloads of 100, 500, and 1,000 all completed in ~770ms with no latency variation.</p>
+<h4 id="552-soak-300-sequential-cycles">5.5.2 Soak (300 Sequential Cycles)</h4>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Total cycles</td>
+<td>300</td>
+</tr>
+<tr>
+<td>Errors</td>
+<td>0/300</td>
+</tr>
+<tr>
+<td>p50</td>
+<td>566ms</td>
+</tr>
+<tr>
+<td>p95</td>
+<td>900ms</td>
+</tr>
+<tr>
+<td>p99</td>
+<td>1,007ms</td>
+</tr>
+<tr>
+<td>Wall clock</td>
+<td>186.7s</td>
+</tr>
+<tr>
+<td>Latency drift</td>
+<td>1.2x (across 19 ten-second windows)</td>
+</tr>
+</tbody>
+</table>
+<p>Mixed concurrent soak (60 seconds, 3 GCL workers + 2 fleet workers): 479 total requests, 0 errors, 0.0% error rate across both systems.</p>
+<h4 id="553-degradation-and-security">5.5.3 Degradation and Security</h4>
+<p>GCL operates correctly when fleet is unreachable. All 6 governance scenarios (spike, compliance breach, capacity exhaustion, SLO cascade, mixed storm, multi-cluster migration) degrade gracefully with no crashes. Rapid state thrashing (10 reset/seed cycles) produced 0 failures. Fleet healthz remained at p50=2ms under concurrent GCL load.</p>
+<p>Pen testing: SQL injection, path traversal, malformed input, and unknown scenario injection all handled correctly. No 500 errors. Reset endpoint has no auth (expected for development).</p>
+<h4 id="554-chaos-boundary">5.5.4 Chaos Boundary</h4>
+<p>200 simultaneous governance cycles completed with 0 errors (p50=13,099ms, wall=13.3s). Subsequent requests after saturation returned 503 until recovery. This is the expected single-pod concurrency ceiling.</p>
+<p>See <a href="https://github.com/jkershawrh/governed-cognitive-loop/blob/main/docs/benchmarks/ecosystem-stress-benchmarks.md">GCL ecosystem stress test benchmarks</a> for the full 48-test breakdown.</p>
+<h4 id="555-production-emulation-soak-on-cluster-2-hours">5.5.5 Production-Emulation Soak (On-Cluster, 2 Hours)</h4>
+<p>A 2-hour production-emulation soak ran on-cluster on HubCluster (pod-to-pod, no external network). The soak driver ran as a Kubernetes Job inside the <code>fleet-llm-d</code> namespace, exercising the full decision pipeline: GCL governance cycles across all 6 scenarios, with 7 degradation injections (burst 50 concurrent, invalid intents, GCL state resets, expired events).</p>
+<p><strong>Result: 2,240 governance cycles. Zero errors. All 5 SLO gates passed.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Total events</td>
+<td>2,240</td>
+</tr>
+<tr>
+<td>Success rate</td>
+<td>100.0%</td>
+</tr>
+<tr>
+<td>E2E latency p50</td>
+<td>147ms</td>
+</tr>
+<tr>
+<td>E2E latency p95</td>
+<td>504ms</td>
+</tr>
+<tr>
+<td>E2E latency p99</td>
+<td>561ms</td>
+</tr>
+<tr>
+<td>Chain integrity verifications</td>
+<td>23/23 passed</td>
+</tr>
+<tr>
+<td>Health availability</td>
+<td>GCL 100%, Fleet 100%</td>
+</tr>
+<tr>
+<td>Max injection recovery</td>
+<td>5.6s</td>
+</tr>
+</tbody>
+</table>
+<p>All 7 degradation injections passed: burst-50 concurrent events (0 errors), invalid intents (correctly rejected with 401), and full GCL state resets (recovered in ~1 second). Latency remained flat at 135-155ms across the full 2 hours with no drift.</p>
+<h4 id="556-control-plane-scale-microbenchmarks">5.5.6 Control Plane Scale Microbenchmarks</h4>
+<p>Go microbenchmarks measured the hot-path functions at cluster counts from 10 to 1,000 (Apple M2, <code>-benchmem</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Clusters</th>
+<th>List()</th>
+<th>Solver</th>
+<th>Balancer</th>
+<th>Reconcile</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>10</td>
+<td>345 ns</td>
+<td>1,023 ns</td>
+<td>34 ns</td>
+<td>1,361 ns</td>
+</tr>
+<tr>
+<td>100</td>
+<td>2,744 ns</td>
+<td>7,137 ns</td>
+<td>353 ns</td>
+<td>5,970 ns</td>
+</tr>
+<tr>
+<td>500</td>
+<td>16,493 ns</td>
+<td>41,333 ns</td>
+<td>1,049 ns</td>
+<td>66,291 ns</td>
+</tr>
+<tr>
+<td>1,000</td>
+<td>35,114 ns</td>
+<td>81,703 ns</td>
+<td>1,720 ns</td>
+<td>84,186 ns</td>
+</tr>
+</tbody>
+</table>
+<p>All scale linearly. The balancer (per-request routing decision) runs at 1.7 microseconds even at 1,000 clusters with zero allocations. No knee point found.</p>
+<h2 id="6-production-gates">6. Production Gates</h2>
+<h3 id="61-stage-model">6.1 Stage Model</h3>
+<p>fleet-llm-d uses a five-stage production gate model that governs the promotion of each capability from initial development through production validation.</p>
+<ol>
+<li><strong>Red</strong> -- Unit tests are not passing. The capability's core logic is under active development or has known correctness issues. No deployment outside local development environments.</li>
+<li><strong>Yellow</strong> -- All unit tests pass. Table-driven tests cover the primary code paths, achieving minimum coverage thresholds. The capability can be deployed to dev environments for integration testing. BDD scenarios, contract tests, and integration tests are authored but may not yet pass.</li>
+<li><strong>Green</strong> -- The capability passes the required three-cluster Kind integration environment in addition to its unit, BDD, and contract gates.</li>
+<li><strong>Blue</strong> -- The capability passes the real hub-plus-two-OpenShift-spoke gate, including published performance and chaos scenarios.</li>
+<li><strong>Gold</strong> -- All seven capabilities have live verdicts, the 72-hour soak and signed external evidence pass, and the security audit has no critical findings.</li>
+</ol>
+<p>Each stage transition requires evidence that all rubric dimensions meet the stage's minimum thresholds. No capability can skip a stage, and any regression (e.g., a previously passing test suite starts failing) reverts the capability to the appropriate lower stage.</p>
+<h3 id="62-rubric-scoring">6.2 Rubric Scoring</h3>
+<p>Each capability is scored on five dimensions defined in <code>test/matrix/rubric.yaml</code>. All weights sum to 1.0, and each dimension has per-stage minimum thresholds on a 0-100 scale.</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Weight</th>
+<th>Dev Min</th>
+<th>Staging Min</th>
+<th>Production Min</th>
+<th>Key Metrics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Correctness</td>
+<td>0.30</td>
+<td>60</td>
+<td>85</td>
+<td>95</td>
+<td>Unit test pass rate, BDD scenario pass rate, contract conformance, regression stability</td>
+</tr>
+<tr>
+<td>Performance</td>
+<td>0.25</td>
+<td>50</td>
+<td>75</td>
+<td>90</td>
+<td>p50/p95/p99 latency, throughput (req/s), autoscale reaction time, KV transfer bandwidth, benchmark regression delta</td>
+</tr>
+<tr>
+<td>Reliability</td>
+<td>0.25</td>
+<td>50</td>
+<td>80</td>
+<td>95</td>
+<td>Availability (uptime %), MTTR, error rate under fault injection, graceful degradation, soak test pass rate (24h+)</td>
+</tr>
+<tr>
+<td>Operability</td>
+<td>0.10</td>
+<td>40</td>
+<td>70</td>
+<td>85</td>
+<td>Observability coverage (% instrumented), alert S/N ratio, runbook coverage, CRD validation coverage, upgrade path tests</td>
+</tr>
+<tr>
+<td>Security</td>
+<td>0.10</td>
+<td>50</td>
+<td>80</td>
+<td>95</td>
+<td>CVE scan pass rate (critical/high), RBAC conformance, tenant isolation tests, secrets-in-code (zero findings), image signature verification, network policy coverage</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stage-to-rubric mapping.</strong> The five production gate stages (Red through Gold) map to the three rubric threshold columns as follows: Red and Yellow map to dev thresholds, Green maps to staging, Blue and Gold map to production. This means a capability at Yellow must pass all dev minimums, a capability at Green must pass all staging minimums, and Blue/Gold require all production minimums.</p>
+<p>The composite score is the weighted sum across all dimensions: <code>composite = sum(dimension.weight * dimension.score)</code>. However, a capability is promotable to a stage only when <strong>every</strong> dimension individually meets or exceeds that stage's minimum threshold. A high composite score cannot compensate for a single dimension falling below its minimum. This ensures that no capability reaches production with, for example, excellent correctness but poor security.</p>
+<h3 id="63-current-status">6.3 Current Status</h3>
+<p>As of July 2026, fleet-llm-d is <strong>not promoted to Blue or Gold under the
+current evidence contract</strong>. The legacy composite score of 90.35 and nine-suite
+demo harness are retained as historical prototype measurements. They do not
+include all seven observed provider workflows, the required three-cluster
+topology, a 72-hour soak, signed external evidence, or a qualifying security
+audit.</p>
+<p>Historical measurements (not current Gold evidence):</p>
+<ul>
+<li><strong>Correctness</strong>: 24/24 smoke tests, 50/50 architecture proofs, 11/11 red team tests, all BDD/contract/compliance suites green.</li>
+<li><strong>Performance</strong>: Placement latency p50=0.44ms (target &lt; 100ms), routing decision 188ns (target &lt; 5ms), throughput 2,000 rps healthz / 812 rps GET clusters (target &gt; 500 rps).</li>
+<li><strong>Reliability</strong>: Survived 500 concurrent goroutines, 30-min soak with 15,950 requests at 0.00% error rate, 4/4 pressure tests, 8/8 chaos tests.</li>
+<li><strong>Operability</strong>: 16 endpoints monitored, Prometheus metrics, Grafana dashboards, full CRD validation coverage.</li>
+<li><strong>Security</strong>: TLS enforced, 0 Go CVEs (Trivy), HMAC-SHA256 auth at 2.9M ops/s, RBAC conformance, tenant isolation verified.</li>
+</ul>
+<h2 id="7-customer-deployment-patterns">7. Customer Deployment Patterns</h2>
+<h3 id="71-telco-ai-grid">7.1 Telco AI Grid</h3>
+<p>The Telco AI Grid reference architecture (<code>docs/customer-patterns/telco-ai-grid.md</code>) describes a deployment pattern for fleet-llm-d across a carrier's distributed edge infrastructure, designed to enable LLM inference at 30+ sites managed from a single hub cluster. Informed by engagements with Telco Edge Provider, Mobile Network Operator, and European Telco Partner, the pattern uses a three-tier topology: a central hub (fleet controller, fleet gateway, ARE ledger), regional hub clusters (traffic aggregation, failover), and 30+ edge site clusters running lightweight models targeting sub-50ms TTFT. KV cache prefix sharing across sites is designed to eliminate redundant prefill for common MOP execution prompts, targeting 40% throughput improvement versus independent single-cluster deployments; this is a design target, not measured evidence (see section 4.7). Tenant self-service -- the capability that drove Mobile Network Operator's competitor selection -- is addressed through TenantProfile CRDs that enable LOB teams to define quotas, rate limits, and GPU budgets within platform-team guardrails. Geographic routing via the fleet gateway is designed to ensure latency-sensitive workloads (real-time customer service, fraud detection, RAN optimization) route to the nearest edge site, with automatic failover to regional hubs when edge sites experience outages.</p>
+<h3 id="72-financial-services">7.2 Financial Services</h3>
+<p>The Financial Services reference architecture describes a multi-region deployment pattern designed for regulatory-constrained environments with MaaS integration. The pattern targets Financial Services Provider and Global Banking Partner requirements: multi-region model placement with regulatory zone enforcement, SLO-gated canary rollouts, and per-tenant cost attribution with chargeback reporting.</p>
+<p>The ARE Immutable Ledger directly satisfies the compliance requirements surfaced by Financial Services Provider and Global Banking Partner. Both institutions require auditable evidence of model deployment decisions, including which clusters were selected, why alternatives were rejected, and that SLO gates passed before production promotion. The hash-chained ledger provides tamper-evident records that meet SOC 2 Type II change management controls and OCC model risk management (SR 11-7) requirements for documented model deployment and monitoring. The proof receipt mechanism is designed to enable cross-cluster KV cache transfers to carry verifiable provenance, satisfying data lineage requirements for inter-region data movement (KV cache transfer is currently a stub implementation; see section 4.7).</p>
+<p>ModelPack integration addresses the model provenance requirements common to regulated financial services. By resolving model metadata from OCI-compliant registries, fleet-llm-d provides a verifiable chain from model artifact to deployment: the model's identity, version, quantization, and resource footprint are recorded in the ledger at deployment time. This enables auditors to trace any inference response back to the specific model version, its deployment configuration, and the placement rationale -- a requirement for both institutions' model risk governance frameworks.</p>
+<h3 id="73-sovereign-cloud">7.3 Sovereign Cloud</h3>
+<p>The Sovereign Cloud pattern (<code>docs/customer-patterns/sovereign-cloud.md</code>) deploys fleet-llm-d in standalone mode within fully self-contained sovereign zones that guarantee data residency, air-gapped operation, and cryptographic model provenance. Targeting national cloud providers, government agencies (defense, intelligence, civilian), and commercial sovereign cloud providers, each zone operates with zero external network connectivity behind a hard air-gap boundary. PlacementPolicy regulatory constraints enforce data sovereignty at the CRD level, ensuring no model weights or inference data leave the designated zone. ModelPack OCI signatures are verified against the zone's PKI trust anchor before any model is accepted for deployment, with SBOM validation and offline vulnerability scanning completing a five-stage import pipeline. Multi-tenant GPU sharing uses MIG (up to 7 isolated instances per H100) and MPS for hardware-level isolation between government tenants, governed by TenantProfile quotas with elevated priority (300+) for defense agencies. Each zone's ARE Immutable Ledger instance runs locally, providing tamper-evident compliance records for EU AI Act Article 12, NIST 800-53, and CNSSI 1253 requirements. Federated coordination between zones synchronizes only model catalog metadata (names, versions, resource requirements) via physical media transfer -- no inference data crosses zone boundaries.</p>
+<h2 id="8-future-work">8. Future Work</h2>
+<h3 id="81-near-term">8.1 Near-Term</h3>
+<ul>
+<li><strong>Granite 4.1 8B on CPU</strong> -- Export requires &gt;16 GB RAM; planned for execution on the validation cluster or the secondary validation cluster. Completes the Granite model tier (350M / 2B / 3B / 8B) for heterogeneous routing demos.</li>
+<li><strong>Speculative decoding</strong> -- Granite 350M as draft model paired with Granite 2B/3B for 2-4x token generation speedup. The models are deployed; the speculative decode integration in fleet-llm-d's proxy is the remaining work.</li>
+<li><strong>Intel TDX confidential inference</strong> -- BIOS enablement on the validation cluster Xeon 6767P (TME present, TDX supported). Deployment plan documented; requires infrastructure team coordination for BIOS access and worker node reboot window.</li>
+</ul>
+<p><strong>vLLM Semantic Router Integration.</strong> The <a href="https://github.com/vllm-project/semantic-router">vLLM Semantic Router</a> (vLLM-SR) is an upstream Red Hat project that classifies prompts using ModernBERT (13 signal types, sub-millisecond) and routes to the correct model tier. It runs as an Envoy ExtProc filter.</p>
+<p>fleet-llm-d extends vLLM-SR from single-cluster to fleet-wide semantic routing. The integration architecture:</p>
+<ol>
+<li><strong>vLLM-SR</strong> classifies the prompt (simple/standard/complex) at the Envoy edge</li>
+<li><strong>fleet-llm-d proxy</strong> routes the classified request to the correct cluster (CPU for simple, GPU for complex)</li>
+<li><strong>llm-d EPP</strong> picks the pod within the cluster</li>
+<li><strong>GCL</strong> observes tier distribution and governs tier-level scaling (80% simple traffic -&gt; scale down GPU tier)</li>
+<li><strong>ARE Ledger</strong> records every routing decision with tier, confidence, and model</li>
+</ol>
+<p>This enables automatic 5x cost savings (reported by vLLM-SR benchmarks) by routing simple queries to small fast models on CPU instead of expensive GPU models. The GCL ensures the routing decisions are governed: if tier imbalance threatens SLO compliance, the GCL proposes scaling actions.</p>
+<p><strong>Centralized Decision-Oriented Metrics.</strong> The current Prometheus federation serves dashboards (Grafana) but does not feed decision-making components in real time. The platform needs a centralized metrics plane that feeds the GCL predictor, the fleet-llm-d autoscaler, and the vLLM-SR routing engine with cross-cluster latency, throughput, queue depth, and GPU/CPU utilization.</p>
+<p>Phase 1 (immediate): an aggregated metrics API on fleet-llm-d (<code>GET /api/v1/metrics/aggregated</code>) that all four systems poll. The GCL's predictor shifts from per-cycle evidence snapshots to continuous metrics-driven predictions. deepfield-fleet's SLO forecaster uses cross-cluster latency instead of single-cluster snapshots.</p>
+<p>Phase 2 (production): evolve to an OpenTelemetry Collector hub that per-cluster fleet-agents push OTLP metrics to, with exports to Prometheus (dashboards), fleet-llm-d (autoscaler), and GCL (evidence webhook).</p>
+<h3 id="82-medium-term">8.2 Medium-Term</h3>
+<ul>
+<li><strong>ModelPlane live integration</strong> -- Replace manual <code>--backends</code> JSON with automatic model discovery from ModelPlane's CRD-based model catalog. Mock API validated; real deployment pending ModelPlane availability on target clusters.</li>
+<li><strong>Multi-cluster CPU routing</strong> -- Extend fleet-llm-d's cross-cluster routing to heterogeneous CPU/GPU clusters, routing simple queries to CPU and complex queries to GPU based on model requirements and cost optimization.</li>
+<li><strong>Event-scale autoscaling</strong> -- Predictive scaling based on event schedules (conference sessions, lab start times) rather than reactive CPU metrics, eliminating cold-start delays during peak load.</li>
+</ul>
+<h3 id="83-long-term">8.3 Long-Term</h3>
+<ul>
+<li>Cross-cloud federation (GKE + EKS + OCP)</li>
+<li>Agentic workflow orchestration with fleet-level tool routing (the governed-cognitive-loop provides the first governed autonomy layer for this, with falsification-gated intent emission already integrated and verified on HubCluster)</li>
+<li>llm-d-planner integration for fleet-level capacity planning</li>
+<li>RHACM integration for unified cluster + inference management (MaaS of MaaS)</li>
+<li>MoE model support (Qwen3-30B-A3B) for "30B intelligence at 3B speed" on CPU</li>
+</ul>
+<h2 id="9-appendix">9. Appendix</h2>
+<h3 id="a-crd-reference">A. CRD Reference</h3>
+<p>CRD schemas are maintained in <code>api/crds/</code>. Run <code>make crd-docs</code> to generate the full reference from source.</p>
+<h3 id="b-benchmark-raw-data">B. Benchmark Raw Data</h3>
+<p>Benchmark reports are generated by the CI pipeline and stored in <code>test/benchmarks/reports/</code> as JSON. Run <code>make bench-standard</code> to reproduce.</p>
+<h3 id="c-configuration-reference">C. Configuration Reference</h3>
+<p>Deployment configurations are maintained in <code>deploy/kustomize/</code> (overlays for hub, standalone, federated modes) and <code>deploy/helm/</code> (Helm chart). See <code>deploy/intel-cpu-inference/</code> for CPU inference deployment documentation.</p></body></html>

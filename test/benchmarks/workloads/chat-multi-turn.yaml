@@ -1,0 +1,58 @@
+# Multi-turn chat workload definition for fleet-llm-d benchmarks.
+# Characteristics: high prefix cache reuse across turns, short output
+# sequences, latency-sensitive (interactive user-facing).
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: chat-multi-turn
+  labels:
+    workload-type: interactive
+    latency-class: low
+spec:
+  description: >-
+    Simulates a multi-turn conversational chat workload. Each session
+    accumulates context across turns, producing high prefix cache reuse
+    ratios. Output lengths are short (assistant replies). Latency SLOs
+    are strict because the workload is user-facing.
+
+  model:
+    name: meta-llama/Llama-3.1-70B-Instruct
+    source: huggingface
+    gpuType: nvidia-h100
+
+  prompt_template:
+    system_message: >-
+      You are a helpful assistant. Respond concisely and accurately.
+    user_turn_tokens:
+      min: 20
+      max: 256
+      distribution: log-normal
+    assistant_turn_tokens:
+      min: 30
+      max: 512
+      distribution: log-normal
+
+  conversation_turns:
+    min: 3
+    max: 12
+    mean: 6
+    distribution: poisson
+
+  # Context grows across turns; by turn 6 the prompt typically reaches
+  # 2-4k tokens. The KV cache prefix hit rate should be > 85%.
+  expected_prefix_reuse_ratio: 0.85
+
+  traffic:
+    target_qps: 50
+    concurrency: 200
+    arrival_pattern: poisson
+    duration: 600s
+    warmup: 30s
+
+  slo:
+    ttft_p50_ms: 80
+    ttft_p99_ms: 250
+    tpot_p50_ms: 15
+    tpot_p99_ms: 40
+    e2e_p99_ms: 3000
+    success_rate: 0.999

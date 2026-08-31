@@ -1,0 +1,297 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.tenant.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/tenant/v1;tenantv1";
+
+import "google/protobuf/timestamp.proto";
+
+// TenantService manages multi-tenant governance for the fleet, including
+// tenant lifecycle, quota management, usage tracking, and admission control.
+service TenantService {
+  // CreateTenant registers a new tenant with the fleet.
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+
+  // GetTenant retrieves a tenant by ID.
+  rpc GetTenant(GetTenantRequest) returns (GetTenantResponse);
+
+  // UpdateQuota modifies the resource quotas for a tenant.
+  rpc UpdateQuota(UpdateQuotaRequest) returns (UpdateQuotaResponse);
+
+  // GetUsage retrieves current resource usage for a tenant.
+  rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+
+  // ListTenants returns all tenants matching the given filters.
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+
+  // CheckQuota performs an admission check to determine if a tenant has
+  // sufficient quota remaining for a request.
+  rpc CheckQuota(CheckQuotaRequest) returns (CheckQuotaResponse);
+}
+
+// TenantQuota defines the resource limits for a tenant.
+message TenantQuota {
+  // Maximum tokens per minute across all models.
+  int64 max_tokens_per_minute = 1;
+
+  // Maximum concurrent inference requests.
+  int32 max_concurrent_requests = 2;
+
+  // Maximum number of distinct models the tenant can use.
+  int32 max_models = 3;
+
+  // GPU budget expressed as GPU-hours per billing period.
+  double gpu_budget = 4;
+
+  // Maximum requests per second (rate limit).
+  double max_requests_per_second = 5;
+
+  // Maximum total tokens per billing period.
+  int64 max_tokens_per_period = 6;
+}
+
+// RateLimit configures request rate limiting for a tenant.
+message RateLimit {
+  // Maximum requests per second.
+  double requests_per_second = 1;
+
+  // Maximum burst size (token bucket capacity).
+  int32 burst_size = 2;
+
+  // Per-model rate limits (model name -> requests per second).
+  map<string, double> per_model_limits = 3;
+}
+
+// CostControl configures cost management for a tenant.
+message CostControl {
+  // Maximum spend per billing period in the configured currency.
+  double budget_limit = 1;
+
+  // Percentage of budget at which to send a warning alert (0-100).
+  double warning_threshold_percent = 2;
+
+  // Percentage of budget at which to throttle or reject requests (0-100).
+  double hard_limit_threshold_percent = 3;
+
+  // Currency for cost tracking (e.g., "USD").
+  string currency = 4;
+}
+
+// TenantPriority defines the scheduling priority tier for a tenant.
+enum TenantPriority {
+  // Default value; priority is not specified.
+  TENANT_PRIORITY_UNSPECIFIED = 0;
+
+  // Critical workloads with guaranteed capacity.
+  TENANT_PRIORITY_CRITICAL = 1;
+
+  // High-priority production workloads.
+  TENANT_PRIORITY_HIGH = 2;
+
+  // Standard priority for normal workloads.
+  TENANT_PRIORITY_NORMAL = 3;
+
+  // Low-priority workloads that can be preempted.
+  TENANT_PRIORITY_LOW = 4;
+
+  // Best-effort workloads with no guarantees.
+  TENANT_PRIORITY_BEST_EFFORT = 5;
+}
+
+// Tenant represents an organizational unit that consumes inference resources.
+message Tenant {
+  // Unique identifier for the tenant.
+  string id = 1;
+
+  // Human-readable tenant name.
+  string name = 2;
+
+  // Resource quotas assigned to this tenant.
+  TenantQuota quotas = 3;
+
+  // Rate limiting configuration.
+  RateLimit rate_limit = 4;
+
+  // Scheduling priority tier.
+  TenantPriority priority = 5;
+
+  // Cost management controls.
+  CostControl cost_control = 6;
+
+  // Arbitrary metadata labels.
+  map<string, string> labels = 7;
+
+  // When the tenant was created.
+  google.protobuf.Timestamp created_at = 8;
+
+  // When the tenant was last updated.
+  google.protobuf.Timestamp updated_at = 9;
+
+  // Whether the tenant is currently active.
+  bool enabled = 10;
+}
+
+// TenantUsage captures resource consumption for a tenant over a period.
+message TenantUsage {
+  // Tenant ID this usage pertains to.
+  string tenant_id = 1;
+
+  // Total tokens consumed (input + output) during the period.
+  int64 tokens_consumed = 2;
+
+  // Estimated cost in the configured currency.
+  double cost = 3;
+
+  // Total number of inference requests during the period.
+  int64 requests = 4;
+
+  // Start of the usage measurement period.
+  google.protobuf.Timestamp period_start = 5;
+
+  // End of the usage measurement period.
+  google.protobuf.Timestamp period_end = 6;
+
+  // Breakdown of usage by model.
+  repeated ModelUsage model_usage = 7;
+
+  // GPU-hours consumed during the period.
+  double gpu_hours_consumed = 8;
+}
+
+// ModelUsage tracks per-model resource consumption.
+message ModelUsage {
+  // Model identifier.
+  string model = 1;
+
+  // Tokens consumed by this model.
+  int64 tokens_consumed = 2;
+
+  // Number of requests to this model.
+  int64 requests = 3;
+
+  // Estimated cost for this model.
+  double cost = 4;
+}
+
+// CreateTenantRequest registers a new tenant.
+message CreateTenantRequest {
+  // The tenant to create.
+  Tenant tenant = 1;
+}
+
+// CreateTenantResponse confirms tenant creation.
+message CreateTenantResponse {
+  // The created tenant with server-assigned fields populated.
+  Tenant tenant = 1;
+}
+
+// GetTenantRequest retrieves a tenant by ID.
+message GetTenantRequest {
+  // ID of the tenant to retrieve.
+  string tenant_id = 1;
+}
+
+// GetTenantResponse returns the requested tenant.
+message GetTenantResponse {
+  // The requested tenant.
+  Tenant tenant = 1;
+}
+
+// UpdateQuotaRequest modifies a tenant's quotas.
+message UpdateQuotaRequest {
+  // ID of the tenant whose quota should be updated.
+  string tenant_id = 1;
+
+  // The new quota values. All fields are replaced.
+  TenantQuota quotas = 2;
+
+  // Reason for the quota change (for audit logging).
+  string reason = 3;
+}
+
+// UpdateQuotaResponse confirms the quota update.
+message UpdateQuotaResponse {
+  // The updated tenant.
+  Tenant tenant = 1;
+}
+
+// GetUsageRequest queries usage for a tenant.
+message GetUsageRequest {
+  // ID of the tenant to query.
+  string tenant_id = 1;
+
+  // Start of the query period.
+  google.protobuf.Timestamp period_start = 2;
+
+  // End of the query period.
+  google.protobuf.Timestamp period_end = 3;
+}
+
+// GetUsageResponse returns the tenant's usage.
+message GetUsageResponse {
+  // Usage data for the requested period.
+  TenantUsage usage = 1;
+}
+
+// ListTenantsRequest queries tenants with optional filters.
+message ListTenantsRequest {
+  // Filter by priority tier.
+  TenantPriority priority = 1;
+
+  // Filter by enabled status. If unset, return all.
+  bool enabled_only = 2;
+
+  // Filter by label selector.
+  map<string, string> label_selector = 3;
+
+  // Maximum number of results to return.
+  int32 page_size = 4;
+
+  // Pagination token from a previous response.
+  string page_token = 5;
+}
+
+// ListTenantsResponse returns matching tenants.
+message ListTenantsResponse {
+  // The matching tenants.
+  repeated Tenant tenants = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of tenants matching the filter.
+  int32 total_count = 3;
+}
+
+// CheckQuotaRequest performs an admission check against tenant quotas.
+message CheckQuotaRequest {
+  // ID of the tenant to check.
+  string tenant_id = 1;
+
+  // Model being requested.
+  string model = 2;
+
+  // Estimated tokens for this request.
+  int64 estimated_tokens = 3;
+}
+
+// CheckQuotaResponse returns the admission decision.
+message CheckQuotaResponse {
+  // Whether the request is allowed under current quotas.
+  bool allowed = 1;
+
+  // If denied, the reason for denial.
+  string denial_reason = 2;
+
+  // Remaining tokens available in the current period.
+  int64 remaining_tokens = 3;
+
+  // Remaining concurrent request slots.
+  int32 remaining_concurrent = 4;
+
+  // Suggested retry delay in seconds if rate limited.
+  double retry_after_seconds = 5;
+}

@@ -1,0 +1,305 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.observability.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/observability/v1;observabilityv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ObservabilityService provides fleet-wide metrics and time series queries
+// for monitoring inference performance, resource utilization, and SLO compliance
+// across all clusters, models, and tenants.
+service ObservabilityService {
+  // GetFleetMetrics returns aggregate metrics for the entire fleet.
+  rpc GetFleetMetrics(GetFleetMetricsRequest) returns (GetFleetMetricsResponse);
+
+  // GetModelMetrics returns performance metrics for a specific model
+  // across all clusters serving it.
+  rpc GetModelMetrics(GetModelMetricsRequest) returns (GetModelMetricsResponse);
+
+  // GetTenantMetrics returns usage and performance metrics for a specific tenant.
+  rpc GetTenantMetrics(GetTenantMetricsRequest) returns (GetTenantMetricsResponse);
+
+  // GetClusterMetrics returns resource utilization and performance metrics
+  // for a specific cluster.
+  rpc GetClusterMetrics(GetClusterMetricsRequest) returns (GetClusterMetricsResponse);
+
+  // QueryTimeSeries executes an arbitrary time series query across fleet metrics.
+  rpc QueryTimeSeries(TimeSeriesQuery) returns (TimeSeriesResponse);
+}
+
+// FleetMetrics provides a high-level overview of fleet health and utilization.
+message FleetMetrics {
+  // Total GPUs across all registered clusters.
+  int32 total_gpus = 1;
+
+  // Number of GPUs currently allocated to inference workloads.
+  int32 allocated_gpus = 2;
+
+  // Number of distinct models currently being served.
+  int32 active_models = 3;
+
+  // Aggregate throughput across the fleet in tokens per second.
+  double total_throughput = 4;
+
+  // Average time to first token across all models in milliseconds.
+  double avg_ttft_ms = 5;
+
+  // Total number of active clusters.
+  int32 active_clusters = 6;
+
+  // Total requests per second across the fleet.
+  double total_requests_per_second = 7;
+
+  // Fleet-wide error rate (0.0-1.0).
+  double error_rate = 8;
+
+  // When these metrics were collected.
+  google.protobuf.Timestamp observed_at = 9;
+}
+
+// ModelClusterMetrics captures per-cluster metrics for a specific model.
+message ModelClusterMetrics {
+  // Cluster serving this model.
+  string cluster_id = 1;
+
+  // Number of replicas on this cluster.
+  int32 replicas = 2;
+
+  // Throughput on this cluster in tokens per second.
+  double throughput = 3;
+
+  // Time to first token p50 in milliseconds.
+  double ttft_p50_ms = 4;
+
+  // Time to first token p99 in milliseconds.
+  double ttft_p99_ms = 5;
+
+  // GPU utilization on this cluster (0.0-1.0).
+  double gpu_utilization = 6;
+}
+
+// ModelMetrics provides performance metrics for a model across the fleet.
+message ModelMetrics {
+  // Model identifier.
+  string model = 1;
+
+  // Clusters currently serving this model.
+  repeated string clusters = 2;
+
+  // Per-cluster metrics breakdown.
+  repeated ModelClusterMetrics cluster_metrics = 3;
+
+  // Aggregate throughput across all clusters in tokens per second.
+  double throughput = 4;
+
+  // Time to first token p50 in milliseconds.
+  double ttft_p50_ms = 5;
+
+  // Time to first token p95 in milliseconds.
+  double ttft_p95_ms = 6;
+
+  // Time to first token p99 in milliseconds.
+  double ttft_p99_ms = 7;
+
+  // KV cache hit rate across the fleet (0.0-1.0).
+  double cache_hit_rate = 8;
+
+  // Total active replicas across all clusters.
+  int32 total_replicas = 9;
+
+  // Requests per second for this model.
+  double requests_per_second = 10;
+
+  // When these metrics were collected.
+  google.protobuf.Timestamp observed_at = 11;
+}
+
+// TenantMetrics provides usage and performance metrics for a tenant.
+message TenantMetrics {
+  // Tenant identifier.
+  string tenant_id = 1;
+
+  // Tokens consumed in the current period.
+  int64 tokens_consumed = 2;
+
+  // Requests made in the current period.
+  int64 requests = 3;
+
+  // Average latency in milliseconds.
+  double avg_latency_ms = 4;
+
+  // Error rate for this tenant (0.0-1.0).
+  double error_rate = 5;
+
+  // Quota utilization as a fraction (0.0-1.0).
+  double quota_utilization = 6;
+
+  // Active models being used by this tenant.
+  repeated string active_models = 7;
+
+  // When these metrics were collected.
+  google.protobuf.Timestamp observed_at = 8;
+}
+
+// ClusterMetrics provides resource utilization for a specific cluster.
+message ClusterMetrics {
+  // Cluster identifier.
+  string cluster_id = 1;
+
+  // GPU utilization (0.0-1.0).
+  double gpu_utilization = 2;
+
+  // GPU memory utilization (0.0-1.0).
+  double gpu_memory_utilization = 3;
+
+  // Number of GPUs allocated.
+  int32 gpus_allocated = 4;
+
+  // Total number of GPUs.
+  int32 gpus_total = 5;
+
+  // Aggregate throughput in tokens per second.
+  double throughput = 6;
+
+  // Active inference requests.
+  int64 active_requests = 7;
+
+  // Models currently served on this cluster.
+  repeated string models = 8;
+
+  // Network bandwidth utilization (0.0-1.0).
+  double network_utilization = 9;
+
+  // When these metrics were collected.
+  google.protobuf.Timestamp observed_at = 10;
+}
+
+// TimeSeriesQuery defines a query for historical metrics data.
+message TimeSeriesQuery {
+  // Metric name to query (e.g., "fleet.throughput", "model.ttft_p99").
+  string metric = 1;
+
+  // Start of the query time range.
+  google.protobuf.Timestamp start_time = 2;
+
+  // End of the query time range.
+  google.protobuf.Timestamp end_time = 3;
+
+  // Aggregation interval in seconds.
+  int32 step_seconds = 4;
+
+  // Label filters to apply (e.g., {"cluster": "us-east-1", "model": "llama-70b"}).
+  map<string, string> labels = 5;
+
+  // Aggregation function to apply.
+  AggregationFunction aggregation = 6;
+}
+
+// AggregationFunction defines how time series data points are aggregated.
+enum AggregationFunction {
+  // Default value; no aggregation.
+  AGGREGATION_FUNCTION_UNSPECIFIED = 0;
+
+  // Average of values in each step.
+  AGGREGATION_FUNCTION_AVG = 1;
+
+  // Sum of values in each step.
+  AGGREGATION_FUNCTION_SUM = 2;
+
+  // Minimum value in each step.
+  AGGREGATION_FUNCTION_MIN = 3;
+
+  // Maximum value in each step.
+  AGGREGATION_FUNCTION_MAX = 4;
+
+  // Count of values in each step.
+  AGGREGATION_FUNCTION_COUNT = 5;
+
+  // Specified percentile of values.
+  AGGREGATION_FUNCTION_PERCENTILE = 6;
+}
+
+// TimeSeriesDataPoint represents a single data point in a time series.
+message TimeSeriesDataPoint {
+  // Timestamp of this data point.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Value at this timestamp.
+  double value = 2;
+}
+
+// TimeSeriesResponse returns the results of a time series query.
+message TimeSeriesResponse {
+  // The metric that was queried.
+  string metric = 1;
+
+  // The data points in chronological order.
+  repeated TimeSeriesDataPoint data_points = 2;
+
+  // Labels that identify this time series.
+  map<string, string> labels = 3;
+
+  // Start of the returned time range.
+  google.protobuf.Timestamp start_time = 4;
+
+  // End of the returned time range.
+  google.protobuf.Timestamp end_time = 5;
+
+  // Aggregation interval used.
+  int32 step_seconds = 6;
+}
+
+// GetFleetMetricsRequest queries aggregate fleet metrics.
+message GetFleetMetricsRequest {
+  // Optional: only include metrics from clusters with these labels.
+  map<string, string> label_selector = 1;
+}
+
+// GetFleetMetricsResponse returns fleet-wide metrics.
+message GetFleetMetricsResponse {
+  // The fleet metrics.
+  FleetMetrics metrics = 1;
+}
+
+// GetModelMetricsRequest queries metrics for a specific model.
+message GetModelMetricsRequest {
+  // Model identifier to query metrics for.
+  string model = 1;
+
+  // If true, include per-cluster breakdowns.
+  bool include_cluster_metrics = 2;
+}
+
+// GetModelMetricsResponse returns model metrics.
+message GetModelMetricsResponse {
+  // The model metrics.
+  ModelMetrics metrics = 1;
+}
+
+// GetTenantMetricsRequest queries metrics for a specific tenant.
+message GetTenantMetricsRequest {
+  // Tenant ID to query metrics for.
+  string tenant_id = 1;
+}
+
+// GetTenantMetricsResponse returns tenant metrics.
+message GetTenantMetricsResponse {
+  // The tenant metrics.
+  TenantMetrics metrics = 1;
+}
+
+// GetClusterMetricsRequest queries metrics for a specific cluster.
+message GetClusterMetricsRequest {
+  // Cluster ID to query metrics for.
+  string cluster_id = 1;
+}
+
+// GetClusterMetricsResponse returns cluster metrics.
+message GetClusterMetricsResponse {
+  // The cluster metrics.
+  ClusterMetrics metrics = 1;
+}

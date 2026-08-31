@@ -1,0 +1,93 @@
+# Semantic classification workload profile for fleet-llm-d benchmarks.
+# Validates llm-d-semantic-classifier accuracy and latency with
+# fleet-specific prompts across complexity tiers.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: semantic-classification
+  labels:
+    workload-type: classification
+    latency-class: low
+spec:
+  description: >-
+    Tests llm-d-semantic-classifier accuracy and latency across
+    fleet-specific prompt categories. Prompts span cluster management,
+    model deployment, inference routing, capacity planning, and incident
+    response — the operational domains where semantic routing drives
+    model tier selection.
+
+  classifier:
+    type: complexity
+    taxonomy: scr-default-anchors-v1
+    labels: [SIMPLE, MEDIUM, COMPLEX, REASONING]
+
+  prompt_categories:
+    - label: SIMPLE
+      description: >-
+        Factual lookups, single-fact answers, CLI usage, parameter values.
+        Should route to small/cheap models (2B-8B).
+      count: 8
+      examples:
+        - "What is Kubernetes?"
+        - "List all pods in a namespace"
+        - "What port does etcd use?"
+        - "What is the default service type in Kubernetes?"
+        - "What is a ConfigMap?"
+        - "What does kubectl get nodes show?"
+        - "How many CPUs does an H100 have?"
+        - "What is the capital of France?"
+
+    - label: MEDIUM
+      description: >-
+        Explanations, comparisons, how-to guides, conceptual questions.
+        Needs a mid-range model (8B-30B) for nuance.
+      count: 7
+      examples:
+        - "Explain the difference between vLLM and OVMS for CPU inference"
+        - "How does KV cache affinity routing work in fleet-llm-d?"
+        - "Compare StatefulSet vs Deployment for model serving"
+        - "What are the tradeoffs between round-robin and weighted routing?"
+        - "How do you configure a NetworkPolicy to allow only specific pod traffic?"
+        - "Explain how OpenShift Routes differ from Kubernetes Ingress"
+        - "What is the difference between horizontal and vertical pod autoscaling?"
+
+    - label: COMPLEX
+      description: >-
+        Multi-step design, architecture, strategy questions. Requires
+        large model (70B+) for coherent multi-factor reasoning.
+      count: 5
+      examples:
+        - "Design a multi-tenant inference routing policy with cost optimization and data sovereignty constraints"
+        - "Architect a fleet-wide model placement strategy that balances GPU utilization across 5 clusters"
+        - "Design a cache eviction strategy for KV cache transfers during live migration"
+        - "Create a comprehensive monitoring and alerting strategy for a multi-cluster LLM fleet"
+        - "Design a rollback mechanism for model deployments that handles in-flight requests"
+
+    - label: REASONING
+      description: >-
+        Proofs, multi-step diagnosis, derivations, failure analysis.
+        Needs the most capable model available for logical deduction.
+      count: 6
+      examples:
+        - "Diagnose why fleet p99 latency spikes to 5s during rolling updates with round-robin routing"
+        - "Prove that round-robin routing is suboptimal for mixed-complexity workloads"
+        - "Derive the optimal cluster allocation for 500 RPS within a $50k/month budget"
+        - "Analyze failure modes when a controller loses connectivity to 2 of 3 clusters"
+        - "Prove by induction that the sum of the first n odd numbers is n squared"
+        - "Derive weighted routing that minimizes p99 across heterogeneous GPU and CPU clusters"
+
+  traffic:
+    target_qps: 100
+    concurrency: 32
+    arrival_pattern: constant
+    duration: 300s
+    warmup: 10s
+
+  slo:
+    classification_accuracy: 0.95
+    cache_miss_p50_ms: 20
+    cache_miss_p99_ms: 25
+    cache_hit_p50_ms: 0.1
+    cache_hit_p99_ms: 1.0
+    throughput_rps_min: 100
+    error_rate_max: 0.001

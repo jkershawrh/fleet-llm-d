@@ -1,0 +1,344 @@
+package controller
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+
+	v1alpha1 "github.com/llm-d/fleet-llm-d/pkg/apis/fleet/v1alpha1"
+	"github.com/llm-d/fleet-llm-d/pkg/placement/solver"
+)
+
+// FleetPoolState tracks the reconciled state of a single fleet inference pool.
+type FleetPoolState struct {
+	Name             string
+	Model            string
+	Source           string
+	TargetPorts      []int
+	DesiredClusters  []string
+	ActualClusters   []string
+	Phase            v1alpha1.FleetPhase
+	LastReconciled   time.Time
+	ScalingPolicyRef string
+}
+
+// Reconciler drives the reconciliation loop for fleet inference pools.
+type Reconciler struct {
+	mu        sync.RWMutex
+	pools     map[string]*FleetPoolState
+	solver    solver.ConstraintSolver
+	namespace string                                                  // configured namespace; WatchEndpoint rejects events outside this namespace
+	clusters  func(ctx context.Context) ([]solver.ClusterInfo, error) // function to list available clusters
+	policies  func(ctx context.Context, ref string) (v1alpha1.PlacementPolicySpec, error)
+	observe   func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) ([]string, error)
+	actuate   func(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec, desired []string) error
+	onChange  func(pool *FleetPoolState) // callback when state changes
+}
+
+// NewReconciler creates a Reconciler with the given constraint solver and
+// cluster listing function.
+func NewReconciler(s solver.ConstraintSolver, clusterLister func(ctx context.Context) ([]solver.ClusterInfo, error)) *Reconciler {
+	return &Reconciler{
+		pools:    make(map[string]*FleetPoolState),
+		solver:   s,
+		clusters: clusterLister,
+		policies: func(context.Context, string) (v1alpha1.PlacementPolicySpec, error) {
+			return v1alpha1.PlacementPolicySpec{}, nil
+		},
+		observe: func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) ([]string, error) {
+			return nil, nil
+		},
+		actuate: func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) error { return nil },
+	}
+}
+
+// SetServingActuator configures the product-specific serving-resource writer.
+// The placement solver remains authoritative for the target cluster set.
+func (r *Reconciler) SetServingActuator(fn func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.actuate = fn
+}
+
+// SetClusterLister replaces the cluster observation source. It is used when
+// production persistence is wired after controller construction.
+func (r *Reconciler) SetClusterLister(fn func(context.Context) ([]solver.ClusterInfo, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clusters = fn
+}
+
+// SetPlacementPolicyResolver configures authoritative policy resolution.
+func (r *Reconciler) SetPlacementPolicyResolver(fn func(context.Context, string) (v1alpha1.PlacementPolicySpec, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.policies = fn
+}
+
+// SetActualClusterObserver configures provider observation. Desired placement
+// is never treated as actual capacity when no observer is configured.
+func (r *Reconciler) SetActualClusterObserver(fn func(context.Context, v1alpha1.FleetInferencePoolSpec, []string) ([]string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.observe = fn
+}
+
+// SetNamespace configures the namespace that WatchEndpoint enforces. Events
+// targeting a different namespace are rejected with 403 Forbidden.
+func (r *Reconciler) SetNamespace(ns string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.namespace = ns
+}
+
+// Namespace returns the configured namespace.
+func (r *Reconciler) Namespace() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.namespace == "" {
+		return "default"
+	}
+	return r.namespace
+}
+
+// SetOnChange registers a callback that is invoked whenever a pool's state
+// changes during reconciliation.
+func (r *Reconciler) SetOnChange(fn func(pool *FleetPoolState)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onChange = fn
+}
+
+// ReconcilePool reconciles the desired state described by pool against the
+// available clusters. It updates the internal pool state and transitions the
+// phase to Running (or Failed on error).
+//
+// Network calls (cluster listing) and the onChange callback are performed
+// outside the lock so that readers (ListPools, GetPoolState) are never blocked
+// by slow I/O.
+func (r *Reconciler) ReconcilePool(ctx context.Context, pool v1alpha1.FleetInferencePoolSpec) error {
+	name := pool.Model.Name
+
+	// 1. Fetch clusters OUTSIDE the lock (potentially slow network call).
+	r.mu.RLock()
+	clusterLister := r.clusters
+	policyResolver := r.policies
+	actualObserver := r.observe
+	servingActuator := r.actuate
+	r.mu.RUnlock()
+
+	clusters, err := clusterLister(ctx)
+	if err != nil {
+		r.mu.Lock()
+		if state, exists := r.pools[name]; exists {
+			state.Phase = v1alpha1.FleetPhaseFailed
+		}
+		r.mu.Unlock()
+		return fmt.Errorf("listing clusters: %w", err)
+	}
+
+	// 2. Run solver (CPU-only, no I/O).
+	policy, err := policyResolver(ctx, pool.Placement.PolicyRef.Name)
+	if err != nil {
+		return fmt.Errorf("resolving placement policy %q: %w", pool.Placement.PolicyRef.Name, err)
+	}
+	decisions, err := r.solver.Solve(ctx, pool, clusters, policy)
+	if err != nil {
+		r.mu.Lock()
+		if state, exists := r.pools[name]; exists {
+			state.Phase = v1alpha1.FleetPhaseFailed
+		}
+		r.mu.Unlock()
+		return fmt.Errorf("solving placement: %w", err)
+	}
+
+	desired := make([]string, 0, len(decisions))
+	for _, d := range decisions {
+		desired = append(desired, d.ClusterID)
+	}
+	actuateErr := servingActuator(ctx, pool, desired)
+	actual, observeErr := actualObserver(ctx, pool, desired)
+	if actuateErr != nil {
+		observeErr = actuateErr
+	}
+
+	// 3. Acquire lock for state mutation only.
+	r.mu.Lock()
+	state, exists := r.pools[name]
+	if !exists {
+		state = &FleetPoolState{
+			Name:   name,
+			Model:  pool.Model.Name,
+			Source: pool.Model.Source,
+		}
+		r.pools[name] = state
+	}
+
+	state.Phase = phaseForObservation(desired, actual, pool.Placement.MinClusters, observeErr)
+	state.TargetPorts = append([]int(nil), pool.Serving.InferencePoolTemplate.Spec.TargetPorts...)
+	state.DesiredClusters = desired
+	state.ActualClusters = append([]string(nil), actual...)
+	state.LastReconciled = time.Now()
+	state.ScalingPolicyRef = pool.Scaling.PolicyRef.Name
+
+	// Copy state and onChange ref for use outside the lock.
+	stateCopy := *state
+	stateCopy.TargetPorts = append([]int(nil), state.TargetPorts...)
+	stateCopy.DesiredClusters = make([]string, len(state.DesiredClusters))
+	copy(stateCopy.DesiredClusters, state.DesiredClusters)
+	stateCopy.ActualClusters = make([]string, len(state.ActualClusters))
+	copy(stateCopy.ActualClusters, state.ActualClusters)
+	onChange := r.onChange
+	r.mu.Unlock()
+
+	// 4. Invoke onChange OUTSIDE the lock.
+	if onChange != nil {
+		onChange(&stateCopy)
+	}
+
+	return nil
+}
+
+func phaseForObservation(desired, actual []string, minClusters int, observeErr error) v1alpha1.FleetPhase {
+	if observeErr != nil {
+		return v1alpha1.FleetPhaseDegraded
+	}
+	if len(desired) == 0 {
+		return v1alpha1.FleetPhaseFailed
+	}
+	if minClusters <= 0 {
+		minClusters = 1
+	}
+	actualSet := make(map[string]struct{}, len(actual))
+	for _, cluster := range actual {
+		actualSet[cluster] = struct{}{}
+	}
+	allDesiredObserved := true
+	for _, cluster := range desired {
+		if _, ok := actualSet[cluster]; !ok {
+			allDesiredObserved = false
+			break
+		}
+	}
+	if allDesiredObserved && len(actual) >= minClusters {
+		return v1alpha1.FleetPhaseRunning
+	}
+	if len(actual) > 0 {
+		return v1alpha1.FleetPhaseDegraded
+	}
+	return v1alpha1.FleetPhasePlacing
+}
+
+// DeletePool removes the named pool from the reconciler's state. It returns
+// an error if the pool does not exist.
+func (r *Reconciler) DeletePool(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.pools[name]; !ok {
+		return fmt.Errorf("pool %q not found", name)
+	}
+	delete(r.pools, name)
+	return nil
+}
+
+// GetPoolState returns a copy of the current state for the named pool.
+// It returns an error if the pool does not exist.
+func (r *Reconciler) GetPoolState(name string) (*FleetPoolState, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	state, ok := r.pools[name]
+	if !ok {
+		return nil, fmt.Errorf("pool %q not found", name)
+	}
+	// Return a copy to avoid data races.
+	cp := *state
+	cp.TargetPorts = append([]int(nil), state.TargetPorts...)
+	cp.DesiredClusters = make([]string, len(state.DesiredClusters))
+	copy(cp.DesiredClusters, state.DesiredClusters)
+	cp.ActualClusters = make([]string, len(state.ActualClusters))
+	copy(cp.ActualClusters, state.ActualClusters)
+	return &cp, nil
+}
+
+// ListPools returns a snapshot of all pool states. The returned values are
+// copies, not pointers, so they are safe to use without holding the lock.
+func (r *Reconciler) ListPools() []FleetPoolState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	pools := make([]FleetPoolState, 0, len(r.pools))
+	for _, state := range r.pools {
+		cp := *state
+		cp.TargetPorts = append([]int(nil), state.TargetPorts...)
+		cp.DesiredClusters = make([]string, len(state.DesiredClusters))
+		copy(cp.DesiredClusters, state.DesiredClusters)
+		cp.ActualClusters = make([]string, len(state.ActualClusters))
+		copy(cp.ActualClusters, state.ActualClusters)
+		pools = append(pools, cp)
+	}
+	return pools
+}
+
+// watchEvent is the JSON structure expected by the WatchEndpoint handler.
+type watchEvent struct {
+	Type      string                          `json:"type"`
+	Namespace string                          `json:"namespace,omitempty"`
+	Object    v1alpha1.FleetInferencePoolSpec `json:"object"`
+}
+
+// WatchEndpoint returns an http.HandlerFunc that accepts POST requests
+// containing watch events and reconciles them accordingly. When a namespace
+// is configured via SetNamespace, events targeting a different namespace are
+// rejected with 403 Forbidden.
+func (r *Reconciler) WatchEndpoint() http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var event watchEvent
+		if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
+			http.Error(w, fmt.Sprintf("bad request: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Namespace guard: reject events that target a namespace other than
+		// the configured one. This prevents cross-namespace reconciliation
+		// when the controller is scoped to a single namespace.
+		r.mu.RLock()
+		configuredNS := r.namespace
+		r.mu.RUnlock()
+		if configuredNS != "" && event.Namespace != "" && event.Namespace != configuredNS {
+			slog.Warn("watch event rejected: namespace mismatch", "event_namespace", event.Namespace, "configured_namespace", configuredNS)
+			http.Error(w, fmt.Sprintf("forbidden: namespace %q is not allowed (configured: %q)", event.Namespace, configuredNS), http.StatusForbidden)
+			return
+		}
+
+		slog.Info("watch event", "type", event.Type, "model", event.Object.Model.Name)
+
+		switch event.Type {
+		case "ADDED", "MODIFIED":
+			if err := r.ReconcilePool(req.Context(), event.Object); err != nil {
+				http.Error(w, fmt.Sprintf("reconcile error: %v", err), http.StatusInternalServerError)
+				return
+			}
+		case "DELETED":
+			if err := r.DeletePool(req.Context(), event.Object.Model.Name); err != nil {
+				http.Error(w, fmt.Sprintf("delete error: %v", err), http.StatusInternalServerError)
+				return
+			}
+		default:
+			http.Error(w, fmt.Sprintf("unknown event type: %s", event.Type), http.StatusBadRequest)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}

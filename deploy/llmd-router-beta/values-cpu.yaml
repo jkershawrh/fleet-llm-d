@@ -1,0 +1,96 @@
+router:
+  inferencePool:
+    create: false
+  proxy:
+    enabled: false
+  epp:
+    replicas: 2
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main@sha256:b1eb81f01ea9b56271f0fd536380454d0d82bc03bc59dab7197764da11ffa2ff
+      pullPolicy: IfNotPresent
+    flags:
+      allow-experimental-plugins: true
+      v: 2
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  llm-d-router-standalone: fleet-router-cpu-epp
+    pluginsConfigFile: multicluster.yaml
+    pluginsCustomConfig:
+      multicluster.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          - type: multicluster-file-discovery
+            name: discovery
+            parameters:
+              path: /var/run/fleet-router/endpoints-454939048c1d.json
+              watchFile: true
+          - type: multicluster-metrics-data-source
+            name: grid-signals
+            parameters:
+              scheme: https
+              path: /metrics
+              interval: 5s
+              insecureSkipVerify: false
+              caCertPath: /var/run/grid-signals/ca/ca.crt
+              clientCertPath: /var/run/grid-signals/client/tls.crt
+              clientKeyPath: /var/run/grid-signals/client/tls.key
+          - type: openai-parser
+          - type: random-picker
+        dataLayer:
+          discovery:
+            endpoints:
+              pluginRef: discovery
+          sources:
+            - pluginRef: grid-signals
+        requestHandler:
+          parsers:
+            - pluginRef: openai-parser
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: random-picker
+    volumes:
+      - name: fleet-router-endpoints
+        emptyDir: {}
+      - name: grid-signals-route-ca
+        secret:
+          secretName: grid-signals-route-ca
+      - name: grid-signals-epp-client
+        secret:
+          secretName: grid-signals-epp-client
+    volumeMounts:
+      - name: fleet-router-endpoints
+        mountPath: /var/run/fleet-router
+        readOnly: true
+      - name: grid-signals-route-ca
+        mountPath: /var/run/grid-signals/ca
+        readOnly: true
+      - name: grid-signals-epp-client
+        mountPath: /var/run/grid-signals/client
+        readOnly: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  modelServers:
+    type: vllm
+    protocol: http
+    matchLabels:
+      fleet.llm-d.ai/shadow-router: never
+    targetPorts:
+      - number: 443
+  monitoring:
+    prometheus:
+      enabled: false

@@ -1,0 +1,205 @@
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: gpu-required
+  namespace: fleet-llm-d
+spec:
+  constraints:
+    - type: hardware
+      rule: "nvidia.com/gpu >= 1"
+  affinity:
+    - type: gpuUtilization
+      weight: 0.8
+    - type: costEfficiency
+      weight: 0.2
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: cpu-amx
+  namespace: fleet-llm-d
+spec:
+  constraints:
+    - type: hardware
+      rule: "cpu in ['intel-amx']"
+  affinity:
+    - type: costEfficiency
+      weight: 0.6
+    - type: dataLocality
+      weight: 0.4
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: PlacementPolicy
+metadata:
+  name: any-available
+  namespace: fleet-llm-d
+spec:
+  constraints: []
+  affinity:
+    - type: networkProximity
+      weight: 1.0
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetRoutingPolicy
+metadata:
+  name: latency-sensitive
+  namespace: fleet-llm-d
+spec:
+  strategy: weighted
+  rules:
+    - match:
+        headers:
+          x-llm-d-inference-objective: "realtime"
+      action:
+        preferLocal: true
+        maxLatencyMs: 200
+        preferClusters:
+          - gpucluster-h100
+    - match:
+        headers:
+          x-llm-d-inference-objective: "batch"
+      action:
+        preferCheapest: true
+        preferClusters:
+          - cpucluster-xeon6
+          - hubcluster-sno
+  healthCheck:
+    interval: "10s"
+    unhealthyThreshold: 3
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetRoutingPolicy
+metadata:
+  name: round-robin
+  namespace: fleet-llm-d
+spec:
+  strategy: weighted
+  rules:
+    - match: {}
+      action:
+        preferLocal: false
+  healthCheck:
+    interval: "10s"
+    unhealthyThreshold: 3
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: TenantProfile
+metadata:
+  name: gold-gate-tenant
+  namespace: fleet-llm-d
+spec:
+  quotas:
+    maxTokensPerMinute: 100000
+    maxConcurrentRequests: 10
+    maxModels: 5
+    gpuBudget:
+      maxGPUs: 1
+  rateLimit:
+    requestsPerSecond: 10
+    burstSize: 20
+  clusters:
+    allowed:
+      - hubcluster-sno
+      - cpucluster-xeon6
+      - gpucluster-h100
+  priority: 100
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetInferencePool
+metadata:
+  name: granite-2b-hubcluster-cpu
+  namespace: fleet-llm-d
+spec:
+  model:
+    name: granite-2b-cpu
+    source: local
+  placement:
+    policyRef:
+      name: cpu-amx
+    clusters:
+      - hubcluster-sno
+  routing:
+    policyRef:
+      name: round-robin
+  serving:
+    inferencePoolTemplate:
+      spec:
+        targetPorts:
+          - 8080
+        endpointPickerRef:
+          name: fleet-controller
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetInferencePool
+metadata:
+  name: granite-2b-cpucluster-cpu
+  namespace: fleet-llm-d
+spec:
+  model:
+    name: granite-2b-cpu
+    source: local
+  placement:
+    policyRef:
+      name: cpu-amx
+    clusters:
+      - cpucluster-xeon6
+  routing:
+    policyRef:
+      name: round-robin
+  serving:
+    inferencePoolTemplate:
+      spec:
+        targetPorts:
+          - 8080
+        endpointPickerRef:
+          name: fleet-controller
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: FleetInferencePool
+metadata:
+  name: granite-8b-gpucluster-gpu
+  namespace: fleet-llm-d
+spec:
+  model:
+    name: ibm-granite/granite-3.1-8b-instruct
+    source: huggingface
+  placement:
+    policyRef:
+      name: gpu-required
+    clusters:
+      - gpucluster-h100
+  routing:
+    policyRef:
+      name: latency-sensitive
+  serving:
+    inferencePoolTemplate:
+      spec:
+        targetPorts:
+          - 8000
+        endpointPickerRef:
+          name: fleet-controller
+---
+apiVersion: fleet.llm-d.ai/v1alpha1
+kind: ModelLifecycle
+metadata:
+  name: granite-fleet-rollout
+  namespace: fleet-llm-d
+spec:
+  model:
+    name: granite-2b-cpu
+    version: "1.0"
+  strategy:
+    type: canary
+    canary:
+      steps:
+        - weight: 10
+          pause: "5m"
+        - weight: 50
+          pause: "10m"
+        - weight: 100
+  clusters:
+    allowed:
+      - hubcluster-sno
+      - cpucluster-xeon6
+  fleetPoolRef:
+    name: granite-2b-hubcluster-cpu

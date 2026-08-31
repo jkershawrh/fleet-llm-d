@@ -1,0 +1,189 @@
+package signals
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// PrometheusStore converts cluster-local llm-d EPP metrics into the small,
+// pool-scoped Grid Signals contract. Source labels are deliberately discarded
+// so pod, container, instance, and rank identities cannot cross the boundary.
+type PrometheusStore struct {
+	Endpoint         string
+	HTTP             *http.Client
+	MaxResponseBytes int64
+	Now              func() time.Time
+}
+
+// ProviderStore combines an optional metrics scrape with an active provider
+// health probe. A successful probe publishes one ready provider even when the
+// model server does not expose llm-d EPP metrics. It never fabricates queue,
+// KV, or saturation values.
+type ProviderStore struct {
+	Metrics   *PrometheusStore
+	HealthURL string
+	HTTP      *http.Client
+	Now       func() time.Time
+}
+
+func (s *ProviderStore) Samples(ctx context.Context) ([]Sample, error) {
+	var samples []Sample
+	var metricsErr error
+	if s.Metrics != nil && strings.TrimSpace(s.Metrics.Endpoint) != "" {
+		samples, metricsErr = s.Metrics.Samples(ctx)
+	}
+	if strings.TrimSpace(s.HealthURL) == "" {
+		return samples, metricsErr
+	}
+	client := s.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	// #nosec G704 -- HealthURL is operator-supplied provider configuration and
+	// is never populated from an inference request.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.HealthURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G704 -- req targets the trusted provider health URL above.
+	resp, probeErr := client.Do(req)
+	ready := 0.0
+	if probeErr == nil {
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+			ready = 1
+		}
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	filtered := samples[:0]
+	for _, sample := range samples {
+		if sample.Name != "llm_d_epp_ready_endpoints" {
+			filtered = append(filtered, sample)
+		}
+	}
+	return append(filtered, Sample{Name: "llm_d_epp_ready_endpoints", Value: ready, CollectedAt: now}), nil
+}
+
+type signalAccumulator struct {
+	priority int
+	values   []float64
+	agg      string
+}
+
+type signalMapping struct {
+	output   string
+	priority int
+	agg      string
+}
+
+var gridSignalMappings = map[string]signalMapping{
+	"llm_d_epp_average_queue_size":                {"llm_d_epp_average_queue_size", 2, "max"},
+	"llm_d_epp_flow_control_queue_size":           {"llm_d_epp_average_queue_size", 2, "sum"},
+	"llm_d_epp_per_endpoint_queue_size":           {"llm_d_epp_average_queue_size", 1, "average"},
+	"llm_d_epp_average_kv_cache_utilization":      {"llm_d_epp_average_kv_cache_utilization", 2, "average"},
+	"llm_d_epp_per_endpoint_kv_cache_utilization": {"llm_d_epp_average_kv_cache_utilization", 1, "average"},
+	"llm_d_epp_ready_endpoints":                   {"llm_d_epp_ready_endpoints", 2, "max"},
+	"llm_d_epp_flow_control_pool_saturation":      {"llm_d_epp_flow_control_pool_saturation", 2, "max"},
+}
+
+func (s *PrometheusStore) Samples(ctx context.Context) ([]Sample, error) {
+	if strings.TrimSpace(s.Endpoint) == "" {
+		return nil, fmt.Errorf("Prometheus endpoint is required")
+	}
+	client := s.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	// #nosec G704 -- Endpoint is an operator-supplied, cluster-local metrics
+	// endpoint and is not derived from caller input.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G704 -- req targets the trusted metrics endpoint above.
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("scrape local EPP metrics: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("local EPP metrics returned %d", resp.StatusCode)
+	}
+	limit := s.MaxResponseBytes
+	if limit <= 0 {
+		limit = DefaultMaxResponseBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("local EPP metrics exceed %d bytes", limit)
+	}
+
+	accumulators := map[string]signalAccumulator{}
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		name := strings.SplitN(fields[0], "{", 2)[0]
+		mapping, ok := gridSignalMappings[name]
+		if !ok {
+			continue
+		}
+		value, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		current := accumulators[mapping.output]
+		if mapping.priority < current.priority {
+			continue
+		}
+		if mapping.priority > current.priority {
+			current = signalAccumulator{priority: mapping.priority, agg: mapping.agg}
+		}
+		current.values = append(current.values, value)
+		accumulators[mapping.output] = current
+	}
+
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	result := make([]Sample, 0, len(accumulators))
+	for name, accumulator := range accumulators {
+		result = append(result, Sample{Name: name, Value: aggregateValues(accumulator.values, accumulator.agg), CollectedAt: now})
+	}
+	return result, nil
+}
+
+func aggregateValues(values []float64, operation string) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	value := values[0]
+	if operation == "max" {
+		for _, candidate := range values[1:] {
+			value = math.Max(value, candidate)
+		}
+		return value
+	}
+	for _, candidate := range values[1:] {
+		value += candidate
+	}
+	if operation == "average" {
+		value /= float64(len(values))
+	}
+	return value
+}

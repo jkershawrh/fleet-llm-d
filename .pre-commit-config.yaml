@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: ['--branch', 'main']
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: public-repository-boundary
+        name: Enforce OSS and private-production boundary
+        entry: bash hack/check-public-boundary.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: no-internal-refs
+        name: Block internal infrastructure references
+        entry: >-
+          bash -c 'if grep -n -i -E
+          "(fm2aihpcsed|racmaas|jkershaw@redhat|redhat-gpte|maas-rhdp|redhatworkshops\.io|oberon|arena|brutus)"
+          "$@" 2>/dev/null; then echo ""; echo "ERROR: Internal infrastructure
+          references detected. Remove before committing."; exit 1; fi' --
+        language: system
+        types: [file]
+        pass_filenames: true
+        # The hook evaluates staged files. Existing historical environment
+        # material must not exempt new or modified files from this guard.
+        exclude: >-
+          ^(\.gitignore|\.pre-commit-config\.yaml|hack/(verify-oss-release|check-public-boundary)\.sh)$

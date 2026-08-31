@@ -1,0 +1,71 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gridsites.grid.praxis-proxy.io
+spec:
+  group: grid.praxis-proxy.io
+  names:
+    kind: GridSite
+    listKind: GridSiteList
+    plural: gridsites
+    singular: gridsite
+    shortNames: [gs]
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Network
+          type: string
+          jsonPath: .spec.gridNetworkRef
+        - name: Region
+          type: string
+          jsonPath: .spec.region
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [gridNetworkRef]
+              properties:
+                gridNetworkRef:
+                  type: string
+                region:
+                  type: string
+                zone:
+                  type: string
+                sovereigntyZone:
+                  type: string
+                egress:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                    tls:
+                      type: object
+                      properties:
+                        mode:
+                          type: string
+                          enum: [Mutual, Simple, Passthrough]
+                        serverName:
+                          type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Active, Discovered, Connecting, Pending, Unreachable, Left]
+                reason:
+                  type: string
+                message:
+                  type: string

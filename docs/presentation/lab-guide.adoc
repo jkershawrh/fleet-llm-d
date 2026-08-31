@@ -1,0 +1,261 @@
+= fleet-llm-d Hands-On Lab
+Jonathan Kershaw
+:toc: left
+:icons: font
+:source-highlighter: highlight.js
+
+== Overview
+
+This lab walks you through fleet-llm-d's inference orchestration capabilities using the presentation dashboard and CLI tools. You'll deploy a fleet controller, register clusters, serve models, emit intents, and verify ledger chains.
+
+*Duration*: ~45 minutes
+
+*Prerequisites*: Browser, terminal access, optional: OpenShift cluster with fleet-llm-d deployed
+
+== Step 1: Start the Dashboard
+
+[source,bash]
+----
+# Backend
+cd deepfield-fleet
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --port 8000
+
+# Frontend (new terminal)
+cd deepfield-fleet/frontend
+npm install --legacy-peer-deps
+npm run dev
+# Open http://localhost:3000
+----
+
+*Verify*: Dashboard loads with Red Hat × Intel header. Health dot shows green.
+
+== Step 2: Click Through the Presentation (7 slides)
+
+. Open the dashboard — starts in slide mode
+. Click through 7 slides (or use arrow keys)
+. Read the story: GPU cost → fleet-llm-d platform → CPU savings → predictive brain → proof
+. On slide 6, click *Next* to enter the walkthrough
+
+*What to notice*: The "53×" animation on slide 3. The stat boxes on slide 5.
+
+== Step 3: Walk Through the Fleet Story (8 acts)
+
+|===
+| Act | Click | What to Notice
+
+| 1. Cost of Inference
+| —
+| GPU vs CPU bar chart. $32/hr vs $0.60/hr.
+
+| 2. Event Arrives
+| "Load Event Profile"
+| Summit Connect profile: 200 users, 30 min pre-warm, 5 models.
+
+| 3. Fleet Deploys
+| "Check Fleet Health"
+| Architecture diagram with animated data flow. Cluster list. Model list.
+
+| 4. The Platform
+| —
+| 7 CRD cards. Read each description.
+
+| 5. Brain Predicts
+| "Run SLO Forecast" then "Scope Blast Radius"
+| SLO gauge shows forecast crossing target. Blast radius: 200 users, severity 1000.
+
+| 6. The Intent
+| "Emit PreWarm Intent"
+| Intent flow: Predict → Emit → Evaluate → Execute. Note the ledger_entry_id.
+
+| 7. The Proof
+| "Verify Ledger Chains"
+| Test matrix: 360 tests green. 5 ledger chains valid.
+
+| 8. The Return
+| —
+| Replica timeline: 1→2→4. Click "Run at Scale →".
+|===
+
+== Step 4: Watch the Scale Run (5 acts)
+
+. Auto-orchestrated demo runs via SSE streaming
+. Click *Next* between each act to advance
+. Watch the metrics update in real-time
+. Acts: 10× load → 50× load → Stress test (200 users) → Recovery → The Claim
+. The Claim screen shows headline stats
+
+*What to notice*: Pipeline funnel compression. Replica timeline growth during scale. Load shedding activation during stress.
+
+== Step 5: Enter the Bootstrap Lab
+
+. On the Claim screen, click *Try it with your data →*
+. Select a scenario:
+** *Summit Connect Load Test* — fleet evidence with event profile
+** *SLO Breach Prediction* — latency ramp triggering forecast
+** *OpenShift Cluster Health* — 156 signals from pods, events, nodes
+
+== Step 6: Load Fleet Evidence
+
+. Select "Summit Connect Load Test" scenario
+. Click *Load Scenario*
+. Observe: latency metrics, capacity metrics, queue depth, event calendar entries ingested
+
+*What to notice*: Each evidence artifact has a modality (metric, event), source (fleet-metrics, calendar), and features dict with the signal value.
+
+== Step 7: Run Fleet Nanoagents
+
+. Click *Run Nanoagents*
+. Four fleet nanoagents classify the evidence:
+** `slo_drift` — P95/P99 trending toward SLO threshold
+** `capacity_pressure` — CPU utilization approaching saturation
+** `queue_depth` — Inference queue growing beyond capacity
+** `event_calendar` — Scheduled event approaching
+
+*What to notice*: Each classification has severity and confidence. event_calendar fires `pre_warm_needed` with high severity.
+
+== Step 8: Run the SLO Forecaster
+
+. Click *Run SLO Forecast* (or the API: `POST /api/v1/fleet/forecast`)
+. The SLO forecaster runs linear regression on the latency time series
+. Observe the forecast:
+** Current P95
+** Forecast P95 (should exceed SLO target)
+** Breach in N minutes
+** Confidence (R² of the regression)
+
+*What to notice*: The SLO gauge shows current needle (solid) and forecast needle (dashed). When the forecast crosses the target line, status changes to `breach_predicted`.
+
+== Step 9: Emit an Intent
+
+Send a PreWarmIntent to fleet-llm-d:
+
+[source,bash]
+----
+# Via the dashboard: click "Emit PreWarm Intent"
+
+# Or via curl:
+curl -X POST http://localhost:8000/api/v1/fleet/emit-intent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intent_type": "pre_warm",
+    "model": "granite-4.1-3b",
+    "target_replicas": 4,
+    "confidence": 0.85,
+    "justification": "Summit Connect event in 22 minutes, SLO breach predicted"
+  }'
+----
+
+*Expected response*:
+[source,json]
+----
+{
+  "intent_id": "...",
+  "status": "executed",
+  "reason": "Intent executed successfully",
+  "ledger_entry_id": "entry-..."
+}
+----
+
+Try different scenarios:
+
+|===
+| Scenario | Expected
+
+| `confidence: 0.3`
+| `status: deferred` — below threshold
+
+| `target_replicas: 20`
+| `status: refused` — exceeds max 8
+
+| `intent_type: alert`, severity critical
+| `status: deferred` — requires human approval
+|===
+
+== Step 10: Verify the Ledger Chain
+
+[source,bash]
+----
+# Via dashboard: click "Verify Ledger Chains"
+
+# Or via curl:
+curl -X POST http://localhost:8000/api/v1/fleet/verify-chain
+----
+
+*Expected*: 5 chains (placement, scaling, routing, lifecycle, tenant), all valid, with entry counts and latest hash.
+
+*What to notice*: Each chain type is color-coded. SHA-256 hashes link entries together. Tamper with one entry, the chain breaks.
+
+== Advanced Lab: With Live fleet-llm-d
+
+If you have a fleet-llm-d instance running (dev-cluster-1, prod-cluster-1, or local):
+
+=== Deploy fleet-controller via Helm
+
+[source,bash]
+----
+helm install fleet-llm-d charts/fleet-llm-d/ \
+  --set mode=all \
+  --set auth.enabled=true \
+  --set auth.secretName=fleet-auth \
+  --set backends[0].model=granite-4.1-3b \
+  --set backends[0].url=http://ovms-granite-4.1-3b:80 \
+  --set backends[0].runtime=ovms
+----
+
+=== Register a Cluster
+
+[source,bash]
+----
+curl -X POST $FLEET_URL/api/v1/clusters \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "dev-cluster-1", "region": "us-east", "labels": {"hardware": "xeon-6767p"}}'
+----
+
+=== Connect the Dashboard
+
+[source,bash]
+----
+FLEET_URL=http://fleet-controller:8080 \
+FLEET_TOKEN=$TOKEN \
+uvicorn app.main:app --reload --port 8000
+----
+
+Now all fleet endpoints proxy to the real fleet-controller. Intents are actually executed. Ledger chains contain real entries.
+
+=== Send Inference Through the Proxy
+
+[source,bash]
+----
+curl $FLEET_URL/v1/chat/completions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "granite-4.1-3b",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 50
+  }'
+----
+
+*Check response headers*: `X-Fleet-Routed-To`, `X-Fleet-Routing-Reason`.
+
+=== View Cost Projection
+
+[source,bash]
+----
+curl $FLEET_URL/api/v1/cost/projection?tokens_per_day=1000000&gpu_type=H100&tier=on-demand
+curl $FLEET_URL/api/v1/cost/savings?current_gpu=H100&current_tier=on-demand&target_gpu=CPU&target_tier=on-demand&tokens_per_day=1000000
+----
+
+== Key Takeaways
+
+. *Fleet-level, not cluster-level* — fleet-llm-d orchestrates across clusters, not within them
+. *53× cheaper* — CPU inference on Intel Xeon 6 at $0.60/hr vs GPU at $32/hr
+. *Predictive, not reactive* — SLO forecasting and event pre-warming beat reactive HPA
+. *Governed, not ad-hoc* — every decision in the ARE Ledger, chain-verified
+. *Declarative* — 7 CRDs define the fleet's desired state; the control plane reconciles
+
+== Powered By
+
+Red Hat OpenShift · Intel Xeon 6 · Intel Gaudi 3 · llm-d · OVMS C++ · ARE Immutable Ledger

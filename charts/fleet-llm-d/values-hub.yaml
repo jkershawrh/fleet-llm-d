@@ -1,0 +1,20 @@
+profile: hub
+
+auth:
+  enabled: true
+
+tls:
+  enabled: true
+
+controller:
+  enabled: true
+  replicaCount: 1
+
+agent:
+  enabled: false
+
+podDisruptionBudget:
+  controller:
+    enabled: false
+  agent:
+    enabled: false

@@ -1,0 +1,41 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+
+  - name: Fleet Controller
+    uid: fleet-controller
+    type: prometheus
+    access: proxy
+    url: ${FLEET_CONTROLLER_METRICS_URL:-http://host.containers.internal:9091}
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+
+  - name: ARE Ledger
+    uid: are-ledger
+    type: prometheus
+    access: proxy
+    url: ${ARE_LEDGER_METRICS_URL:-http://host.containers.internal:48083}
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+
+  - name: Demo Cluster Prometheus
+    uid: demo-cluster-prometheus
+    type: prometheus
+    access: proxy
+    url: ${DEMO_CLUSTER_PROMETHEUS_URL:-https://prometheus-k8s-openshift-monitoring.apps.cluster.example.com/api}
+    editable: true
+    jsonData:
+      timeInterval: "30s"
+      tlsSkipVerify: true

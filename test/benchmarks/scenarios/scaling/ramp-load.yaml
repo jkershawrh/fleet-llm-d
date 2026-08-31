@@ -1,0 +1,164 @@
+# Ramp load autoscaling benchmark scenario.
+# Ramps traffic from 0 to 100% capacity, measuring autoscaler response
+# time, scaling accuracy, and SLO adherence throughout.
+apiVersion: benchmarks.fleet.llm-d.ai/v1alpha1
+kind: BenchmarkScenario
+metadata:
+  name: ramp-load
+  labels:
+    category: scaling
+    severity: performance
+spec:
+  description: >-
+    Progressively ramps traffic from zero to full fleet capacity and
+    back down, measuring how the fleet-llm-d autoscaler responds at
+    each stage. Evaluates scale-up latency, scale-down conservatism,
+    GPU utilization efficiency, cross-cluster migration, and
+    scale-to-zero behavior. Uses the FleetScalingPolicy CRD
+    configuration with a balanced strategy.
+
+  workload_ref: chat-multi-turn
+
+  fleet_topology:
+    clusters:
+      - name: us-east-1
+        region: us-east
+        gpu_type: nvidia-h100
+        min_replicas: 1
+        max_replicas: 16
+        initial_replicas: 2
+      - name: us-west-2
+        region: us-west
+        gpu_type: nvidia-h100
+        min_replicas: 0
+        max_replicas: 12
+        initial_replicas: 0
+
+  scaling_policy:
+    strategy: balanced
+    objectives:
+      - metric: gpu-utilization
+        target: "75%"
+        tolerance_percent: 10
+      - metric: ttft-p99
+        target: "300ms"
+        tolerance_percent: 15
+      - metric: queue-depth
+        target: "10"
+        tolerance_percent: 20
+    constraints:
+      global_max_gpus: 28
+      max_scale_up_rate: "4/5m"
+      max_scale_down_rate: "2/5m"
+      stabilization_window_seconds: 120
+    cross_cluster:
+      enable_migration: true
+      migration_threshold: 0.30
+      migration_cooldown_seconds: 300
+    scale_to_zero:
+      enabled: true
+      cooldown_period: 300s
+      scale_up_trigger: request-arrival
+
+  phases:
+    - name: cold-start
+      description: >-
+        Start from scale-to-zero state. First request triggers
+        scale-up. Measure cold start latency.
+      duration: 120s
+      traffic:
+        qps_ramp:
+          start: 0
+          end: 1
+          pattern: step
+          step_at: 30s
+      metrics:
+        - cold_start_latency_ms
+        - ttft_p99_ms
+        - replica_count_per_cluster
+        - scale_up_events
+
+    - name: ramp-up
+      description: >-
+        Gradually increase load from 10% to 100% capacity over
+        10 minutes. Autoscaler should add replicas proactively.
+      duration: 600s
+      traffic:
+        qps_ramp:
+          start: 5
+          end: 50
+          pattern: linear
+      metrics:
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - e2e_p99_ms
+        - gpu_utilization_per_cluster
+        - replica_count_per_cluster
+        - scale_up_events
+        - scale_up_latency_ms
+        - queue_depth
+        - success_rate
+
+    - name: sustained-peak
+      description: >-
+        Hold at maximum load for 10 minutes. All scaling should be
+        stable; no flapping.
+      duration: 600s
+      traffic:
+        qps: 50
+      metrics:
+        - ttft_p99_ms
+        - tpot_p99_ms
+        - gpu_utilization_per_cluster
+        - replica_count_per_cluster
+        - scaling_flap_count
+        - success_rate
+        - throughput_tokens_per_second
+
+    - name: ramp-down
+      description: >-
+        Gradually decrease load from 100% to 10% over 10 minutes.
+        Autoscaler should conservatively remove replicas without
+        causing latency spikes.
+      duration: 600s
+      traffic:
+        qps_ramp:
+          start: 50
+          end: 5
+          pattern: linear
+      metrics:
+        - ttft_p99_ms
+        - gpu_utilization_per_cluster
+        - replica_count_per_cluster
+        - scale_down_events
+        - success_rate
+
+    - name: idle-drain
+      description: >-
+        Cease all traffic. Clusters should scale to zero after the
+        cooldown period.
+      duration: 600s
+      traffic:
+        qps: 0
+      metrics:
+        - replica_count_per_cluster
+        - scale_to_zero_time_ms
+        - gpu_utilization_per_cluster
+
+  success_criteria:
+    # Cold start (scale from zero) within 45 seconds.
+    max_cold_start_latency_ms: 45000
+    # Scale-up to meet 2x load increase within 90 seconds.
+    max_scale_up_latency_ms: 90000
+    # No SLO violations during ramp-up (TTFT p99 < 300ms).
+    ramp_up_ttft_p99_ms: 300
+    # GPU utilization between 60-85% during sustained peak.
+    sustained_peak_gpu_utilization_min: 0.60
+    sustained_peak_gpu_utilization_max: 0.85
+    # No scaling flaps (scale-up immediately followed by scale-down)
+    # during sustained peak.
+    max_scaling_flaps: 0
+    # Scale-to-zero within cooldown_period + 60s tolerance.
+    max_scale_to_zero_time_ms: 360000
+    # Overall success rate across all phases.
+    min_overall_success_rate: 0.998

@@ -1,0 +1,264 @@
+// Copyright 2026 The llm-d Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fleet.llm_d.placement.v1;
+
+option go_package = "github.com/llm-d/fleet-llm-d/api/proto/placement/v1;placementv1";
+
+import "google/protobuf/timestamp.proto";
+
+// PlacementService computes and manages the placement of inference workloads
+// across the fleet. It evaluates cluster capacity, constraints, and preferences
+// to produce optimal placement assignments.
+service PlacementService {
+  // ComputePlacement evaluates the fleet state and returns a set of placement
+  // assignments for the given workload request.
+  rpc ComputePlacement(ComputePlacementRequest) returns (ComputePlacementResponse);
+
+  // GetPlacement retrieves a previously computed placement by ID.
+  rpc GetPlacement(GetPlacementRequest) returns (GetPlacementResponse);
+
+  // ListPlacements returns all placements matching the given filters.
+  rpc ListPlacements(ListPlacementsRequest) returns (ListPlacementsResponse);
+
+  // WatchPlacementEvents streams placement lifecycle events in real time.
+  rpc WatchPlacementEvents(WatchPlacementEventsRequest) returns (stream PlacementEvent);
+}
+
+// PlacementConstraintType defines the kinds of constraints that can be applied
+// to placement decisions.
+enum PlacementConstraintType {
+  // Default value; constraint type is unknown.
+  PLACEMENT_CONSTRAINT_TYPE_UNSPECIFIED = 0;
+
+  // Workload must be placed in the specified region(s).
+  PLACEMENT_CONSTRAINT_TYPE_REGION = 1;
+
+  // Workload requires a specific GPU type.
+  PLACEMENT_CONSTRAINT_TYPE_GPU_TYPE = 2;
+
+  // Workload must be placed on clusters with specific labels.
+  PLACEMENT_CONSTRAINT_TYPE_LABEL = 3;
+
+  // Workload must not be co-located with specific models.
+  PLACEMENT_CONSTRAINT_TYPE_ANTI_AFFINITY = 4;
+
+  // Workload must be placed alongside specific models.
+  PLACEMENT_CONSTRAINT_TYPE_AFFINITY = 5;
+
+  // Workload must be spread across multiple clusters.
+  PLACEMENT_CONSTRAINT_TYPE_SPREAD = 6;
+}
+
+// PlacementConstraint defines a hard requirement that must be satisfied
+// for a placement to be valid.
+message PlacementConstraint {
+  // Type of constraint.
+  PlacementConstraintType type = 1;
+
+  // Constraint rule expression (e.g., "region=us-east-1", "gpu_type=H100").
+  string rule = 2;
+
+  // If true, this constraint is a preference rather than a hard requirement.
+  bool soft = 3;
+
+  // Weight of this constraint when soft (0-100). Higher values mean stronger preference.
+  int32 weight = 4;
+}
+
+// PlacementPreference captures a soft optimization goal for placement.
+message PlacementPreference {
+  // Preference key (e.g., "latency", "cost", "locality").
+  string key = 1;
+
+  // Preference value or target.
+  string value = 2;
+
+  // Relative weight of this preference (0-100).
+  int32 weight = 3;
+}
+
+// PlacementRequest describes a workload that needs to be placed across the fleet.
+message PlacementRequest {
+  // The inference pool or model being placed.
+  string fleet_pool = 1;
+
+  // Model identifier to be served.
+  string model = 2;
+
+  // Total number of replicas requested.
+  int32 replicas = 3;
+
+  // Number of GPUs required per replica.
+  int32 gpus_per_replica = 4;
+
+  // Hard and soft constraints for placement.
+  repeated PlacementConstraint constraints = 5;
+
+  // Optimization preferences.
+  repeated PlacementPreference preferences = 6;
+
+  // Tenant ID requesting this placement, for quota enforcement.
+  string tenant_id = 7;
+}
+
+// PlacementAssignment represents a single cluster assignment within a placement.
+message PlacementAssignment {
+  // Cluster where replicas should be placed.
+  string cluster_id = 1;
+
+  // Number of replicas assigned to this cluster.
+  int32 replicas = 2;
+
+  // GPU type to use on this cluster.
+  string gpu_type = 3;
+
+  // Placement score for this assignment (0.0-1.0, higher is better).
+  double score = 4;
+
+  // Explanation of why this cluster was chosen.
+  string reason = 5;
+}
+
+// PlacementResult contains the computed placement assignments.
+message PlacementResult {
+  // Unique identifier for this placement result.
+  string id = 1;
+
+  // The original request that generated this placement.
+  PlacementRequest request = 2;
+
+  // Ordered list of cluster assignments.
+  repeated PlacementAssignment assignments = 3;
+
+  // Overall placement score (0.0-1.0).
+  double total_score = 4;
+
+  // When this placement was computed.
+  google.protobuf.Timestamp computed_at = 5;
+
+  // Placement phase.
+  PlacementPhase phase = 6;
+}
+
+// PlacementPhase tracks the lifecycle of a placement.
+enum PlacementPhase {
+  // Default value; phase is unknown.
+  PLACEMENT_PHASE_UNSPECIFIED = 0;
+
+  // Placement has been computed but not yet applied.
+  PLACEMENT_PHASE_PENDING = 1;
+
+  // Placement is being applied to target clusters.
+  PLACEMENT_PHASE_APPLYING = 2;
+
+  // Placement has been successfully applied.
+  PLACEMENT_PHASE_ACTIVE = 3;
+
+  // Placement is being superseded by a new placement.
+  PLACEMENT_PHASE_SUPERSEDED = 4;
+
+  // Placement failed to apply.
+  PLACEMENT_PHASE_FAILED = 5;
+}
+
+// PlacementEventType classifies placement lifecycle events.
+enum PlacementEventType {
+  // Default value; event type is unknown.
+  PLACEMENT_EVENT_TYPE_UNSPECIFIED = 0;
+
+  // A new placement was computed.
+  PLACEMENT_EVENT_TYPE_COMPUTED = 1;
+
+  // A placement is being applied.
+  PLACEMENT_EVENT_TYPE_APPLYING = 2;
+
+  // A placement was successfully applied.
+  PLACEMENT_EVENT_TYPE_APPLIED = 3;
+
+  // A placement failed to apply.
+  PLACEMENT_EVENT_TYPE_FAILED = 4;
+
+  // A placement was superseded by a newer one.
+  PLACEMENT_EVENT_TYPE_SUPERSEDED = 5;
+}
+
+// PlacementEvent represents a lifecycle event for a placement.
+message PlacementEvent {
+  // Type of event.
+  PlacementEventType type = 1;
+
+  // The placement this event pertains to.
+  PlacementResult placement = 2;
+
+  // When the event occurred.
+  google.protobuf.Timestamp timestamp = 3;
+
+  // Additional event-specific details.
+  map<string, string> details = 4;
+}
+
+// ComputePlacementRequest asks the placement engine to compute assignments.
+message ComputePlacementRequest {
+  // The placement request to evaluate.
+  PlacementRequest request = 1;
+
+  // If true, perform a dry run without persisting the result.
+  bool dry_run = 2;
+}
+
+// ComputePlacementResponse returns the computed placement.
+message ComputePlacementResponse {
+  // The computed placement result.
+  PlacementResult result = 1;
+}
+
+// GetPlacementRequest retrieves a placement by ID.
+message GetPlacementRequest {
+  // ID of the placement to retrieve.
+  string placement_id = 1;
+}
+
+// GetPlacementResponse returns the requested placement.
+message GetPlacementResponse {
+  // The requested placement result.
+  PlacementResult result = 1;
+}
+
+// ListPlacementsRequest queries placements with optional filters.
+message ListPlacementsRequest {
+  // Filter by fleet pool name.
+  string fleet_pool = 1;
+
+  // Filter by placement phase.
+  PlacementPhase phase = 2;
+
+  // Maximum number of results to return.
+  int32 page_size = 3;
+
+  // Pagination token from a previous response.
+  string page_token = 4;
+}
+
+// ListPlacementsResponse returns matching placements.
+message ListPlacementsResponse {
+  // The matching placements.
+  repeated PlacementResult results = 1;
+
+  // Token for fetching the next page of results.
+  string next_page_token = 2;
+
+  // Total number of placements matching the filter.
+  int32 total_count = 3;
+}
+
+// WatchPlacementEventsRequest configures the event stream.
+message WatchPlacementEventsRequest {
+  // If set, only watch events for this fleet pool.
+  string fleet_pool = 1;
+
+  // Filter to specific event types. Empty means all types.
+  repeated PlacementEventType event_types = 2;
+}

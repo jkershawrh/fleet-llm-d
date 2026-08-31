@@ -1,0 +1,21 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fleet-router-cpu-epp
+  namespace: fleet-llm-d
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      llm-d-router-standalone: fleet-router-cpu-epp
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fleet-router-gpu-epp
+  namespace: fleet-llm-d
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      llm-d-router-standalone: fleet-router-gpu-epp

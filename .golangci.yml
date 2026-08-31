@@ -1,0 +1,68 @@
+version: "2"
+
+# Linter selection is deliberately narrow.
+#
+# A broad default set produces noise that gets ignored, which is how
+# printf-style slog calls survived in the security audit path for months. Each
+# linter enabled here passes cleanly today, so the gate is meaningful: any new
+# finding is a regression introduced by the change under review.
+#
+# errcheck (81 pre-existing findings), noctx (18) and bodyclose (10) are the
+# obvious next additions. They are left out rather than silenced so the gate
+# stays green; enabling them means fixing the backlog first, which is a
+# separate change from this one.
+linters:
+  default: none
+  enable:
+    - govet         # standard vet analyzers
+    - ineffassign   # assignments never read
+    - staticcheck   # correctness and simplification
+    - unused        # dead identifiers
+    - sloglint      # structured logging: key/value pairs, not printf
+
+  settings:
+    staticcheck:
+      # golangci-lint's default set, minus ST1005. ST1005 wants lower-case
+      # error strings, which is right in general and wrong for a message
+      # opening on a proper noun ("Kubernetes API returned 503").
+      #
+      # The remaining exclusions are golangci-lint's own defaults: package
+      # comment style (ST1000), naming conventions (ST1003) and doc-comment
+      # phrasing (ST1020-ST1022) are house style, not correctness, and this
+      # codebase has its own consistent conventions.
+      checks:
+        - "all"
+        - "-ST1000"
+        - "-ST1003"
+        - "-ST1005"
+        - "-ST1016"
+        - "-ST1020"
+        - "-ST1021"
+        - "-ST1022"
+
+    sloglint:
+      # slog.Info("msg", "key", value) — never a format string with args.
+      # This is the linter that catches the class of bug fixed in this change:
+      # slog takes alternating key/value pairs, so a printf-style call emits a
+      # message with literal %s verbs and turns its arguments into attribute
+      # keys, which makes security audit events unqueryable.
+      no-mixed-args: true
+      kv-only: true
+
+  exclusions:
+    generated: lax
+    paths:
+      # Vendored JavaScript dependencies that happen to ship Go sources.
+      - web/node_modules
+    rules:
+      # Generated protobuf stubs are not ours to lint.
+      - path: pkg/classifier/gen/
+        linters: [govet, staticcheck, unused, ineffassign]
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
