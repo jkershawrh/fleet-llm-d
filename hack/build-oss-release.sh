@@ -40,6 +40,7 @@ done < "$manifest"
     --exclude='target' \
     --exclude='bin' \
     --exclude='dist' \
+    --exclude='test/contracts/router_ha_profile_test.go' \
     -cf - "${includes[@]}"
 ) | tar -xf - -C "$bundle_root"
 

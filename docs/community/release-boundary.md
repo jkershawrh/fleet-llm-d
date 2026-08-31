@@ -42,7 +42,19 @@ consumers receive only the portable artifact and signed public images.
 ```sh
 make oss-release VERSION=0.3.0
 make verify-oss-release
+make test-portable-conformance
 ```
+
+From an extracted source bundle, run the same gate directly:
+
+```sh
+bash hack/run-portable-conformance.sh
+```
+
+`test-portable-conformance` verifies fleet eligibility, policy precedence,
+exact-model gateway behavior, adapter/API contracts, agent-side admission, and
+the source-bundle boundary. It does not require or name a physical cluster.
+Environment certification and load capacity remain separate activities.
 
 Release CI uses the GitHub repository name as the GHCR image prefix and stamps
 the release version into the generated community Kustomize and installation

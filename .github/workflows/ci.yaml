@@ -76,6 +76,25 @@ jobs:
         uses: azure/setup-helm@v4
       - run: helm lint charts/fleet-llm-d
 
+  portable-conformance:
+    name: Portable Product Conformance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run topology-neutral conformance suite
+        run: make test-portable-conformance
+
   rust-build-test:
     name: Rust Build & Test
     runs-on: ubuntu-latest

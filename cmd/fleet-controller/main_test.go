@@ -21,7 +21,7 @@ import (
 
 func TestBootstrapStaticProviders(t *testing.T) {
 	repo := postgres.NewInMemoryClusterRepository()
-	if err := bootstrapStaticProviders(context.Background(), repo, `["arena-xeon6","oberon-cpu","arena-xeon6"]`, false); err != nil {
+	if err := bootstrapStaticProviders(context.Background(), repo, `["provider-a","provider-b","provider-a"]`, false); err != nil {
 		t.Fatal(err)
 	}
 	records, err := repo.List(context.Background())
@@ -36,7 +36,7 @@ func TestBootstrapStaticProviders(t *testing.T) {
 			t.Fatalf("provider %s status = %s", record.ID, record.Status)
 		}
 	}
-	if err := bootstrapStaticProviders(context.Background(), repo, `["arena-xeon6"]`, true); err == nil {
+	if err := bootstrapStaticProviders(context.Background(), repo, `["provider-a"]`, true); err == nil {
 		t.Fatal("production/static provider combination was accepted")
 	}
 }
@@ -46,19 +46,19 @@ func TestBootstrapStaticRoutingState(t *testing.T) {
 	pools := postgres.NewInMemoryFleetPoolRepository()
 	raw := `{
 		"providers":[
-			{"id":"arena","routingURL":"https://arena.example","metricsURL":"https://metrics.arena.example","physicalModels":["granite-cpu"],"failureDomain":"arena-zone"},
-			{"id":"oberon","routingURL":"https://oberon.example","metricsURL":"https://metrics.oberon.example","physicalModels":["granite-cpu"],"failureDomain":"oberon-zone"}
+			{"id":"provider-a","routingURL":"https://provider-a.example","metricsURL":"https://metrics.provider-a.example","physicalModels":["granite-cpu"],"failureDomain":"zone-a"},
+			{"id":"provider-b","routingURL":"https://provider-b.example","metricsURL":"https://metrics.provider-b.example","physicalModels":["granite-cpu"],"failureDomain":"zone-b"}
 		],
-		"pools":[{"model":"granite-cpu","providers":["arena","oberon"]}]
+		"pools":[{"model":"granite-cpu","providers":["provider-a","provider-b"]}]
 	}`
 	if err := bootstrapStaticRoutingState(context.Background(), clusters, pools, raw, false); err != nil {
 		t.Fatal(err)
 	}
-	record, err := clusters.Get(context.Background(), "arena")
+	record, err := clusters.Get(context.Background(), "provider-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Labels["fleet.llm-d.ai/egress-address"] != "https://arena.example" || record.Labels["fleet.llm-d.ai/physical-models"] != "granite-cpu" {
+	if record.Labels["fleet.llm-d.ai/egress-address"] != "https://provider-a.example" || record.Labels["fleet.llm-d.ai/physical-models"] != "granite-cpu" {
 		t.Fatalf("unexpected provider labels: %#v", record.Labels)
 	}
 	pool, err := pools.Get(context.Background(), "granite-cpu")

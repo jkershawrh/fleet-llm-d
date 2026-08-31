@@ -21,6 +21,7 @@ required=(
   README.md LICENSE NOTICE OSS-CONTENTS.txt VERSION
   go.mod Cargo.toml api/crds charts/fleet-llm-d
   cmd/fleet-controller cmd/grid-signals-publisher crates/fleet-agent pkg
+  hack/run-portable-conformance.sh
   deploy/kustomize/overlays/community
   deploy/kustomize/components/llmd-router-endpoints
   docs/community/deployment-profiles.md

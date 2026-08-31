@@ -30,6 +30,11 @@ deploy/mock-inference
 deploy/prometheus
 deploy/grafana
 docs/community
+hack/build-oss-release.sh
+hack/run-portable-conformance.sh
+hack/verify-oss-release.sh
+release/oss-include.txt
+release/COMMUNITY-README.md
 test/architecture
 test/bdd
 test/contracts

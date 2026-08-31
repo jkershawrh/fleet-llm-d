@@ -1,4 +1,4 @@
-.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e lint clean dev generate oss-release verify-oss-release bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production multi-cluster-deploy-arena multi-cluster-test multi-cluster-teardown
+.PHONY: build build-go build-rust build-web test test-unit test-bdd test-contracts test-integration test-e2e test-portable-conformance lint clean dev generate oss-release verify-oss-release bench-quick bench-standard bench-full bench-report bench-scale e2e-kind e2e-kind-teardown matrix matrix-report harness-build harness-smoke harness-stress harness-soak harness-pressure harness-chaos harness-redteam harness-latency harness-throughput harness-scale harness-inference harness-multimodel harness-fairness harness-chaos-recovery harness-all test-security test-pen test-soak-capability test-soak-ecosystem test-resilience test-production multi-cluster-deploy-arena multi-cluster-test multi-cluster-teardown
 
 # ──────────────────────────────────────────────
 # Build
@@ -42,6 +42,9 @@ test-integration:
 
 test-e2e:
 	go test -tags=e2e -timeout=30m ./test/e2e/...
+
+test-portable-conformance:
+	bash hack/run-portable-conformance.sh
 
 # ──────────────────────────────────────────────
 # Lint
