@@ -45,10 +45,13 @@ func (s *ProviderStore) Samples(ctx context.Context) ([]Sample, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
+	// #nosec G704 -- HealthURL is operator-supplied provider configuration and
+	// is never populated from an inference request.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.HealthURL, nil)
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G704 -- req targets the trusted provider health URL above.
 	resp, probeErr := client.Do(req)
 	ready := 0.0
 	if probeErr == nil {
@@ -101,10 +104,13 @@ func (s *PrometheusStore) Samples(ctx context.Context) ([]Sample, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
+	// #nosec G704 -- Endpoint is an operator-supplied, cluster-local metrics
+	// endpoint and is not derived from caller input.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G704 -- req targets the trusted metrics endpoint above.
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("scrape local EPP metrics: %w", err)

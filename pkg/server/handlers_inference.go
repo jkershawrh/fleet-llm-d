@@ -190,6 +190,8 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 		writeInferenceError(w, http.StatusServiceUnavailable, "gateway_not_configured", err.Error(), requestID)
 		return
 	}
+	// #nosec G704 -- BaseURL comes only from the operator-selected inference
+	// provider configuration; the fixed OpenAI path cannot select a host.
 	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.BaseURL+r.URL.Path, bytes.NewReader(body))
 	if err != nil {
 		writeInferenceError(w, http.StatusInternalServerError, "proxy_error", "could not create upstream request", requestID)
@@ -209,6 +211,8 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 	}
 	inferenceActive.Inc()
 	defer inferenceActive.Dec()
+	// #nosec G704 -- upstream was built from the trusted provider configuration
+	// above and carries no caller-controlled authority or destination.
 	resp, err := client.Do(upstream)
 	if r.Context().Err() == nil && physicalModel == fc.cpuPhysicalModel() && retryableInferenceFailure(resp, err) {
 		if retryCluster := fc.nextHealthyProviderExcluding(r.Context(), physicalModel, decision.TargetCluster); retryCluster != "" {
@@ -225,6 +229,8 @@ func (fc *FleetController) handleInference(w http.ResponseWriter, r *http.Reques
 				slog.Warn("retrying inference on alternate provider", "request_id", requestID, "failed_cluster", decision.TargetCluster, "retry_cluster", retryCluster)
 				decision.TargetCluster = retryCluster
 				decision.Reason = "health-failover"
+				// #nosec G704 -- retryRequest is a clone of the same trusted upstream;
+				// only the fleet-qualified cluster header changes.
 				resp, err = client.Do(retryRequest)
 			}
 		}
@@ -288,10 +294,6 @@ func isTimeout(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
-func (fc *FleetController) requiresGPUModel(requested string) bool {
-	return fc.requestedModelClass(requested) == "gpu"
-}
-
 func (fc *FleetController) requestedModelClass(requested string) string {
 	if requested == "" {
 		return ""
@@ -318,15 +320,6 @@ func (fc *FleetController) gpuPhysicalModel() string {
 		return fc.GPUPhysicalModel
 	}
 	return defaultGPUModel
-}
-
-func (fc *FleetController) clusterIsHealthy(ctx context.Context, clusterID string) bool {
-	for _, cluster := range fc.BuildInferenceClusterHealth(ctx) {
-		if cluster.ClusterID == clusterID {
-			return cluster.Healthy
-		}
-	}
-	return false
 }
 
 func inferenceText(req inferenceEnvelope, chat bool) (string, error) {

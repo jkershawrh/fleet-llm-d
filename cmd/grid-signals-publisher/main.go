@@ -106,6 +106,8 @@ func serverTLSConfig(certPath, keyPath, caPath string) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load server identity: %w", err)
 	}
+	// #nosec G304 -- caPath is the operator-mounted client CA configured at
+	// startup and cannot be supplied by an HTTP caller.
 	data, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("read client CA: %w", err)

@@ -61,6 +61,8 @@ func (p *ProviderHealthCache) Ready() bool {
 func NewProviderHealthCache(urls map[string]string, caPath string) (*ProviderHealthCache, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if caPath != "" {
+		// #nosec G304 -- caPath is an operator-mounted trust-bundle path, not
+		// request data; startup must read that configured file.
 		pem, err := os.ReadFile(caPath)
 		if err != nil {
 			return nil, fmt.Errorf("read provider CA bundle: %w", err)
