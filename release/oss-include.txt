@@ -5,6 +5,7 @@
 # remain in the repository but are not copied into the community release.
 LICENSE
 NOTICE
+.gitleaks.toml
 go.mod
 go.sum
 Cargo.toml

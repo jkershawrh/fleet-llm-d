@@ -1,0 +1,12 @@
+title = "llm-d-fleet secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented signing-key identifier and deterministic unit-test fixture"
+regexTarget = "secret"
+regexes = [
+  '''gcl-decision-v1''',
+  '''0123456789abcdef0123456789abcdef''',
+]
