@@ -59,7 +59,7 @@ This checklist covers the security posture of the fleet-llm-d inference orchestr
 | SBOM generation for fleet-llm-d components | Done | CycloneDX SBOM generated in `.github/workflows/security.yaml` |
 | Go dependency pinning and integrity verification | Done | govulncheck in security.yaml; dependency-review-action@v4 on PRs |
 | Rust dependency pinning via Cargo.lock | Done | cargo audit in security.yaml; dependency-review-action@v4 on PRs |
-| Build pipeline integrity (SLSA Level 2+) | Not Started | Verify CI/CD pipeline produces signed provenance attestations. Confirm build environment is ephemeral and reproducible. Audit for secret injection in build steps. |
+| Build pipeline integrity (SLSA provenance) | In Progress | `.github/workflows/release.yaml` uses GitHub-hosted ephemeral runners and issues Sigstore-backed build-provenance attestations for image digests and downloadable artifacts. Independent reproducibility and a formal secret-injection audit remain open; no SLSA level is claimed. |
 | Dashboard (npm) dependency audit | Done | npm audit in security.yaml |
 | Base image provenance and update cadence | Done | UBI base images from registry.access.redhat.com; non-root USER 65534:65534; readOnlyRootFilesystem + drop ALL caps in kustomize |
 

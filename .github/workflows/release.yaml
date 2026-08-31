@@ -13,6 +13,7 @@ permissions:
   contents: write
   packages: write
   id-token: write
+  attestations: write
 
 env:
   REGISTRY: ghcr.io
@@ -110,6 +111,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push fleet-controller image
+        id: controller-image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -126,12 +128,20 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Sign fleet-controller image
-        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller@${{ steps.controller-image.outputs.digest }}
+
+      - name: Attest fleet-controller build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller
+          subject-digest: ${{ steps.controller-image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
       - name: Generate SBOM for fleet-controller
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller:${{ steps.version.outputs.VERSION }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller@${{ steps.controller-image.outputs.digest }}
           format: cyclonedx-json
           output-file: sbom-fleet-controller.json
 
@@ -141,7 +151,17 @@ jobs:
           name: sbom-fleet-controller
           path: sbom-fleet-controller.json
 
+      - name: Attest fleet-controller SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-controller
+          subject-digest: ${{ steps.controller-image.outputs.digest }}
+          sbom-path: sbom-fleet-controller.json
+          push-to-registry: true
+          create-storage-record: false
+
       - name: Build and push fleet-agent image
+        id: agent-image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -155,12 +175,20 @@ jobs:
           cache-to: type=gha,mode=max,scope=agent
 
       - name: Sign fleet-agent image
-        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
+        run: cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent@${{ steps.agent-image.outputs.digest }}
+
+      - name: Attest fleet-agent build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent
+          subject-digest: ${{ steps.agent-image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
       - name: Generate SBOM for fleet-agent
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent:${{ steps.version.outputs.VERSION }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent@${{ steps.agent-image.outputs.digest }}
           format: cyclonedx-json
           output-file: sbom-fleet-agent.json
 
@@ -169,6 +197,26 @@ jobs:
         with:
           name: sbom-fleet-agent
           path: sbom-fleet-agent.json
+
+      - name: Attest fleet-agent SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/fleet-agent
+          subject-digest: ${{ steps.agent-image.outputs.digest }}
+          sbom-path: sbom-fleet-agent.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest downloadable release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
+            dist/fleet-llm-d-${{ steps.version.outputs.VERSION }}-oss-source.tar.gz
+            dist/checksums-sha256.txt
+            sbom-fleet-controller.json
+            sbom-fleet-agent.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

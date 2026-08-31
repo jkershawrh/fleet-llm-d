@@ -60,3 +60,8 @@ Release CI uses the GitHub repository name as the GHCR image prefix and stamps
 the release version into the generated community Kustomize and installation
 documentation. Local builds default to the current public project namespace;
 set `OSS_IMAGE_PREFIX=owner/repository` to test a fork.
+
+Tagged releases sign container-image digests, attach CycloneDX SBOMs, and issue
+Sigstore-backed GitHub build-provenance attestations for images, binaries, the
+portable source archive, checksums, and SBOM files. Tags are convenience names;
+verification and production pinning must use the attested digest.
